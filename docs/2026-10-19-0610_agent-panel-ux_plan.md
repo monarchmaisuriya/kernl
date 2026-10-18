@@ -191,7 +191,7 @@ Reviewed with the plan rubric against `acpRunner.ts`, `session.ts`, `registry.ts
   - Slash commands: "/" offers a CLI agent's own commands.
   - Titles: `session_info_update` titles the conversation.
   - Mode sync: `config_option_update` keeps the mode chip in step when the agent changes its own mode.
-  - Approvals: an agent's "always" option is shown in its own words, used only from its own button, never as a fallback (`Decision`, `toPermissionResponse`).
+  - Approvals: an agent's "always" option is shown in its own words, used only from its own button, never as a fallback (`Decision`, `toPermissionResponse`). M confirmed keeping it on 2026-10-18, replacing the earlier allow-once-only choice.
   - Shortcuts: ⌘/Ctrl+Y once, ⌘/Ctrl+⌥/Alt+Y always, ⌘/Ctrl+⌥/Alt+Z reject. They follow Zed instead of the planned Ctrl+N, which is VS Code's New File, and are ignored while typing.
 - **Part 4:** the transcript is a log that doesn't read out tokens; the announcer covers finished replies, approvals, and errors (urgent); there are hidden turn headings, reduced-motion rules (`vscode-reduce-motion` too), and high-contrast borders.
 - **Tests:** unit 215 (rich ACP scenario, diff size, always-allow, approval queue, thinking and to-dos in kernl's agent, panel tests for each part); VS Code end-to-end check with the rich fake agent through the real controller.
@@ -214,5 +214,4 @@ M's setup restored: Develop on Claude Code, Auto mode. The two test conversation
 
 ## Open questions
 
-1. Should kernl's own Claude agent think by default? It's off today (only with a reasoning effort). Turning it on costs tokens on every message. Recommendation: keep it opt-in, but make the model chip show and set reasoning effort.
-2. Order: Part 1 first (your report), then 2, 3, 4, each checked in your window? Recommendation: yes.
+None. Decided by M: kernl's Claude thinking stays opt-in via reasoning effort; Parts 1 to 4 built in order; Allow always kept.
