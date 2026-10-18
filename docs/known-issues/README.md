@@ -9,6 +9,9 @@ Open limits, each with what happens, why, and what to do. Remove an entry when i
 
 ## By design or upstream
 
+- **Dragging from VS Code's Explorer into the panel does nothing (VS Code 1.140 and later).** VS Code's Electron upgrade in 1.140.0 broke Shift-drag from the Explorer into every extension webview, Claude Code's chat included ([microsoft/vscode#339036](https://github.com/microsoft/vscode/issues/339036), open). Before that, Shift was required (VS Code blocks plain drags into webviews). Until VS Code fixes it, use `@` in the composer, or right-click files in the Explorer and pick **Add to kernl chat**. Shift-drag from Finder still works.
+- **Files dragged from Finder have no path in the panel.** Webviews can't see where a dropped file lives, so kernl attaches text files by their content, and names the rest (images, binary files, folders) in a message.
+
 - **Codex is experimental.** It's listed as "Codex (experimental)"; only its Read-only mode with its own login has been checked end to end.
 - **Deny rules aren't a security boundary.** They match the command as written, so the same program run another way (inside a script, behind `env`) isn't caught. Such a command still asks, because only an allow rule can skip a card.
 - **OpenCode's "Edit automatically" restarts OpenCode.** The edit permission is set through its launch config, so switching to or from that mode relaunches it and reloads the conversation.

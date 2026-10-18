@@ -11,7 +11,8 @@
   - `@` autocompletes workspace paths; picked files and folders appear as highlighted `@path` mentions in your message (Backspace removes a whole mention);
   - the file open in the editor is offered as a dashed "+ file" suggestion;
   - `/` lists skills (kernl agent);
-  - you can drop files on the panel, or use "Add to kernl chat" in the Explorer;
+  - right-click files or folders in the Explorer and pick **Add to kernl chat** (several at once with a multi-selection); a file from another folder of the window names that folder: switch to it with the workspace chip;
+  - drag files onto the panel while holding **Shift** (VS Code blocks plain drags into extension panels; the composer shows "Drop to attach"). From VS Code's own Explorer this is broken in VS Code 1.140 and later (see known issues); from Finder it works, and text files are attached by their content (up to 20,000 characters). Anything that can't be attached says why;
   - the agent chip warns when an agent still needs setup;
   - the model chip (kernl only) and one button that sends, or stops a running agent.
 

@@ -12,6 +12,22 @@ export function toAttachment(root: string, fsPath: string, kind: Attachment["kin
   return { path: rel.split(sep).join("/"), kind };
 }
 
+/**
+ * Why dropped files weren't attached: the agent works in the shown workspace's folder only. A file
+ * in another folder of the window names that folder, so you can switch to it with the workspace chip.
+ */
+export function outsideMessage(paths: string[], shown: { root: string; label: string }, workspaces: { root: string; label: string }[]): string {
+  const name = (path: string) => path.split(sep).pop() ?? path;
+  const found = paths.map((path) => ({ path, ws: workspaces.find((w) => w !== shown && toAttachment(w.root, path, "file")) }));
+  const elsewhere = found.filter((f) => f.ws).map((f) => `${name(f.path)} is in ${f.ws!.label}`);
+  const unknown = found.filter((f) => !f.ws).map((f) => name(f.path));
+  const more = (n: number) => (n > 3 ? ` and ${n - 3} more` : "");
+  return [
+    elsewhere.length ? `${elsewhere.slice(0, 3).join("; ")}${more(elsewhere.length)}: switch to it with the workspace chip to attach it.` : "",
+    unknown.length ? `Only files in ${shown.label} can be attached; skipped ${unknown.slice(0, 3).join(", ")}${more(unknown.length)}.` : "",
+  ].filter(Boolean).join(" ");
+}
+
 async function isFolder(uri: vscode.Uri): Promise<boolean> {
   try {
     return ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.Directory) !== 0;

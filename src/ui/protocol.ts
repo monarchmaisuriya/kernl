@@ -206,7 +206,8 @@ export type PanelToHost =
   /** The composer's + button: the attachment menu. */
   | { type: "pickAttachments" }
   /** Files or folders dropped on the panel (file: URIs). */
-  | { type: "dropUris"; uris: string[] }
+  /** `types`: what a drop that attached nothing carried (for kernl's log). */
+  | { type: "dropUris"; uris: string[]; types?: string[] }
   /** Restore the files (and maybe the conversation) to how they were before this message. */
   | { type: "restore"; workspace: string; messageId: string }
   /** The footer's jobs chip: show or stop a background job. */

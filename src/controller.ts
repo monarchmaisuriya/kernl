@@ -8,7 +8,7 @@ import { AgentCredentials, CREDENTIAL_ENV, credentialEnv } from "./acp/credentia
 import { loadNamedAgents } from "./agent/namedAgents";
 import type { InputChange } from "./agent/rebuildPolicy";
 import { listSkills } from "./agent/skills";
-import { resolveUris, searchWorkspace, toAttachment } from "./attachmentSearch";
+import { outsideMessage, resolveUris, searchWorkspace, toAttachment } from "./attachmentSearch";
 import { IntegratedBrowser } from "./browser/integratedBrowser";
 import { Checkpoints } from "./checkpoints";
 import type { GateRequest } from "./gate/approvalGate";
@@ -482,12 +482,17 @@ export class Controller implements vscode.Disposable {
   }
 
   /** Dropped files and the Explorer's "Add to kernl chat": only paths inside the shown workspace. */
+  /**
+   * Attaches dropped (or Explorer "Add to kernl chat") files that are inside the shown workspace's
+   * folder. A file in another folder of the window says which one to switch to.
+   */
   async attachUris(uris: string[]) {
-    const root = this.workspace(this.active)?.root;
-    if (!root) return;
-    const { attachments, outside } = await resolveUris(root, uris);
+    if (!uris.length) return;
+    const shown = this.workspace(this.active);
+    if (!shown) return;
+    const { attachments, outside } = await resolveUris(shown.root, uris);
     if (attachments.length) this.panel.post({ type: "addAttachments", items: attachments });
-    if (outside.length) void vscode.window.showWarningMessage(`Only files in this workspace can be attached; skipped ${outside.length}: ${outside.slice(0, 3).join(", ")}`);
+    if (outside.length) void vscode.window.showWarningMessage(outsideMessage(outside, shown, [...this.workspaces.values()]));
     await this.panel.reveal();
   }
 
@@ -634,6 +639,8 @@ export class Controller implements vscode.Disposable {
       case "pickAttachments":
         return this.anchored("attach", () => this.pickAttachments());
       case "dropUris":
+        // A drop that attached nothing: log what it carried, so the next "drop does nothing" can be diagnosed.
+        if (!m.uris.length) return void this.log.info(`a drop on the panel attached nothing; it carried: ${(m.types ?? []).join(", ") || "no data"}`);
         return this.attachUris(m.uris);
       case "restore":
         return this.anchored(`restore:${m.messageId}`, () => this.restore(m.workspace, m.messageId));
@@ -855,6 +862,8 @@ export class Controller implements vscode.Disposable {
       /** Back to the real prompts (in-panel menus), after usePrompts. */
       usePanelPrompts: () => (this.prompts = this.panelPrompts),
       activeWorkspace: () => this.active,
+      /** A workspace's run state, part by part (for the integration tests' failure timeline). */
+      runState: (workspace: string) => this.workspace(workspace)?.runState(),
       approvalRules: () => approvalRules(),
       setHarness: (workspace: string, harness: string) => this.setHarness(workspace, harness),
       useGitHub: (source: GitHubSource) => (this.github = source),

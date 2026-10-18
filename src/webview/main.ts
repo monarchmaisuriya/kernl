@@ -128,7 +128,9 @@ logs.append(empty);
 
 const composer = el("div", "composer");
 const input = el("textarea", "input");
-input.placeholder = "Describe what to build";
+// "@" always works. Dragging from VS Code's Explorer into webviews is broken upstream since VS Code
+// 1.140 (microsoft/vscode#339036); the + tooltip names the Explorer's own way in.
+input.placeholder = "Describe what to build · @ to add files";
 input.rows = 2;
 input.setAttribute("aria-label", "Message");
 // Opens the host's agent menu (kernl and its agents first, then Claude Code, Codex, OpenCode).
@@ -139,6 +141,7 @@ agentChip.dataset.anchor = "agent";
 modelChip.dataset.anchor = "model";
 const sendButton = iconButton("send", "Send", icon("send"));
 const attachButton = iconButton("chip attach", "Add files or folders", icon("plus"));
+attachButton.title = "Add files or folders (in the Explorer: right-click, Add to kernl chat)";
 attachButton.dataset.anchor = "attach";
 const attachments = createAttachments(input, (m) => send(m), () => render());
 const sendMenu = createSendMenu((mode) => submit(mode));
@@ -152,7 +155,10 @@ const inputWrap = el("div", "input-wrap");
 inputWrap.append(attachments.layer, input);
 // Messages waiting for the current run to end (kept by the host).
 const queueList = el("div", "queue");
-composer.append(attachments.popover, sendMenu.menu, queueList, context, inputWrap, toolbar);
+// Shown while a drag is over the panel (which happens only with Shift held).
+const dropHint = el("div", "drop-hint", "Drop to attach");
+dropHint.hidden = true;
+composer.append(attachments.popover, sendMenu.menu, queueList, context, attachments.dropNote, inputWrap, dropHint, toolbar);
 
 const footer = el("div", "footer");
 const workspaceChip = el("button", "chip workspace");
@@ -479,8 +485,28 @@ input.addEventListener("input", () => {
 });
 attachButton.addEventListener("click", () => send({ type: "pickAttachments" }));
 // Files dropped anywhere on the panel are attached (the host checks they're in the workspace).
+// Handling dragenter too keeps VS Code from taking a Finder drag back to the workbench. Child
+// elements fire their own enter and leave, so the drop target counts them.
+let dragDepth = 0;
+const showDropTarget = (on: boolean) => {
+  dropHint.hidden = !on;
+  composer.classList.toggle("drop-target", on);
+};
+app.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  dragDepth++;
+  showDropTarget(true);
+});
+app.addEventListener("dragleave", () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) showDropTarget(false);
+});
 app.addEventListener("dragover", (e) => e.preventDefault());
-app.addEventListener("drop", (e) => attachments.onDrop(e));
+app.addEventListener("drop", (e) => {
+  dragDepth = 0;
+  showDropTarget(false);
+  void attachments.onDrop(e);
+});
 agentChip.addEventListener("click", () => send({ type: "pickHarness" }));
 modelChip.addEventListener("click", () => send({ type: "pickModel" }));
 workspaceChip.addEventListener("click", () => send({ type: "pickWorkspace" }));

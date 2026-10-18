@@ -10,7 +10,7 @@ const webviewFiles = readdirSync(resolve(root, "src/webview")).filter((f) => f.e
 const panelSource = readFileSync(resolve(root, "src/ui/panel.ts"), "utf8");
 
 test("webview code never turns strings into HTML", () => {
-  assert.deepEqual(webviewFiles.sort(), ["attachments.ts", "contextRing.ts", "highlight.ts", "icons.ts", "main.ts", "markdown.ts", "menu.ts", "messageActions.ts", "modeMenu.ts", "planBar.ts", "sendMenu.ts", "thinking.ts", "toolGroup.ts", "toolRow.ts"], "every webview file is checked");
+  assert.deepEqual(webviewFiles.sort(), ["attachments.ts", "contextRing.ts", "dropData.ts", "highlight.ts", "icons.ts", "main.ts", "markdown.ts", "menu.ts", "messageActions.ts", "modeMenu.ts", "planBar.ts", "sendMenu.ts", "thinking.ts", "toolGroup.ts", "toolRow.ts"], "every webview file is checked");
   for (const file of webviewFiles) {
     const source = readFileSync(resolve(root, "src/webview", file), "utf8");
     for (const sink of ["innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "DOMParser", "createContextualFragment"]) {

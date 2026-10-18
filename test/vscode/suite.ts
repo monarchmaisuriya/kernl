@@ -23,18 +23,29 @@ import { Checkpoints } from "../../src/checkpoints";
 import { BackgroundJobs } from "../../src/agent/backgroundJobs";
 import { jobTerminal } from "../../src/terminal/jobTerminal";
 import { SessionStore } from "../../src/sessions";
+import { outsideMessage } from "../../src/attachmentSearch";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { messageText, toolCall } from "../support/harness";
 import { ScriptedChatModel } from "../support/scriptedModel";
 
 const results: string[] = [];
+/**
+ * What the panel received and what was sent to the controller, with times (ms since the suite
+ * started). A failing check prints its own part (the last 40 lines), so a failure shows its order of events.
+ */
+const timeline: string[] = [];
+const started = Date.now();
+const at = () => String(Date.now() - started).padStart(7);
 async function check(name: string, fn: () => Promise<void>) {
+  const from = timeline.length;
+  timeline.push(`${at()} --- check: ${name.slice(0, 80)}`);
   try {
     await fn();
     results.push(`PASS  ${name}`);
   } catch (e: any) {
-    results.push(`FAIL  ${name}\n      ${String(e?.message ?? e).split("\n").filter((l) => l.trim()).slice(0, 8).join("\n      ")}`);
+    const lines = timeline.slice(from).slice(-40);
+    results.push(`FAIL  ${name}\n      ${String(e?.message ?? e).split("\n").filter((l) => l.trim()).slice(0, 8).join("\n      ")}\n      timeline (ms):\n        ${lines.join("\n        ")}`);
   }
 }
 
@@ -479,7 +490,19 @@ export async function run() {
 async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: { command: string; args: string[]; env: Record<string, string> }) {
   const { testing } = await ext.activate();
   const delivered: any[] = [];
-  testing.onDidDeliver((m: any) => delivered.push(m));
+  testing.onDidDeliver((m: any) => {
+    delivered.push(m);
+    const main = m.type === "workspaces" ? m.items.find((w: any) => w.id === "main") : undefined;
+    const detail = m.type === "userMessage" ? ` "${m.text}"` : m.type === "finished" ? ` ${m.reason}` : m.type === "approval" ? ` ${m.card.title}` : m.type === "notice" ? ` ${m.text}` : main ? ` main: running=${main.running} queue=${JSON.stringify(main.queue.map((q: any) => q.text))}` : "";
+    if (m.type !== "text" && m.type !== "thinking") timeline.push(`${at()} panel <- ${m.type}${m.workspace ? `(${m.workspace})` : ""}${detail}`);
+  });
+  // Every message the tests send as the panel, with the workspace's run state at that moment.
+  const receive = testing.receive;
+  testing.receive = (m: any) => {
+    const state = m.workspace ? JSON.stringify(testing.runState(m.workspace)) : "";
+    timeline.push(`${at()} panel -> ${m.type}${m.type === "send" ? ` "${m.text}"` : ""} ${state}`);
+    return receive(m);
+  };
   const waitFor = async (what: string, pred: (m: any) => boolean, from = 0, timeoutMs = 20_000) => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -738,6 +761,14 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(outside));
     await waitFor("no suggestion for a file outside the workspace", (m) => m.type === "activeFile" && m.path === undefined, from, 10_000);
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+  });
+
+  await check("drag and drop: a file from another folder of the window names that folder; one from nowhere says what can be attached", async () => {
+    const develop = { root: join(tmpdir(), "Develop"), label: "Develop" };
+    const experiment = { root: join(tmpdir(), "Experiment"), label: "Experiment" };
+    assert.equal(outsideMessage([join(experiment.root, "kernl", "a.ts")], develop, [develop, experiment]), "a.ts is in Experiment: switch to it with the workspace chip to attach it.");
+    assert.equal(outsideMessage([join(homedir(), "Downloads", "notes.txt")], develop, [develop, experiment]), "Only files in Develop can be attached; skipped notes.txt.");
+    assert.equal(outsideMessage([join(experiment.root, "b.ts"), "/elsewhere/c.ts"], develop, [develop, experiment]), "b.ts is in Experiment: switch to it with the workspace chip to attach it. Only files in Develop can be attached; skipped c.ts.");
   });
 
   await check("attachments: @ search, the Explorer command, and a CLI agent receiving them as resource links", async () => {
@@ -1060,6 +1091,10 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
 }
 
 function report() {
+  // The whole timeline, pass or fail, for comparing a failing run with a passing one.
+  const timelineFile = process.env.KERNL_TIMELINE ?? join(tmpdir(), `kernl-timeline-${started}.txt`);
+  writeFileSync(timelineFile, timeline.join("\n") + "\n");
+  console.log(`timeline: ${timelineFile}`);
   console.log("\n===== VSCODE RESULTS =====\n" + results.join("\n") + "\n==========================\n");
   if (results.some((r) => r.startsWith("FAIL"))) throw new Error("integration checks failed");
 }

@@ -340,3 +340,7 @@ body.vscode-high-contrast .menu-item:focus-visible, body.vscode-high-contrast .m
 body.vscode-reduce-motion .tool > summary > .icon:last-child, body.vscode-reduce-motion .thinking > summary > .icon:last-child, body.vscode-reduce-motion .plan-bar > summary > .icon:last-child { transition: none; }
 /* kernl's mark (media/mark.png), in the text color like the SVG icons (icons.ts) */
 .kernl-mark { display: inline-block; flex: none; background-color: currentColor; -webkit-mask: url(mark.png) center / contain no-repeat; mask: url(mark.png) center / contain no-repeat; }
+/* Drag and drop: a Shift-drag over the panel (the only kind VS Code lets through) marks the composer */
+.composer.drop-target { outline: 1px dashed var(--vscode-focusBorder); outline-offset: 2px; }
+.drop-hint { padding: 0 4px; font-size: 0.88em; color: var(--vscode-textLink-foreground); }
+.drop-note { padding: 0 4px; font-size: 0.88em; color: var(--vscode-editorWarning-foreground, var(--muted)); }

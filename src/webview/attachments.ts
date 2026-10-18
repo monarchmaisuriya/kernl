@@ -4,6 +4,7 @@
 // searches workspace paths, "/" names a skill, and the file open in the editor is offered as a
 // suggestion. Everything is built with createElement/textContent; the host checks every path.
 import type { Attachment, PanelToHost, SkillView } from "../ui/protocol";
+import { droppedFiles, droppedUris } from "./dropData";
 import { icon } from "./icons";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -49,6 +50,18 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   const layer = el("div", "input-layer");
   layer.setAttribute("aria-hidden", "true");
   const suggestion = el("button", "suggest-file");
+  // Why a drop attached nothing (or not everything); cleared after a while or when you type.
+  const dropNote = el("div", "drop-note");
+  dropNote.setAttribute("role", "status");
+  dropNote.hidden = true;
+  let dropNoteTimer: ReturnType<typeof setTimeout> | undefined;
+  function note(text: string) {
+    dropNote.textContent = text;
+    dropNote.hidden = false;
+    clearTimeout(dropNoteTimer);
+    dropNoteTimer = setTimeout(() => (dropNote.hidden = true), 8000);
+  }
+  input.addEventListener("input", () => (dropNote.hidden = true));
   const popover = el("div", "popover");
   popover.setAttribute("role", "listbox");
   popover.hidden = true;
@@ -232,12 +245,26 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   }
 
   /** Files dragged from the Explorer or the OS arrive as a URI list; the host checks and resolves them. */
-  function onDrop(e: DragEvent) {
-    const data = e.dataTransfer?.getData("application/vnd.code.uri-list") || e.dataTransfer?.getData("text/uri-list") || "";
-    const uris = data.split(/\r?\n/).map((u) => u.trim()).filter((u) => u && !u.startsWith("#"));
-    if (!uris.length) return;
+  /**
+   * A drop (it only gets here with Shift held: VS Code blocks webviews during a drag otherwise).
+   * Explorer items go to the host, which checks they're in the workspace; files from Finder are
+   * attached by content when they're text. A drop that attaches nothing says why, and the host logs
+   * what it carried.
+   */
+  async function onDrop(e: DragEvent) {
+    const data = e.dataTransfer;
+    if (!data) return;
     e.preventDefault();
-    send({ type: "dropUris", uris });
+    // The drop's data is readable only during the event: take everything before any await.
+    const uris = droppedUris(data);
+    const types = Array.from(data.types ?? []);
+    const files = Array.from(data.files ?? []);
+    if (uris.length) return send({ type: "dropUris", uris });
+    const { attached, skipped } = await droppedFiles(files);
+    if (attached.length) add(attached);
+    if (skipped.length) note(`Couldn't attach ${skipped.join(", ")}. Drag workspace files from the Explorer instead.`);
+    else if (!attached.length) note("Nothing to attach from that drop.");
+    if (!attached.length) send({ type: "dropUris", uris: [], types });
   }
 
   suggestion.addEventListener("click", () => activeFile && (add([{ path: activeFile, kind: "file" }]), input.focus()));
@@ -246,6 +273,7 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   refresh();
   return {
     chips,
+    dropNote,
     layer,
     suggestion,
     popover,

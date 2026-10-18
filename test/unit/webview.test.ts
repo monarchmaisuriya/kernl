@@ -1113,3 +1113,56 @@ test("a fetched page shows its site on the line and its address as a link when o
   k.host({ type: "toolCall", workspace: "main", id: "n1", name: "browser_navigate", args: JSON.stringify({ url: "http://localhost:5173/login" }) });
   assert.deepEqual([k.doc.querySelector(".tool-action")!.textContent, k.doc.querySelector(".tool-site")!.textContent], ["Opening", "localhost"], "kernl's browser shows the site too");
 });
+
+test("drag and drop: the composer names the ways in; a drag over the panel marks the drop target until it leaves or drops", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  assert.match(p.doc.querySelector<HTMLTextAreaElement>(".input")!.placeholder, /@ to add files/, "the way that always works (Explorer drags are broken upstream)");
+  assert.match(p.button("Add files or folders")!.title, /right-click, Add to kernl chat/, "the tooltip names the Explorer's way in; the label stays short");
+  const app = p.doc.getElementById("app")!;
+  const fire = (type: string, target: Element = app) => {
+    const e = new p.window.Event(type, { bubbles: true, cancelable: true }) as any;
+    e.dataTransfer = { getData: () => "", types: [], files: [] };
+    target.dispatchEvent(e);
+    return e;
+  };
+  const hint = p.doc.querySelector<HTMLElement>(".drop-hint")!;
+  assert.equal(fire("dragenter").defaultPrevented, true, "taken, so VS Code doesn't hand a Finder drag back to the workbench");
+  fire("dragenter", p.doc.querySelector(".input")!); // entering a child element
+  assert.equal(hint.hidden, false);
+  assert.ok(p.doc.querySelector(".composer")!.classList.contains("drop-target"));
+  fire("dragleave", p.doc.querySelector(".input")!);
+  assert.equal(hint.hidden, false, "still over the panel");
+  fire("dragleave");
+  assert.equal(hint.hidden, true);
+});
+
+test("drag and drop: Explorer items go to the host; a Finder text file is attached by content; a drop with nothing usable says why and is logged", async () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const app = p.doc.getElementById("app")!;
+  const drop = (dataTransfer: any) => {
+    const e = new p.window.Event("drop", { bubbles: true, cancelable: true }) as any;
+    e.dataTransfer = dataTransfer;
+    app.dispatchEvent(e);
+  };
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+  drop({ getData: (t: string) => (t === "application/vnd.code.uri-list" ? "file:///ws/src/a.ts\nfile:///ws/docs" : ""), types: ["application/vnd.code.uri-list"], files: [] });
+  assert.deepEqual(p.sent.at(-1), { type: "dropUris", uris: ["file:///ws/src/a.ts", "file:///ws/docs"] }, "every item, folders included");
+
+  drop({ getData: () => "", types: ["Files"], files: [new File(["# Notes\n"], "notes.md", { type: "text/markdown" })] });
+  await settle();
+  assert.deepEqual([...p.doc.querySelectorAll(".attachments .chip-text")].map((c) => c.textContent), ["notes.md"]);
+
+  const before = p.sent.length;
+  drop({ getData: () => "", types: ["Files"], files: [new File([new Uint8Array([0x89, 0x50, 0, 0])], "logo.png", { type: "image/png" })] });
+  await settle();
+  const note = p.doc.querySelector<HTMLElement>(".drop-note")!;
+  assert.equal(note.hidden, false);
+  assert.match(note.textContent!, /Couldn't attach logo\.png \(not text\)\. Drag workspace files from the Explorer instead\./);
+  assert.deepEqual(p.sent.slice(before), [{ type: "dropUris", uris: [], types: ["Files"] }], "the host logs what it carried");
+
+  drop({ getData: () => "", types: ["text/plain"], files: [] });
+  await settle();
+  assert.equal(note.textContent, "Nothing to attach from that drop.");
+});

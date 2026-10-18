@@ -144,6 +144,11 @@ export class WorkspaceRuntime {
     return this.starting || this.creating !== undefined || (this.runner?.running ?? false);
   }
 
+  /** Test seam (read-only): each part of `running`, and the queue, for the integration tests' failure timeline. */
+  runState() {
+    return { starting: this.starting, creating: this.creating !== undefined, runner: this.runner?.running ?? false, queue: this.queue.map((q) => q.text), queuePaused: this.queuePaused };
+  }
+
   view(): WorkspaceView {
     const modes = this.modeDisclosures();
     const disclosure = modes[this.permissionMode] ?? modes.ask!;
