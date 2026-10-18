@@ -24,6 +24,7 @@ use provider `openai-compatible` and `kernl.baseUrl` (e.g. `http://localhost:114
   - the branch icon creates a workspace;
   - the clock icon lists the workspace's conversations, kept across restarts;
   - `...` holds Choose agent, Manage providers, Agent logins, and settings.
+  - Every list (agent, model, workspace, attach, conversations, setup steps) opens in the panel next to the button that opened it, with a search box for long lists; Escape or a click outside closes it. From the Command Palette, with the panel hidden, VS Code's own list is used. Typed answers (keys, names) still use VS Code's input box.
 - **Composer:**
   - `+` attaches Files & Folders, another Conversation, a GitHub Issue, or a Pull Request;
   - `@` autocompletes workspace paths; picked files and folders appear as highlighted `@path` mentions in your message (Backspace removes a whole mention);
@@ -42,6 +43,7 @@ use provider `openai-compatible` and `kernl.baseUrl` (e.g. `http://localhost:114
 - **On your messages:**
   - **Restore checkpoint** puts the files back to before that message (kernl can also rewind the conversation). It lists the files first and offers Undo; terminal side effects can't be undone.
   - **Fork from here** starts a new conversation with the history up to that point. Claude Code can fork only its whole conversation, from the last message.
+- **Tool calls:** one line each, in plain words ("Reading src/a.ts", "Running npm test"), with a status (pulsing while running, a check when done, a red cross on failure) and the time taken; click to see the arguments and output. Thinking steps are one line too, opening to the full thought.
 - **Replies:** agent replies render as Markdown (code blocks with Copy, lists, tables, links). Only `http(s)` links are clickable and they open in your browser; images are never loaded; raw HTML in a reply shows as text. Your own messages, tool output, and approval cards stay plain text.
 - **Footer:** the workspace chip (a dot means another workspace is running, or waiting for your approval) and the permission mode chip (below).
 
@@ -71,7 +73,7 @@ The mode chip opens the modes the workspace's agent supports; each says what it 
 | `openai-compatible` | Optional | One local or self-hosted server at `kernl.baseUrl`. |
 | `custom:<id>` | Set API key | Any number of OpenAI-compatible services (OpenRouter, Groq, a company gateway). Run **kernl: Add custom provider**, or add `{ "id", "label", "baseUrl", "model" }` to `kernl.customProviders`. The model must support tool calling; if it doesn't, the first tool call fails with the service's error. |
 
-Keys are never stored in settings, only in SecretStorage. **kernl: Clear stored keys** removes all of them, including CLI agent keys.
+Keys are never stored in settings, only in SecretStorage. **Clear stored keys** removes all of them, including CLI agent keys, and **Delete conversations and checkpoints** removes kernl's history (your files are not changed). Both are links in kernl's settings (under the provider setting) and in the Command Palette, and both ask first.
 
 Requires VS Code 1.140 or newer. The integrated-browser tools are verified on VS Code 1.142.
 

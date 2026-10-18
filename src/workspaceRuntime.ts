@@ -86,6 +86,8 @@ export class WorkspaceRuntime {
   private pendingHistory: unknown;
   /** Set while the pre-message snapshot is taken; counts as running. */
   private starting = false;
+  /** Stop was pressed while the snapshot was being taken: the agent doesn't start. */
+  private stopBeforeStart = false;
   /** Sequential thinking for the current conversation (kernl agent). */
   private thinking = new ThinkingLog();
   /** Long-running commands the kernl agent started; each has its own terminal. */
@@ -275,6 +277,13 @@ export class WorkspaceRuntime {
     const trimmed = text.trim();
     if (!trimmed || this.running) return;
     this.starting = true;
+    this.stopBeforeStart = false;
+    // The message and the running state show at once: the restore point below can take a while on a
+    // large folder, and the agent waits for it (Restore must reflect the files before the agent ran).
+    const turn = this.session.events.filter((e) => e.type === "userMessage").length;
+    const message: Extract<TranscriptEvent, { type: "userMessage" }> = { type: "userMessage", workspace: this.id, text: trimmed, attachments: attachments.length ? [...attachments] : undefined, id: randomUUID(), turn };
+    this.post(message);
+    this.host.workspacesChanged();
     let checkpoint: string | undefined;
     try {
       checkpoint = this.host.trusted() ? await this.host.checkpoints.snapshot(this.root, `before: ${trimmed.slice(0, 60)}`) : undefined;
@@ -283,8 +292,17 @@ export class WorkspaceRuntime {
     } finally {
       this.starting = false;
     }
-    const turn = this.session.events.filter((e) => e.type === "userMessage").length;
-    this.post({ type: "userMessage", workspace: this.id, text: trimmed, attachments: attachments.length ? [...attachments] : undefined, id: randomUUID(), checkpoint, turn });
+    if (checkpoint) {
+      message.checkpoint = checkpoint; // the session keeps this same message
+      this.host.post({ type: "checkpoint", workspace: this.id, messageId: message.id!, checkpoint });
+    }
+    if (this.stopBeforeStart) {
+      this.post({ type: "finished", workspace: this.id, reason: "stopped" });
+      this.holdQueue();
+      await this.saveSession();
+      this.host.workspacesChanged();
+      return;
+    }
     let runner: Runner;
     try {
       // Building a runner reads SecretStorage; hold the promise so a second Send can't start a second agent.
@@ -336,6 +354,7 @@ export class WorkspaceRuntime {
   }
 
   stop() {
+    if (this.starting) this.stopBeforeStart = true;
     this.runner?.stop();
   }
 
@@ -530,7 +549,7 @@ export class WorkspaceRuntime {
     return {
       text: (delta) => this.post({ type: "text", workspace: ws, delta }),
       toolCall: (id, name, args) => this.post({ type: "toolCall", workspace: ws, id, name, args: JSON.stringify(args).slice(0, 2000) }),
-      toolResult: (id, name, output) => this.post({ type: "toolResult", workspace: ws, id, name, output: output.slice(0, 4000) }),
+      toolResult: (id, name, output, failed) => this.post({ type: "toolResult", workspace: ws, id, name, output: output.slice(0, 4000), ...(failed ? { failed: true } : {}) }),
       usage: (inputTokens, outputTokens) => this.post({ type: "usage", workspace: ws, inputTokens, outputTokens }),
       subagentText: (id, delta) => this.post({ type: "subagentText", workspace: ws, id, delta }),
       finished: (reason, message) => {

@@ -138,7 +138,7 @@
               "openai-compatible"
             ],
             "order": 1,
-            "markdownDescription": "Model provider for the kernl agent: `anthropic`, `openai`, `google`, `deepseek`, `openai-compatible`, or `custom:<id>` for an entry in `#kernl.customProviders#`. Easiest: the model chip in the panel, or **kernl: Manage providers**."
+            "markdownDescription": "Model provider for the kernl agent: `anthropic`, `openai`, `google`, `deepseek`, `openai-compatible`, or `custom:<id>` for an entry in `#kernl.customProviders#`. Easiest: the model chip in the panel, or **kernl: Manage providers**.\n\n**Stored data:** [Clear stored keys](command:kernl.clearKeys) (API keys for every provider and CLI agent) · [Delete conversations and checkpoints](command:kernl.clearHistory) (your files are not changed). Both ask first."
           },
           "kernl.model": {
             "type": "string",
@@ -337,19 +337,9 @@
           "group": "1_agent@3"
         },
         {
-          "command": "kernl.clearKeys",
-          "when": "view == kernl.panel",
-          "group": "2_keys@1"
-        },
-        {
           "command": "kernl.openSettings",
           "when": "view == kernl.panel",
           "group": "3_settings@1"
-        },
-        {
-          "command": "kernl.clearHistory",
-          "when": "view == kernl.panel",
-          "group": "2_keys@2"
         }
       ],
       "explorer/context": [

@@ -24,7 +24,8 @@ import { createChatModel, isProviderId, type ProviderId, resolveProvider, settin
 import { SessionStore, transcriptText } from "./sessions";
 import { panelSnapshot, toApprovalCard } from "./ui/approvalCards";
 import { AgentPanel } from "./ui/panel";
-import { type HarnessView, httpUrl, type PanelToHost } from "./ui/protocol";
+import { PanelPrompts } from "./ui/panelPrompts";
+import { type HarnessView, httpUrl, type MenuAnchor, type PanelToHost } from "./ui/protocol";
 import { ProposalDiffs } from "./ui/proposalDiffs";
 import { HARNESSES, isHarness, NAMED_AGENT_PREFIX, type RuntimeHost, WorkspaceRuntime } from "./workspaceRuntime";
 import { type Prompts, vscodePrompts, WorkspaceCommands } from "./workspaces/commands";
@@ -83,7 +84,9 @@ export class Controller implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private host: RuntimeHost;
   private commands: WorkspaceCommands;
-  private prompts: Prompts = vscodePrompts;
+  /** Choices open as menus next to the panel control that asked (VS Code's own prompts when the panel is off screen). */
+  private panelPrompts: PanelPrompts;
+  private prompts: Prompts;
   /** Issue and pull request source; the integration tests swap in a stub. */
   private github: GitHubSource | undefined;
   /** The workspace the panel shows (reported by the panel); title-bar commands act on it. */
@@ -99,6 +102,8 @@ export class Controller implements vscode.Disposable {
     this.keys = new KeyStore(context.secrets, this.redactor);
     this.agentCredentials = new AgentCredentials(context.secrets, this.redactor);
     this.panel = new AgentPanel(context.extensionUri, this.redactor, (m) => void this.onPanelMessage(m).catch((e) => this.fail("Panel action failed", e)));
+    this.panelPrompts = new PanelPrompts(this.panel, vscodePrompts);
+    this.prompts = this.panelPrompts;
     this.host = {
       log: this.log,
       post: (m) => this.panel.post(m),
@@ -130,6 +135,7 @@ export class Controller implements vscode.Disposable {
       harnesses: () => this.harnessList(),
     });
     this.disposables.push(
+      this.panel.onDidHide(() => this.panelPrompts.cancel()),
       vscode.window.registerWebviewViewProvider("kernl.panel", this.panel, { webviewOptions: { retainContextWhenHidden: true } }),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("kernl.approvals") || e.affectsConfiguration("kernl.commandAllowList")) this.reportRuleProblems();
@@ -566,6 +572,16 @@ export class Controller implements vscode.Disposable {
     return this.workspaces.get(id);
   }
 
+  /** Runs a flow started from a panel control; its menus open next to that control. */
+  private async anchored<T>(anchor: MenuAnchor, flow: () => Promise<T>): Promise<T> {
+    this.panelPrompts.anchor = anchor;
+    try {
+      return await flow();
+    } finally {
+      this.panelPrompts.anchor = "title";
+    }
+  }
+
   private async onPanelMessage(m: PanelToHost) {
     switch (m.type) {
       case "ready":
@@ -602,13 +618,15 @@ export class Controller implements vscode.Disposable {
         return;
       }
       case "pickAttachments":
-        return this.pickAttachments();
+        return this.anchored("attach", () => this.pickAttachments());
       case "dropUris":
         return this.attachUris(m.uris);
       case "restore":
-        return this.restore(m.workspace, m.messageId);
+        return this.anchored(`restore:${m.messageId}`, () => this.restore(m.workspace, m.messageId));
       case "pickJob":
-        return this.pickJob();
+        return this.anchored("jobs", () => this.pickJob());
+      case "menuPick":
+        return this.panelPrompts.answer(m.id, m.index);
       case "fork":
         return this.workspace(m.workspace)?.fork(m.messageId).catch((err) => void vscode.window.showWarningMessage(err?.message ?? String(err)));
       case "stop":
@@ -641,7 +659,7 @@ export class Controller implements vscode.Disposable {
       case "openFolder":
         return void vscode.commands.executeCommand("workbench.action.files.openFolder");
       case "pickWorkspace":
-        return this.pickWorkspace();
+        return this.anchored("workspace", () => this.pickWorkspace());
       case "openLink": {
         // The host is the trust boundary: check again, whatever the panel decided.
         const url = httpUrl(m.url);
@@ -653,9 +671,9 @@ export class Controller implements vscode.Disposable {
         await vscode.env.clipboard.writeText(m.text);
         return;
       case "pickModel":
-        return this.pickModel();
+        return this.anchored("model", () => this.pickModel());
       case "pickHarness":
-        return this.pickHarness();
+        return this.anchored("agent", () => this.pickHarness());
     }
   }
 
@@ -726,6 +744,7 @@ export class Controller implements vscode.Disposable {
   }
 
   async clearKeys() {
+    if (!(await this.prompts.confirm("Clear all stored kernl keys?", "API keys for every model provider and CLI agent are removed from VS Code's secret storage. Agents logged in through their own CLI stay logged in.", "Clear keys"))) return;
     await this.keys.clearAll();
     await this.agentCredentials.clearAll();
     this.inputsChanged({ kind: "keys", harnesses: ["deepagents", ...Object.keys(CREDENTIAL_ENV)] });
@@ -811,6 +830,8 @@ export class Controller implements vscode.Disposable {
       receive: (m: PanelToHost) => this.onPanelMessage(m),
       onDidDeliver: this.panel.onDidDeliver,
       usePrompts: (p: Prompts) => (this.prompts = p),
+      /** Back to the real prompts (in-panel menus), after usePrompts. */
+      usePanelPrompts: () => (this.prompts = this.panelPrompts),
       activeWorkspace: () => this.active,
       approvalRules: () => approvalRules(),
       setHarness: (workspace: string, harness: string) => this.setHarness(workspace, harness),

@@ -6,8 +6,10 @@ import type { ApprovalCard, HarnessView, HostToPanel, PanelToHost, SendMode, Wor
 import { icon } from "./icons";
 import { attachmentChip, createAttachments } from "./attachments";
 import { MarkdownView } from "./markdown";
+import { createMenu } from "./menu";
 import { createModeMenu, modeIcon } from "./modeMenu";
 import { createSendMenu, sendModeOf } from "./sendMenu";
+import { createToolRow, type ToolRow } from "./toolRow";
 
 declare function acquireVsCodeApi(): { postMessage(m: PanelToHost): void };
 const vscode = acquireVsCodeApi();
@@ -37,6 +39,8 @@ interface Pane {
   assistant?: MarkdownView;
   replyText: string;
   toolRows: Map<string, HTMLElement>;
+  /** Tool calls shown as one-line rows (status, plain description, time), by call id. */
+  tools: Map<string, ToolRow>;
   /** Delegated subagents' text, per task call, rendered as Markdown inside the task row. */
   subagents: Map<string, { view: MarkdownView; text: string; steps: HTMLElement }>;
   /** The latest task row: where a subagent's own tool calls go. */
@@ -56,13 +60,15 @@ function argsOf(json: string): Record<string, unknown> {
 }
 
 /** A sequential-thinking step: "Thought 2/5" (or a revision or branch) and the thought. */
+/** A sequential-thinking step: one line ("Thought 2/5" and the start of the thought) that opens to the full thought. */
 function thoughtRow(args: Record<string, unknown>): HTMLElement {
-  const row = el("div", "thought");
+  const row = el("details", "thought");
   const n = `${args.thoughtNumber ?? "?"}/${args.totalThoughts ?? "?"}`;
   const kind = args.isRevision === true || args.isRevision === "true" ? `Revision ${n}${args.revisesThought ? ` (of thought ${args.revisesThought})` : ""}` : args.branchFromThought ? `Branch ${n} (from thought ${args.branchFromThought}${args.branchId ? `, ${args.branchId}` : ""})` : `Thought ${n}`;
-  const head = el("div", "thought-head");
-  head.append(icon("sparkle", 13), el("span", "", kind));
-  row.append(head, el("div", "thought-text", String(args.thought ?? "")));
+  const thought = String(args.thought ?? "");
+  const summary = el("summary");
+  summary.append(icon("sparkle", 13), el("span", "thought-head", kind), el("span", "thought-preview", thought.split("\n")[0]), icon("chevron", 12));
+  row.append(summary, el("div", "thought-text", thought));
   return row;
 }
 
@@ -87,8 +93,12 @@ input.setAttribute("aria-label", "Message");
 // Opens the host's agent menu (kernl and its agents first, then Claude Code, Codex, OpenCode).
 const agentChip = el("button", "chip harness");
 const modelChip = el("button", "chip model");
+// Menus the host opens for a control appear next to it (see menu.ts).
+agentChip.dataset.anchor = "agent";
+modelChip.dataset.anchor = "model";
 const sendButton = iconButton("send", "Send", icon("send"));
 const attachButton = iconButton("chip attach", "Add files or folders", icon("plus"));
+attachButton.dataset.anchor = "attach";
 const attachments = createAttachments(input, (m) => send(m), () => render());
 const sendMenu = createSendMenu((mode) => submit(mode));
 const sendGroup = el("div", "send-group");
@@ -105,6 +115,7 @@ composer.append(attachments.popover, sendMenu.menu, queueList, context, inputWra
 
 const footer = el("div", "footer");
 const workspaceChip = el("button", "chip workspace");
+workspaceChip.dataset.anchor = "workspace";
 // The permission mode: opens a menu of the modes this workspace's agent supports.
 const modeChip = el("button", "chip mode");
 const modeMenu = createModeMenu((mode) => send({ type: "setMode", workspace: active, mode }));
@@ -119,10 +130,12 @@ document.addEventListener("click", (e) => {
   if (modeMenu.isOpen() && !modeMenu.menu.contains(e.target as Node)) modeMenu.close();
 });
 const jobsChip = el("button", "chip jobs");
+jobsChip.dataset.anchor = "jobs";
+const anchoredMenu = createMenu((id, index) => send(index === undefined ? { type: "menuPick", id } : { type: "menuPick", id, index }));
 jobsChip.addEventListener("click", () => send({ type: "pickJob" }));
 const usage = el("span", "usage");
 footer.append(modeMenu.menu, workspaceChip, modeChip, jobsChip, el("span", "spacer"), usage);
-app.append(banner, logs, composer, footer);
+app.append(banner, logs, composer, footer, anchoredMenu.menu);
 
 const markdownActions = { openLink: (url: string) => send({ type: "openLink", url }), copy: (text: string) => send({ type: "copy", text }) };
 const panes = new Map<string, Pane>();
@@ -255,6 +268,14 @@ function renderQueue(p: Pane | undefined) {
   queueList.replaceChildren(head, ...rows);
 }
 
+/** Hover action on a message: put the files (and maybe the conversation) back to before it. */
+function addRestore(bubble: HTMLElement, workspace: string, messageId: string) {
+  const restore = iconButton("restore", "Restore checkpoint", icon("undo", 14));
+  restore.dataset.anchor = `restore:${messageId}`;
+  restore.addEventListener("click", () => send({ type: "restore", workspace, messageId }));
+  bubble.prepend(restore);
+}
+
 function select(id: string) {
   if (!panes.has(id)) return;
   const changed = id !== active;
@@ -273,7 +294,7 @@ function setWorkspaces(items: WorkspaceView[], focus?: string) {
     else {
       const log = el("div", "log");
       logs.append(log);
-      panes.set(view.id, { view, log, usage: "", replyText: "", toolRows: new Map(), subagents: new Map(), jobs: { running: 0, total: 0 } });
+      panes.set(view.id, { view, log, usage: "", replyText: "", toolRows: new Map(), tools: new Map(), subagents: new Map(), jobs: { running: 0, total: 0 } });
     }
   }
   const next = focus && panes.has(focus) ? focus : panes.has(active) ? active : (items[0]?.id ?? "main");
@@ -378,19 +399,20 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
     case "activeFile":
       attachments.setActiveFile(m.path);
       return;
+    case "menu":
+      anchoredMenu.open(m);
+      return;
+    case "menuClosed":
+      anchoredMenu.closed(m.id);
+      return;
   }
   const p = pane(m.workspace);
   if (!p) return;
   switch (m.type) {
     case "userMessage": {
       const bubble = el("div", "user", m.text);
-      if (m.checkpoint && m.id) {
-        // Hover action: put the files (and maybe the conversation) back to before this message.
-        const restore = iconButton("restore", "Restore checkpoint", icon("undo", 14));
-        const messageId = m.id;
-        restore.addEventListener("click", () => send({ type: "restore", workspace: p.view.id, messageId }));
-        bubble.append(restore);
-      }
+      if (m.id) bubble.dataset.messageId = m.id;
+      if (m.checkpoint && m.id) addRestore(bubble, p.view.id, m.id);
       if (m.id) {
         const fork = iconButton("fork", "Fork from here", icon("branch", 14));
         const messageId = m.id;
@@ -403,6 +425,11 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
         bubble.append(row);
       }
       p.log.append(bubble);
+      break;
+    }
+    case "checkpoint": {
+      const bubble = p.log.querySelector<HTMLElement>(`.user[data-message-id="${CSS.escape(m.messageId)}"]`);
+      if (bubble && !bubble.querySelector(".restore")) addRestore(bubble, p.view.id, m.messageId);
       break;
     }
     case "text":
@@ -425,21 +452,18 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
         p.log.append(row);
         break;
       }
-      const row = el("details", m.name === "task" ? "tool subagent" : "tool");
-      const summary = el("summary");
+      // A delegated subagent's row stays open while it works: its steps and text stream into it.
+      const tool = createToolRow(m.name, args, m.args, m.name === "task");
+      const row = tool.row;
       if (m.name === "task") {
-        // A delegated subagent: its text streams into this row (open while it works).
-        row.open = true;
-        summary.append(icon("branch", 14), el("span", "tool-name", `Subagent: ${String(args.subagent_type ?? "general-purpose")}`), el("span", "tool-detail", String(args.description ?? "")));
+        row.classList.add("subagent");
         const steps = el("div", "subagent-steps");
         const body = el("div", "subagent-output md");
         p.subagents.set(m.id, { view: new MarkdownView(body, markdownActions), text: "", steps });
         p.lastSubagent = m.id;
-        row.append(summary, steps, body);
-      } else {
-        summary.append(icon("tool", 14), el("span", "tool-name", m.name));
-        row.append(summary, el("pre", "", m.args));
+        tool.body.append(steps, body);
       }
+      p.tools.set(m.id, tool);
       p.toolRows.set(m.id, row);
       // A subagent's own tool calls ("explorer > grep") go inside its row.
       const parent = m.name.includes(" > ") && p.lastSubagent ? p.subagents.get(p.lastSubagent) : undefined;
@@ -459,7 +483,9 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
     case "toolResult": {
       const row = p.toolRows.get(m.id);
       if (row?.classList.contains("thought")) break; // the thought itself is the content; its JSON reply isn't
-      if (row) row.append(el("pre", "result", m.output));
+      const tool = p.tools.get(m.id);
+      if (tool) tool.setResult(m.output, m.failed === true);
+      else if (row) row.append(el("pre", "result", m.output));
       else p.log.append(el("pre", "result", `${m.name}\n${m.output}`));
       break;
     }
@@ -468,6 +494,8 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       break;
     case "finished":
       p.assistant = undefined;
+      // Calls that never reported back (Stop, an error) stop their timers.
+      for (const tool of p.tools.values()) tool.stop();
       if (m.reason === "stopped") p.log.append(el("div", "note", "Stopped."));
       if (m.reason === "error") p.log.append(el("div", "error", m.message ?? "Something went wrong."));
       break;
@@ -481,6 +509,8 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       break;
     case "cleared":
       p.log.replaceChildren();
+      for (const tool of p.tools.values()) tool.stop();
+      p.tools.clear();
       p.toolRows.clear();
       p.usage = "";
       p.assistant = undefined;

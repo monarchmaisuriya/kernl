@@ -22,6 +22,11 @@ export class PanelChannel<T> {
     this.ready = this.deliver !== undefined;
   }
 
+  /** True when a webview is attached and listening. */
+  get isReady(): boolean {
+    return this.ready;
+  }
+
   /** Returns whether the message was delivered. */
   post(message: T): boolean {
     if (!this.deliver || !this.ready) return false;

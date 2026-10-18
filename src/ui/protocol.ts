@@ -98,6 +98,21 @@ export interface QueuedView {
 /** How a message is sent: now (or queued while the agent runs), queued for later, or in a fork of this conversation. */
 export type SendMode = "now" | "queue" | "fork";
 
+/** Where an in-panel menu opens: next to this control (a message's Restore button is "restore:<message id>"). */
+export type MenuAnchor = "agent" | "model" | "workspace" | "attach" | "jobs" | "title" | `restore:${string}`;
+
+/** One row of an in-panel menu (VS Code's "$(icon) " label prefixes already turned into icon and checked). */
+export interface MenuItemView {
+  label: string;
+  description?: string;
+  detail?: string;
+  /** A codicon name from the host's labels (e.g. "add", "git-branch"); the panel shows its own icon for it. */
+  icon?: string;
+  checked?: boolean;
+  /** A group heading, not choosable. */
+  separator?: boolean;
+}
+
 export type HostToPanel =
   | { type: "status"; ready: boolean; problem?: string; provider: string; model: string; restricted: boolean }
   /** The full workspace list and run state; sent on ready and whenever it changes. */
@@ -106,6 +121,8 @@ export type HostToPanel =
   | { type: "snapshot"; cards: ApprovalCard[] }
   /** `id` and `checkpoint` (a snapshot of the files before it) let the panel offer Restore; `turn` counts the user's messages. */
   | { type: "userMessage"; workspace: string; text: string; attachments?: Attachment[]; id?: string; checkpoint?: string; turn?: number }
+  /** A message's restore point is ready (taken after the message was shown); the panel offers Restore on it. */
+  | { type: "checkpoint"; workspace: string; messageId: string; checkpoint: string }
   /** Puts text back in the composer (after a restore cut the conversation at that message). */
   | { type: "setInput"; workspace: string; text: string }
   /** Attachments to add to the composer (from the + menu, the Explorer, or a drop). */
@@ -122,12 +139,16 @@ export type HostToPanel =
   | { type: "activeFile"; path?: string }
   | { type: "text"; workspace: string; delta: string }
   | { type: "toolCall"; workspace: string; id: string; name: string; args: string }
-  | { type: "toolResult"; workspace: string; id: string; name: string; output: string }
+  | { type: "toolResult"; workspace: string; id: string; name: string; output: string; failed?: boolean }
   | { type: "approval"; card: ApprovalCard }
   | { type: "approvalClosed"; id: string }
   | { type: "usage"; workspace: string; inputTokens: number; outputTokens: number }
   | { type: "finished"; workspace: string; reason: "done" | "stopped" | "error"; message?: string }
   | { type: "cleared"; workspace: string }
+  /** A list to choose from, shown next to the control that asked (see PanelPrompts). */
+  | { type: "menu"; id: string; title: string; anchor: MenuAnchor; items: MenuItemView[]; search: boolean }
+  /** The host no longer needs an answer to this menu (another menu replaced it). */
+  | { type: "menuClosed"; id: string }
   /** A one-line note in the transcript, e.g. "Settings changed: the next message starts a new conversation." */
   | { type: "notice"; workspace: string; text: string };
 
@@ -162,6 +183,8 @@ export type PanelToHost =
   | { type: "pickModel" }
   /** The composer's agent chip: pick the harness for the shown workspace. */
   | { type: "pickHarness" }
+  /** The answer to an in-panel menu: the chosen row's index, or none when it was dismissed. */
+  | { type: "menuPick"; id: string; index?: number }
   /** The mode chip's menu: switch this workspace's permission mode. */
   | { type: "setMode"; workspace: string; mode: string }
   /** The empty panel's Open Folder button (shown when the window has no usable folder). */
@@ -171,7 +194,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "menuPick"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

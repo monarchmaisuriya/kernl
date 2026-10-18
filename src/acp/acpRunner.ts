@@ -285,7 +285,7 @@ export class AcpRunner implements Runner {
           case "tool_call_update":
             if (u.status === "completed" || u.status === "failed") {
               const out = (u.content ?? []).map(textOf).filter(Boolean).join("\n");
-              this.o.events.toolResult(u.toolCallId, u.title ?? "", out || u.status);
+              this.o.events.toolResult(u.toolCallId, u.title ?? "", out || u.status, u.status === "failed");
             }
             return;
           case "plan":

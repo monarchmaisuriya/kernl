@@ -6,14 +6,19 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { JSDOM } from "jsdom";
 import type { HarnessView, HostToPanel, PanelToHost, WorkspaceView } from "../../src/ui/protocol";
 
 const script = readFileSync(resolve(__dirname, "../webview/main.js"), "utf8");
 
+// Each panel's window is closed at the end, which stops its timers (a running tool row ticks every second).
+const windows: { close(): void }[] = [];
+after(() => windows.forEach((w) => w.close()));
+
 function loadPanel() {
   const dom = new JSDOM(`<!DOCTYPE html><body><div id="app"></div></body>`, { runScripts: "outside-only" });
+  windows.push(dom.window);
   const { window } = dom;
   const sent: PanelToHost[] = [];
   // Like the real webview bridge, messages are serialized on the way out (and leave jsdom's realm).
@@ -426,11 +431,11 @@ test("a delegated subagent gets its own row; its text streams there as Markdown,
   p.host({ type: "text", workspace: "main", delta: "Main answer." });
   const row = p.doc.querySelector<HTMLDetailsElement>(".tool.subagent")!;
   assert.equal(row.open, true);
-  assert.equal(row.querySelector(".tool-name")!.textContent, "Subagent: explorer");
-  assert.equal(row.querySelector(".tool-detail")!.textContent, "find the login code");
+  assert.equal(row.querySelector(".tool-action")!.textContent, "Delegating to explorer");
+  assert.equal(row.querySelector(".tool-target")!.textContent, "find the login code");
   assert.equal(row.querySelector(".subagent-output code")!.textContent, "src/auth.ts");
   assert.equal(p.doc.querySelector(".assistant")!.textContent, "Main answer.");
-  assert.equal(row.querySelector(".subagent-steps .tool .tool-name")!.textContent, "explorer > grep", "its own tool calls are inside its row");
+  assert.equal(row.querySelector(".subagent-steps .tool .tool-action")!.textContent, "explorer: Searching for", "its own tool calls are inside its row");
 });
 
 test("the jobs chip appears with background jobs and opens the jobs menu", () => {
@@ -601,4 +606,79 @@ test("while the agent works, a Working indicator stays at the end of its transcr
   p.host({ type: "finished", workspace: "main", reason: "done" });
   p.host(workspaces([MAIN]));
   assert.equal(p.doc.querySelector(".working"), null);
+});
+
+test("in-panel menus open next to the control that asked; picking, searching, Escape, and the host withdrawing all work", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const items = [
+    { label: "kernl", separator: true },
+    { label: "kernl", description: "your own model keys", checked: true },
+    { label: "Agents", separator: true },
+    { label: "Claude Code" },
+    { label: "OpenCode", detail: "needs setup" },
+  ];
+  p.host({ type: "menu", id: "m1", title: "Agent", anchor: "agent", items, search: false });
+  const menu = p.doc.querySelector<HTMLElement>(".anchored-menu")!;
+  assert.equal(menu.hidden, false);
+  assert.equal(p.doc.querySelector('[data-anchor="agent"]')!.classList.contains("harness"), true, "the agent chip is the anchor");
+  assert.deepEqual(p.all(".menu-heading").map((h) => h.textContent), ["kernl", "Agents"]);
+  assert.deepEqual(p.all(".menu-item .menu-item-label").map((l) => l.textContent), ["kernl", "Claude Code", "OpenCode"]);
+  assert.equal(p.all(".menu-item")[0].getAttribute("aria-current"), "true");
+  p.all(".menu-item")[1].click();
+  assert.deepEqual(p.sent.at(-1), { type: "menuPick", id: "m1", index: 3 }, "the index is into the host's full list");
+  assert.equal(menu.hidden, true);
+
+  p.host({ type: "menu", id: "m2", title: "", anchor: "workspace", items: [{ label: "alpha" }, { label: "beta" }, { label: "gamma" }], search: true });
+  const search = p.doc.querySelector<HTMLInputElement>(".menu-search")!;
+  search.value = "BET";
+  search.dispatchEvent(new p.window.Event("input"));
+  assert.deepEqual(p.all(".menu-item .menu-item-label").map((l) => l.textContent), ["beta"]);
+  search.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  assert.deepEqual(p.sent.at(-1), { type: "menuPick", id: "m2", index: 1 });
+
+  p.host({ type: "menu", id: "m3", title: "", anchor: "title", items: [{ label: "x" }], search: false });
+  menu.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.deepEqual(p.sent.at(-1), { type: "menuPick", id: "m3" }, "Escape dismisses");
+
+  p.host({ type: "menu", id: "m4", title: "", anchor: "attach", items: [{ label: "x" }], search: false });
+  const before = p.sent.length;
+  p.host({ type: "menuClosed", id: "m4" });
+  assert.equal(menu.hidden, true);
+  assert.equal(p.sent.length, before, "withdrawn by the host: no answer sent");
+});
+
+test("tool calls show as one line in plain words with a status and time, and open to readable arguments and output", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  p.host({ type: "toolCall", workspace: "main", id: "t1", name: "read_file", args: JSON.stringify({ file_path: "/src/a.ts" }) });
+  const row = p.doc.querySelector<HTMLDetailsElement>(".tool")!;
+  assert.equal(row.querySelector(".tool-action")!.textContent, "Reading");
+  assert.equal(row.querySelector(".tool-target")!.textContent, "src/a.ts");
+  assert.equal(row.dataset.status, "running");
+  assert.equal(row.querySelector(".tool-time")!.textContent, "0s");
+  assert.deepEqual([row.querySelector(".tool-arg-key")!.textContent, row.querySelector(".tool-arg-value")!.textContent], ["file_path", "/src/a.ts"]);
+  p.host({ type: "toolResult", workspace: "main", id: "t1", name: "read_file", output: "export const a = 1;" });
+  assert.equal(row.dataset.status, "done");
+  assert.equal(row.querySelector(".tool-output")!.textContent, "export const a = 1;");
+  p.host({ type: "toolCall", workspace: "main", id: "t2", name: "execute", args: JSON.stringify({ command: "npm test" }) });
+  p.host({ type: "toolResult", workspace: "main", id: "t2", name: "execute", output: "1 failing", failed: true });
+  assert.equal(p.all(".tool")[1].dataset.status, "failed");
+  p.host({ type: "toolCall", workspace: "main", id: "t3", name: "Read hello.txt", args: "{}" });
+  p.host({ type: "finished", workspace: "main", reason: "stopped" });
+  assert.equal(p.all(".tool")[2].dataset.status, "stopped", "a call that never reported back stops its timer");
+  assert.equal(p.all(".tool")[2].querySelector(".tool-action")!.textContent, "Read hello.txt");
+});
+
+test("a message shows at once; Restore appears on it when its restore point is ready", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  p.host({ type: "userMessage", workspace: "main", text: "change the title", id: "u1", turn: 0 });
+  const bubble = p.doc.querySelector<HTMLElement>(".user")!;
+  assert.equal(bubble.querySelector(".restore"), null, "no restore point yet");
+  p.host({ type: "checkpoint", workspace: "main", messageId: "u1", checkpoint: "abc123" });
+  bubble.querySelector<HTMLButtonElement>(".restore")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "restore", workspace: "main", messageId: "u1" });
+  p.host({ type: "checkpoint", workspace: "main", messageId: "u1", checkpoint: "abc123" });
+  assert.equal(bubble.querySelectorAll(".restore").length, 1, "only once");
 });

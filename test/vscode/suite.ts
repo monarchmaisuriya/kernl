@@ -354,6 +354,27 @@ export async function run() {
     reloaded.dispose();
   });
 
+  await check("Send shows the message and running state at once; Stop while the restore point is still being taken ends the run before the agent starts", async () => {
+    const posted: any[] = [];
+    const host = runtimeHost(true, () => true, posted);
+    const real = host.checkpoints;
+    let release!: () => void;
+    const slow = new Promise<void>((r) => (release = r));
+    host.checkpoints = Object.assign(Object.create(Object.getPrototypeOf(real)), real, { snapshot: async (root: string, label: string) => (label === "baseline" ? "baseline" : (await slow, real.snapshot(root, label))) });
+    const ws = new WorkspaceRuntime("main", "Main", root, "claude-code", host);
+    const sending = ws.send("write hello.txt while snapshotting");
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(posted.some((m) => m.type === "userMessage" && m.text === "write hello.txt while snapshotting"), "the message shows before the restore point exists");
+    assert.equal(ws.running, true, "and the workspace counts as running");
+    ws.stop();
+    release();
+    await sending;
+    assert.equal(posted.filter((m) => m.type === "finished").at(-1)?.reason, "stopped");
+    assert.ok(posted.some((m) => m.type === "checkpoint"), "the restore point still arrives");
+    assert.ok(!posted.some((m) => m.type === "approval" || (m.type === "text" && /hello from fake/.test(m.delta))), "the agent never started");
+    ws.dispose();
+  });
+
   await check("two worktree workspaces run CLI agents in parallel: approved writes only in its worktree, rejected writes nothing, merge brings it to main", async () => {
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "kernl-ws-repo-")));
     await git(repo, ["init", "-q", "-b", "main"]);
@@ -464,6 +485,21 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     const ws = await waitFor("its workspace list", (m) => m.type === "workspaces");
     assert.deepEqual(ws.items.map((w: any) => w.id), ["main"]);
     await waitFor("its status", (m) => m.type === "status");
+  });
+
+  await check("in-panel menus: a panel control's choices open in the panel next to it (not VS Code's top list), and dismissing ends the flow", async () => {
+    testing.usePanelPrompts();
+    try {
+      const from = delivered.length;
+      const flow = testing.receive({ type: "pickWorkspace" });
+      const menu = await waitFor("the workspace menu in the panel", (m) => m.type === "menu", from);
+      assert.equal(menu.anchor, "workspace");
+      assert.ok(menu.items.some((i: any) => i.label === "Main" && i.checked), JSON.stringify(menu.items));
+      await testing.receive({ type: "menuPick", id: menu.id });
+      await flow; // resolves: dismissing is a cancel, not a hang
+    } finally {
+      testing.usePrompts(scriptedPrompts);
+    }
   });
 
   await check("customisation files: a project rule change and a change in the user's own folder each rebuild idle Deep Agents", async () => {
@@ -713,7 +749,9 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await sending;
     assert.equal(readFileSync(join(root, "hello.txt"), "utf8"), "hi\n");
     const message = delivered.slice(from).find((m) => m.type === "userMessage");
-    assert.ok(message.checkpoint && message.id, "the message carries a checkpoint");
+    assert.ok(message.id, "the message is shown at once, before its restore point");
+    const ready = delivered.slice(from).find((m) => m.type === "checkpoint" && m.messageId === message.id);
+    assert.ok(ready?.checkpoint, "its restore point arrives once taken");
     scripted = { ...scripted, menu: /^Restore files only$/, confirm: true };
     await testing.receive({ type: "restore", workspace: "main", messageId: message.id });
     assert.deepEqual(menusShown.at(-1)!.map((i: any) => i.label), ["Restore files only"], "a CLI agent's conversation can't be cut, so only files are offered");

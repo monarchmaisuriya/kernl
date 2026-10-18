@@ -82,11 +82,29 @@ button.link { color: var(--vscode-textLink-foreground); padding-left: 4px; paddi
 .md th { font-weight: 600; background: var(--hover); }
 .md .md-align-center { text-align: center; } .md .md-align-right { text-align: right; }
 
-.tool { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 2px 8px; color: var(--muted); }
-.tool[open] { padding-bottom: 6px; }
-.tool summary { cursor: pointer; display: flex; align-items: center; gap: 6px; list-style: none; font-family: var(--vscode-editor-font-family); font-size: 0.92em; padding: 2px 0; }
-.tool summary::-webkit-details-marker { display: none; }
-.tool-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Tool calls: one quiet line (status, what it does, time, chevron) that opens to arguments and output */
+.tool { color: var(--muted); border-radius: var(--radius-sm); }
+.tool > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; min-width: 0; list-style: none; padding: 3px 6px; border-radius: var(--radius-sm); font-size: 0.92em; }
+.tool > summary:hover { background: var(--hover); color: var(--vscode-foreground); }
+.tool > summary::-webkit-details-marker, .thought > summary::-webkit-details-marker { display: none; }
+.tool-status { display: inline-flex; align-items: center; justify-content: center; width: 12px; flex: none; }
+.tool-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-progressBar-background, var(--vscode-focusBorder)); animation: working-pulse 1.2s ease-in-out infinite; }
+.tool-stopped { width: 7px; height: 2px; background: var(--muted); }
+.tool[data-status="done"] .tool-status { color: var(--vscode-testing-iconPassed, var(--muted)); }
+.tool[data-status="failed"] .tool-status, .tool[data-status="failed"] .tool-action { color: var(--vscode-errorForeground); }
+.tool-action { flex: none; color: var(--vscode-foreground); }
+.tool[data-status="done"] .tool-action, .tool[data-status="stopped"] .tool-action { color: inherit; }
+.tool-target { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
+.tool-time { margin-left: auto; padding-left: 6px; flex: none; font-variant-numeric: tabular-nums; font-size: 0.9em; }
+.tool > summary > .icon:last-child, .thought > summary > .icon:last-child { flex: none; transform: rotate(-90deg); transition: transform 0.12s; }
+.tool[open] > summary > .icon:last-child, .thought[open] > summary > .icon:last-child { transform: none; }
+.tool-body { margin: 2px 0 6px 26px; padding-left: 8px; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
+.tool-args { display: flex; flex-direction: column; gap: 1px; font-size: 0.88em; }
+.tool-arg { display: flex; gap: 8px; min-width: 0; }
+.tool-arg-key { flex: none; color: var(--muted); }
+.tool-arg-value { min-width: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--vscode-editor-font-family); color: var(--vscode-foreground); }
+.tool-output { max-height: 220px; overflow: auto; margin: 0; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--vscode-textCodeBlock-background, var(--surface)); color: var(--vscode-foreground); }
+@media (prefers-reduced-motion: reduce) { .tool-pulse { animation: none; } }
 pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
 .result { color: var(--muted); }
 .note { color: var(--muted); font-size: 0.92em; text-align: center; }
@@ -102,12 +120,15 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; font-famil
 .error { color: var(--vscode-errorForeground); white-space: pre-wrap; border-left: 2px solid var(--vscode-errorForeground); padding-left: 8px; }
 
 /* Thinking steps and delegated subagents */
-.thought { border-left: 2px solid var(--vscode-textLink-foreground); padding: 2px 0 2px 10px; color: var(--muted); }
-.thought-head { display: flex; align-items: center; gap: 6px; font-size: 0.85em; font-weight: 600; margin-bottom: 2px; }
-.thought-text { white-space: pre-wrap; word-break: break-word; font-size: 0.95em; }
-.tool.subagent { color: inherit; }
-.tool.subagent summary { color: var(--muted); }
-.tool-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-font-family); }
+.thought { color: var(--muted); }
+.thought > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; min-width: 0; list-style: none; padding: 3px 6px; border-radius: var(--radius-sm); font-size: 0.92em; }
+.thought > summary:hover { background: var(--hover); }
+.thought > summary > .icon:first-child { color: var(--vscode-textLink-foreground); flex: none; }
+.thought-head { flex: none; font-weight: 600; }
+.thought-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thought[open] .thought-preview { visibility: hidden; }
+.thought-text { margin: 2px 0 6px 26px; padding-left: 8px; border-left: 2px solid var(--vscode-textLink-foreground); white-space: pre-wrap; word-break: break-word; font-size: 0.95em; }
+.tool.subagent .tool-body { margin-left: 18px; }
 .subagent-output { padding: 6px 2px 2px; }
 .subagent-steps { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; }
 .jobs.active { color: var(--vscode-textLink-foreground); }
@@ -194,6 +215,21 @@ button.chip:hover:not(:disabled) { background: var(--hover); color: var(--vscode
 .footer { position: relative; }
 .mode.bypass { color: var(--vscode-editorWarning-foreground, var(--muted)); }
 button.mode:disabled { opacity: 1; cursor: default; }
+/* In-panel menus, opened next to the control that asked (menu.ts) */
+.anchored-menu { position: fixed; right: auto; bottom: auto; z-index: 20; display: flex; flex-direction: column; gap: 2px; padding: 4px; overflow: hidden; }
+.anchored-menu .menu-list { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.menu-title { padding: 4px 8px 2px; color: var(--muted); font-size: 0.85em; }
+.menu-search { margin: 2px 4px 4px; padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--vscode-input-border, var(--border)); background: var(--vscode-input-background); color: var(--vscode-input-foreground); font: inherit; outline: none; }
+.menu-search:focus { border-color: var(--vscode-focusBorder); }
+.menu-heading { padding: 6px 8px 2px; color: var(--muted); font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.04em; }
+.menu-item { display: flex; flex-direction: column; align-items: stretch; gap: 1px; width: 100%; padding: 4px 8px; border-radius: var(--radius-sm); text-align: left; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--vscode-quickInputList-focusBackground, var(--vscode-list-activeSelectionBackground, var(--hover))); color: var(--vscode-quickInputList-focusForeground, inherit); outline: none; }
+.menu-item-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.menu-item-icon { display: inline-flex; width: 14px; flex: none; }
+.menu-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-item-description { margin-left: auto; padding-left: 12px; color: var(--muted); font-size: 0.88em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.menu-item-detail { padding-left: 20px; color: var(--muted); font-size: 0.85em; white-space: normal; }
+.menu-empty { padding: 6px 8px; color: var(--muted); }
 /* The mode chip's menu, above the footer (like Claude Code's permission menu). */
 .mode-menu { right: auto; width: min(360px, calc(100vw - 24px)); max-height: 340px; }
 .mode-option { display: flex; flex-direction: column; align-items: stretch; gap: 1px; width: 100%; padding: 5px 8px; border-radius: var(--radius-sm); text-align: left; }

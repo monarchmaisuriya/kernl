@@ -17,9 +17,21 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   /** Every message that actually reached a ready webview (used by the integration tests). */
   readonly onDidDeliver = this.delivered.event;
 
+  private view: vscode.WebviewView | undefined;
+  private hidden = new vscode.EventEmitter<void>();
+  /** The panel was hidden or closed (an open in-panel menu can't be answered any more). */
+  readonly onDidHide = this.hidden.event;
+
   constructor(private extensionUri: vscode.Uri, private redactor: Redactor, private onMessage: (m: PanelToHost) => void) {}
 
+  /** True while the panel is on screen and its webview is listening. */
+  get visible(): boolean {
+    return !!this.view?.visible && this.channel.isReady;
+  }
+
   resolveWebviewView(view: vscode.WebviewView) {
+    this.view = view;
+    view.onDidChangeVisibility(() => view.visible || this.hidden.fire());
     const webview = view.webview;
     this.channel.attach((m) => void webview.postMessage(m));
     webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "out", "webview"), vscode.Uri.joinPath(this.extensionUri, "media")] };
@@ -27,7 +39,11 @@ export class AgentPanel implements vscode.WebviewViewProvider {
     webview.onDidReceiveMessage((m) => {
       if (isPanelToHost(m)) this.onMessage(m);
     });
-    view.onDidDispose(() => this.channel.detach());
+    view.onDidDispose(() => {
+      this.channel.detach();
+      this.view = undefined;
+      this.hidden.fire();
+    });
   }
 
   post(message: HostToPanel) {

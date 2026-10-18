@@ -8,7 +8,8 @@ import { untracedRunConfig } from "./tracing";
 export interface SessionEvents {
   text(delta: string): void;
   toolCall(id: string, name: string, args: unknown): void;
-  toolResult(id: string, name: string, output: string): void;
+  /** `failed`: the tool reported an error (LangChain status "error", ACP status "failed"). */
+  toolResult(id: string, name: string, output: string, failed?: boolean): void;
   /** Text a delegated subagent writes, for the `task` call that started it (not the main reply). */
   subagentText?(taskId: string, delta: string): void;
   usage(inputTokens: number, outputTokens: number): void;
@@ -115,7 +116,7 @@ export class AgentSession implements Runner {
           }
         } else if (ToolMessage.isInstance(message)) {
           flush();
-          this.events.toolResult(message.tool_call_id, message.name ?? "", textOf(message.content));
+          this.events.toolResult(message.tool_call_id, message.name ?? "", textOf(message.content), message.status === "error");
         }
       }
       flush();
