@@ -90,6 +90,15 @@ button.link { color: var(--vscode-textLink-foreground); padding-left: 4px; paddi
 pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
 .result { color: var(--muted); }
 .note { color: var(--muted); font-size: 0.92em; text-align: center; }
+/* The working indicator at the end of a running transcript */
+.working { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; color: var(--muted); font-size: 0.92em; }
+.working-dots { display: inline-flex; gap: 3px; }
+.working-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--vscode-progressBar-background, var(--vscode-focusBorder)); animation: working-pulse 1.2s ease-in-out infinite; }
+.working-dots span:nth-child(2) { animation-delay: 0.15s; }
+.working-dots span:nth-child(3) { animation-delay: 0.3s; }
+.working.waiting .working-dots span { background: var(--vscode-notificationsWarningIcon-foreground, var(--vscode-editorWarning-foreground, orange)); animation-duration: 2s; }
+@keyframes working-pulse { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .working-dots span { animation: none; opacity: 0.7; } }
 .error { color: var(--vscode-errorForeground); white-space: pre-wrap; border-left: 2px solid var(--vscode-errorForeground); padding-left: 8px; }
 
 /* Thinking steps and delegated subagents */

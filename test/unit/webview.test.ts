@@ -585,3 +585,20 @@ test("permission modes: Restricted Mode shows Read-only and no menu; an agent wi
   p.host(workspaces([{ ...MAIN, mode: "ask", modes: [{ id: "ask", label: "Ask before edits", icon: "shield", description: "x" }] }]));
   assert.equal(chip.disabled, true);
 });
+
+test("while the agent works, a Working indicator stays at the end of its transcript; it says when an approval is waiting, and goes away when the run ends", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  p.host({ type: "userMessage", workspace: "main", text: "explain this" });
+  assert.equal(p.doc.querySelector(".working"), null, "nothing while idle");
+  p.host(workspaces([{ ...MAIN, running: true }]));
+  const working = () => p.visibleLog().querySelector<HTMLElement>(".working");
+  assert.equal(working()?.textContent, "Working");
+  p.host({ type: "text", workspace: "main", delta: "This hook loads rewards." });
+  assert.equal(p.visibleLog().lastElementChild, working(), "it stays below new output");
+  p.host(workspaces([{ ...MAIN, running: true, waiting: 1 }]));
+  assert.equal(working()?.textContent, "Waiting for your approval");
+  p.host({ type: "finished", workspace: "main", reason: "done" });
+  p.host(workspaces([MAIN]));
+  assert.equal(p.doc.querySelector(".working"), null);
+});

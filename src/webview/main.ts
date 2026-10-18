@@ -141,11 +141,25 @@ function scroll() {
 }
 
 /** Everything outside the transcripts: composer, chips, banner, empty state. */
+// While the agent works: a pulsing row kept at the end of the shown transcript.
+const working = el("div", "working");
+working.setAttribute("role", "status");
+const workingText = el("span", "working-text");
+const workingDots = el("span", "working-dots");
+workingDots.append(el("span"), el("span"), el("span"));
+working.append(workingDots, workingText);
+
 function render() {
   const p = pane(active);
   const running = p?.view.running ?? false;
   const deepAgents = p?.view.harness === "deepagents";
   for (const [id, q] of panes) q.log.hidden = id !== active;
+  if (p && running) {
+    const waiting = p.view.waiting > 0;
+    workingText.textContent = waiting ? "Waiting for your approval" : "Working";
+    working.classList.toggle("waiting", waiting);
+    if (p.log.lastElementChild !== working) p.log.append(working);
+  } else working.remove();
   empty.hidden = p ? p.log.childElementCount > 0 : !noWorkspace;
   emptyText.textContent = p ? p.view.disclosure : (noWorkspace ?? "");
   openFolder.hidden = !!p || !noWorkspace;
