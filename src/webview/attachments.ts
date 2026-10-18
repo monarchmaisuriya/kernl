@@ -32,7 +32,7 @@ export function attachmentChip(a: Attachment, onRemove?: () => void): HTMLElemen
   const chip = el("span", "attachment");
   chip.title = a.kind === "folder" ? `${a.path}/ (folder)` : a.path;
   const name = a.kind === "text" ? a.path : a.path.split("/").pop() || a.path;
-  chip.append(icon(a.kind === "folder" ? "folder" : a.kind === "text" ? "sparkle" : "file", 13), el("span", "chip-text", name));
+  chip.append(icon(a.kind === "folder" ? "folder" : a.kind === "text" ? "kernl" : "file", 13), el("span", "chip-text", name));
   if (onRemove) {
     const remove = el("button", "attachment-remove");
     remove.setAttribute("aria-label", `Remove ${a.path}`);

@@ -391,9 +391,9 @@ test("a message with a checkpoint offers Restore, which asks the host; a restore
   p.host(workspaces([MAIN]));
   p.host({ type: "userMessage", workspace: "main", text: "with checkpoint", id: "m1", checkpoint: "abc123", turn: 0 });
   p.host({ type: "userMessage", workspace: "main", text: "no checkpoint (Restricted Mode)", id: "m2", turn: 1 });
-  const bubbles = p.all(".user");
-  assert.equal(bubbles[1].querySelector(".restore"), null);
-  p.button("Restore checkpoint", bubbles[0])!.click();
+  const messages = p.all(".user-message");
+  assert.equal(messages[1].querySelector(".restore"), null);
+  p.button("Restore checkpoint", messages[0])!.click();
   assert.deepEqual(p.sent.at(-1), { type: "restore", workspace: "main", messageId: "m1" });
   p.host({ type: "setInput", workspace: "main", text: "with checkpoint" });
   assert.equal(p.doc.querySelector<HTMLTextAreaElement>(".input")!.value, "with checkpoint");
@@ -403,7 +403,7 @@ test("each message offers Fork from here; text attachments show their label", ()
   const p = loadPanel();
   p.host(workspaces([MAIN]));
   p.host({ type: "userMessage", workspace: "main", text: "plan it", id: "m1", turn: 0 });
-  p.button("Fork from here", p.all(".user")[0])!.click();
+  p.button("Fork from here", p.all(".user-message")[0])!.click();
   assert.deepEqual(p.sent.at(-1), { type: "fork", workspace: "main", messageId: "m1" });
   p.host({ type: "addAttachments", items: [{ kind: "text", path: "Issue #7", text: "Login loops" }] });
   assert.equal(p.doc.querySelector(".attachments .attachment .chip-text")!.textContent, "Issue #7");
@@ -598,11 +598,16 @@ test("while the agent works, a Working indicator stays at the end of its transcr
   assert.equal(p.doc.querySelector(".working"), null, "nothing while idle");
   p.host(workspaces([{ ...MAIN, running: true }]));
   const working = () => p.visibleLog().querySelector<HTMLElement>(".working");
-  assert.equal(working()?.textContent, "Working");
+  const label = () => working()?.querySelector(".working-label")?.textContent;
+  assert.equal(label(), "Working");
+  assert.equal(working()!.querySelector(".working-label")!.getAttribute("role"), "status", "only the label is announced");
+  assert.equal(working()!.querySelector(".working-time")!.getAttribute("aria-hidden"), "true", "the ticking time isn't read out");
+  assert.equal(working()!.querySelector(".working-time")!.textContent, "", "no time under 1 s");
   p.host({ type: "text", workspace: "main", delta: "This hook loads rewards." });
   assert.equal(p.visibleLog().lastElementChild, working(), "it stays below new output");
   p.host(workspaces([{ ...MAIN, running: true, waiting: 1 }]));
-  assert.equal(working()?.textContent, "Waiting for your approval");
+  assert.equal(label(), "Waiting for your approval");
+  assert.ok(working()!.classList.contains("waiting"));
   p.host({ type: "finished", workspace: "main", reason: "done" });
   p.host(workspaces([MAIN]));
   assert.equal(p.doc.querySelector(".working"), null);
@@ -656,7 +661,7 @@ test("tool calls show as one line in plain words with a status and time, and ope
   assert.equal(row.querySelector(".tool-action")!.textContent, "Reading");
   assert.equal(row.querySelector(".tool-target")!.textContent, "src/a.ts");
   assert.equal(row.dataset.status, "running");
-  assert.equal(row.querySelector(".tool-time")!.textContent, "0s");
+  assert.equal(row.querySelector(".tool-time")!.textContent, "", "no time while under 1 s");
   assert.deepEqual([row.querySelector(".tool-arg-key")!.textContent, row.querySelector(".tool-arg-value")!.textContent], ["file_path", "/src/a.ts"]);
   p.host({ type: "toolResult", workspace: "main", id: "t1", name: "read_file", output: "export const a = 1;" });
   assert.equal(row.dataset.status, "done");
@@ -664,23 +669,26 @@ test("tool calls show as one line in plain words with a status and time, and ope
   p.host({ type: "toolCall", workspace: "main", id: "t2", name: "execute", args: JSON.stringify({ command: "npm test" }) });
   p.host({ type: "toolResult", workspace: "main", id: "t2", name: "execute", output: "1 failing", failed: true });
   assert.equal(p.all(".tool")[1].dataset.status, "failed");
+  assert.equal(p.all(".tool")[1].querySelector(".tool-action")!.textContent, "Failed: Running", "a failed call says so in its text");
+  assert.equal((p.all(".tool")[1] as HTMLDetailsElement).open, true, "a failed call opens itself");
   p.host({ type: "toolCall", workspace: "main", id: "t3", name: "Read hello.txt", args: "{}" });
   p.host({ type: "finished", workspace: "main", reason: "stopped" });
   assert.equal(p.all(".tool")[2].dataset.status, "stopped", "a call that never reported back stops its timer");
-  assert.equal(p.all(".tool")[2].querySelector(".tool-action")!.textContent, "Read hello.txt");
+  assert.equal(p.all(".tool")[2].querySelector(".tool-action")!.textContent, "Stopped: Read hello.txt");
 });
 
 test("a message shows at once; Restore appears on it when its restore point is ready", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
   p.host({ type: "userMessage", workspace: "main", text: "change the title", id: "u1", turn: 0 });
-  const bubble = p.doc.querySelector<HTMLElement>(".user")!;
-  assert.equal(bubble.querySelector(".restore"), null, "no restore point yet");
+  const message = p.doc.querySelector<HTMLElement>(".user-message")!;
+  assert.equal(message.querySelector(".restore"), null, "no restore point yet");
   p.host({ type: "checkpoint", workspace: "main", messageId: "u1", checkpoint: "abc123" });
-  bubble.querySelector<HTMLButtonElement>(".restore")!.click();
+  message.querySelector<HTMLButtonElement>(".restore")!.click();
   assert.deepEqual(p.sent.at(-1), { type: "restore", workspace: "main", messageId: "u1" });
   p.host({ type: "checkpoint", workspace: "main", messageId: "u1", checkpoint: "abc123" });
-  assert.equal(bubble.querySelectorAll(".restore").length, 1, "only once");
+  assert.equal(message.querySelectorAll(".restore").length, 1, "only once");
+  assert.deepEqual(p.all(".user-actions .message-action").map((b) => b.getAttribute("aria-label")), ["Copy message", "Restore checkpoint", "Fork from here"], "Restore lands between Copy and Fork");
 });
 
 test("thinking streams open as 'Thinking…', then collapses to 'Thought for …' with a preview when the reply starts; the setting can keep it open", () => {
@@ -715,7 +723,7 @@ test("an agent's tool call is one row updated in place: kind icon, waiting, runn
   p.host({ type: "toolCall", workspace: "wt:fix", id: "e1", name: "Edit src/a.ts", args: "{}", kind: "edit", status: "pending", locations: [{ path: "src/a.ts", line: 3 }] });
   const row = p.doc.querySelector<HTMLDetailsElement>(".tool")!;
   assert.equal(row.dataset.status, "pending");
-  assert.ok(row.querySelector(".tool-waiting"), "a hollow mark while waiting");
+  assert.equal(row.querySelector(".tool-status"), null, "no status marks: the row's state is in its text and style");
   p.host({ type: "toolCall", workspace: "wt:fix", id: "e1", name: "Edit src/a.ts", args: "{}", kind: "edit", status: "running", diff: { path: "src/a.ts", added: 2, removed: 1 } });
   assert.equal(p.all(".tool").length, 1, "the same row, not a new one");
   assert.equal(row.dataset.status, "running");
@@ -801,4 +809,202 @@ test("screen readers: the transcript doesn't read out tokens; finished replies, 
   assert.equal(polite.textContent, "Approval needed: Run command");
   p.host({ type: "finished", workspace: "main", reason: "error", message: "No API key stored." });
   assert.equal(urgent.textContent, "Something went wrong: No API key stored.");
+});
+
+test("message actions: Copy, Restore, Fork sit under your message; Copy and Fork under a finished reply, which copies every block of the turn's reply", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  p.host({ type: "userMessage", workspace: "main", text: "explain useRewards", id: "u1", checkpoint: "abc", turn: 0 });
+  const userRow = p.doc.querySelector<HTMLElement>(".user-message > .message-actions")!;
+  assert.ok(userRow.previousElementSibling?.classList.contains("user"), "the row is under the bubble, not inside it");
+  assert.equal(p.all(".user").length, 1, "the row doesn't take the bubble's style (only the bubble is .user)");
+  p.button("Copy message", userRow)!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "copy", text: "explain useRewards" });
+  assert.equal(p.button("Copied", userRow)?.classList.contains("copy"), true, "Copy confirms");
+  p.host({ type: "text", workspace: "main", delta: "It loads rewards." });
+  p.host({ type: "toolCall", workspace: "main", id: "t1", name: "read_file", args: JSON.stringify({ file_path: "/src/a.ts" }) });
+  p.host({ type: "toolResult", workspace: "main", id: "t1", name: "read_file", output: "x" });
+  assert.equal(p.doc.querySelector(".reply-actions"), null, "no reply actions while the turn runs");
+  p.host({ type: "text", workspace: "main", delta: "Then it caches them." });
+  p.host({ type: "finished", workspace: "main", reason: "done" });
+  const replyRow = p.doc.querySelector<HTMLElement>(".reply-actions")!;
+  assert.equal(p.visibleLog().lastElementChild, replyRow, "under the reply");
+  p.button("Copy reply", replyRow)!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "copy", text: "It loads rewards.\n\nThen it caches them." });
+  p.button("Fork from here", replyRow)!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "fork", workspace: "main", messageId: "u1" });
+  assert.deepEqual(p.all(".message-actions.latest"), [userRow, replyRow], "the newest turn's rows stay visible");
+  p.host({ type: "userMessage", workspace: "main", text: "and errors?", id: "u2", turn: 1 });
+  assert.equal(p.all(".message-actions.latest").length, 1, "earlier rows show on hover only");
+  p.host({ type: "finished", workspace: "main", reason: "stopped" });
+  assert.equal(p.all(".reply-actions").length, 1, "a turn with no reply text gets no reply row");
+});
+
+test("message actions: a CLI agent's earlier turns can't be forked, and say why; kernl's own agent can fork any turn", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT]));
+  p.host({ type: "userMessage", workspace: "wt:fix", text: "first", id: "u1", turn: 0 });
+  p.host({ type: "text", workspace: "wt:fix", delta: "one" });
+  p.host({ type: "finished", workspace: "wt:fix", reason: "done" });
+  const forks = () => p.all(".message-action.fork");
+  assert.equal(forks().some((b) => b.getAttribute("aria-disabled") === "true"), false, "the latest turn can fork");
+  p.host({ type: "userMessage", workspace: "wt:fix", text: "second", id: "u2", turn: 1 });
+  const [userFork, replyFork, latestFork] = forks();
+  for (const b of [userFork, replyFork]) {
+    assert.equal(b.getAttribute("aria-disabled"), "true");
+    assert.equal(b.title, "Claude Code can fork only from the last message");
+  }
+  const before = p.sent.length;
+  userFork.click();
+  assert.equal(p.sent.length, before, "nothing is sent");
+  assert.equal(latestFork.getAttribute("aria-disabled"), null);
+
+  const k = loadPanel();
+  k.host(workspaces([MAIN]));
+  k.host({ type: "userMessage", workspace: "main", text: "first", id: "u1", turn: 0 });
+  k.host({ type: "userMessage", workspace: "main", text: "second", id: "u2", turn: 1 });
+  assert.equal(k.all(".message-action.fork").some((b) => b.getAttribute("aria-disabled") === "true"), false);
+});
+
+test("message actions come back when a conversation is replayed", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const events: HostToPanel[] = [
+    { type: "userMessage", workspace: "main", text: "hi", id: "u1", checkpoint: "abc", turn: 0 },
+    { type: "text", workspace: "main", delta: "hello" },
+    { type: "finished", workspace: "main", reason: "done" },
+  ];
+  events.forEach(p.host);
+  p.host({ type: "cleared", workspace: "main" });
+  events.forEach(p.host);
+  assert.equal(p.all(".user-actions").length, 1);
+  assert.equal(p.all(".reply-actions").length, 1);
+  assert.ok(p.button("Restore checkpoint"));
+});
+
+test("the Working indicator shows how long the run has taken, from 1 s", async () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  p.host(workspaces([{ ...MAIN, running: true }]));
+  await new Promise((r) => setTimeout(r, 1100));
+  assert.equal(p.doc.querySelector(".working-time")!.textContent, "· 1s");
+  p.host(workspaces([MAIN]));
+  p.host(workspaces([{ ...MAIN, running: true }]));
+  assert.equal(p.doc.querySelector(".working-time")!.textContent, "", "a new run starts from zero");
+});
+
+test("a command row leads with the agent's description, the command after it; without one it reads Running, then Ran", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT]));
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "x1", name: "cd /ws && grep -n useRewards src", args: "{}", kind: "execute", status: "running", command: "grep -n useRewards src", description: "Find usages of useRewards" });
+  const row = p.doc.querySelector<HTMLElement>(".tool")!;
+  assert.ok(row.classList.contains("command"));
+  assert.equal(row.querySelector(".tool-action")!.textContent, "Find usages of useRewards");
+  assert.equal(row.querySelector(".tool-target")!.textContent, "grep -n useRewards src");
+  assert.equal(row.querySelector("summary")!.title, "Find usages of useRewards\ngrep -n useRewards src");
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "x2", name: "npm test", args: "{}", kind: "execute", status: "running", command: "npm test" });
+  const plain = p.all(".tool")[1];
+  assert.equal(plain.querySelector(".tool-action")!.textContent, "Running");
+  p.host({ type: "toolResult", workspace: "wt:fix", id: "x2", name: "npm test", output: "ok" });
+  assert.equal(plain.querySelector(".tool-action")!.textContent, "Ran");
+});
+
+test("a long output shows its first and last 5 lines, and Show all opens the rest", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const output = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n");
+  p.host({ type: "toolCall", workspace: "main", id: "t1", name: "execute", args: JSON.stringify({ command: "npm test" }) });
+  p.host({ type: "toolResult", workspace: "main", id: "t1", name: "execute", output });
+  const shown = () => p.all(".tool .tool-output").map((o) => o.textContent);
+  assert.deepEqual(shown(), ["line 1\nline 2\nline 3\nline 4\nline 5", "line 36\nline 37\nline 38\nline 39\nline 40"]);
+  p.button("Show all 40 lines")!.click();
+  assert.deepEqual(shown(), [output]);
+  p.host({ type: "toolCall", workspace: "main", id: "t2", name: "execute", args: JSON.stringify({ command: "ls" }) });
+  const twelve = Array.from({ length: 12 }, (_, i) => `f${i}`).join("\n");
+  p.host({ type: "toolResult", workspace: "main", id: "t2", name: "execute", output: twelve });
+  assert.equal(p.all(".tool")[1].querySelector(".tool-output")!.textContent, twelve, "hiding a line or two saves nothing");
+});
+
+test("reads and searches in a row become one line, Exploring while they run and Explored when done, that opens to the rows", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT]));
+  const call = (id: string, name: string, kind: string) => p.host({ type: "toolCall", workspace: "wt:fix", id, name, args: "{}", kind, status: "running" });
+  const done = (id: string, failed = false) => p.host({ type: "toolResult", workspace: "wt:fix", id, name: id, output: "x", failed });
+  call("r1", "Read src/a.ts", "read");
+  assert.equal(p.doc.querySelector(".tool-group"), null, "a single read stays a plain row");
+  call("s1", "grep -n useRewards", "search");
+  const group = p.doc.querySelector<HTMLDetailsElement>(".tool-group")!;
+  assert.equal(group.querySelector(".tool-action")!.textContent, "Exploring · 1 file, 1 search");
+  assert.equal(group.open, false, "collapsed");
+  for (const id of ["s2", "s3", "s4"]) call(id, `grep ${id}`, "search");
+  for (const id of ["r1", "s1", "s2", "s3"]) done(id);
+  done("s4", true);
+  assert.equal(group.querySelector(".tool-action")!.textContent, "Explored 1 file, 4 searches");
+  assert.equal(group.querySelector(".tool-group-failed")!.textContent, "· 1 failed");
+  assert.equal(group.dataset.groupStatus, "failed");
+  assert.equal(group.querySelectorAll(".tool-group-rows > .tool").length, 5, "it opens to the five rows");
+  assert.equal(p.visibleLog().querySelectorAll(":scope > .tool").length, 1, "one line in the transcript");
+  p.host({ type: "text", workspace: "wt:fix", delta: "Found it." });
+  call("r2", "Read src/b.ts", "read");
+  call("x1", "npm test", "execute");
+  call("r3", "Read src/c.ts", "read");
+  assert.equal(p.all(".tool-group").length, 1, "text, or another kind of call, ends a group");
+});
+
+test("grouping: kernl's own lookups group too, inside a subagent's steps as well; an edit never does", () => {
+  const p = loadPanel();
+  p.host(workspaces([{ ...MAIN, running: true }]));
+  p.host({ type: "toolCall", workspace: "main", id: "a", name: "read_file", args: JSON.stringify({ file_path: "/a.ts" }) });
+  p.host({ type: "toolCall", workspace: "main", id: "b", name: "grep", args: JSON.stringify({ pattern: "x" }) });
+  assert.equal(p.all(".tool-group").length, 1, "the Working indicator between them doesn't count");
+  p.host({ type: "toolCall", workspace: "main", id: "e", name: "edit_file", args: JSON.stringify({ file_path: "/a.ts" }) });
+  p.host({ type: "toolCall", workspace: "main", id: "t", name: "task", args: JSON.stringify({ subagent_type: "explorer", description: "find it" }) });
+  p.host({ type: "toolCall", workspace: "main", id: "t1", name: "explorer > glob", args: JSON.stringify({ pattern: "*.ts" }) });
+  p.host({ type: "toolCall", workspace: "main", id: "t2", name: "explorer > read_file", args: JSON.stringify({ file_path: "/b.ts" }) });
+  const sub = p.doc.querySelector(".subagent-steps")!;
+  assert.equal(sub.querySelectorAll(".tool-group").length, 1);
+  assert.equal(sub.querySelector(".tool-group .tool-action")!.textContent, "Exploring · 1 file, 1 search");
+  p.host({ type: "finished", workspace: "main", reason: "stopped" });
+  assert.equal(sub.querySelector(".tool-group .tool-action")!.textContent, "Explored 1 file, 1 search", "Stop settles the group");
+});
+
+test("tool rows carry no tick or cross: done is plain text, a failure reads 'Failed: <description>', and a group shows only its failure count", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT]));
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "x1", name: "grep x", args: "{}", kind: "execute", status: "running", command: "grep -n x src", description: "Find usages of x" });
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "x2", name: "npm test", args: "{}", kind: "execute", status: "running", command: "npm test" });
+  p.host({ type: "toolResult", workspace: "wt:fix", id: "x1", name: "grep x", output: "no such file", failed: true });
+  p.host({ type: "toolResult", workspace: "wt:fix", id: "x2", name: "npm test", output: "boom", failed: true });
+  const [described, plain] = p.all(".tool");
+  assert.equal(described.querySelector(".tool-action")!.textContent, "Failed: Find usages of x");
+  assert.equal(described.querySelector(".tool-target")!.textContent, "grep -n x src");
+  assert.equal(plain.querySelector(".tool-action")!.textContent, "Failed:", "an undescribed command: 'Failed:' then the command");
+  assert.equal(plain.querySelector(".tool-target")!.textContent, "npm test");
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "r1", name: "Read a.ts", args: "{}", kind: "read", status: "running" });
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "r2", name: "Read b.ts", args: "{}", kind: "read", status: "running" });
+  const group = p.doc.querySelector<HTMLElement>(".tool-group")!;
+  assert.equal(group.dataset.groupStatus, "running", "a running group's text shimmers (styled by state)");
+  p.host({ type: "toolResult", workspace: "wt:fix", id: "r1", name: "Read a.ts", output: "a" });
+  p.host({ type: "toolResult", workspace: "wt:fix", id: "r2", name: "Read b.ts", output: "b" });
+  assert.equal(group.querySelector(".tool-action")!.textContent, "Explored 2 files");
+  assert.equal(p.doc.querySelectorAll(".tool-status").length, 0, "no status marks anywhere");
+  for (const summary of p.all(".tool > summary")) assert.ok(summary.firstElementChild!.classList.contains("tool-kind"), "each line starts with its kind icon");
+});
+
+test("read-only shell lookups fold in with reads and searches, even when the command arrives after the call's first report", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT]));
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "r1", name: "Read src/a.ts", args: "{}", kind: "read", status: "running" });
+  // Claude Code's first report of a Bash call can have an empty input; the command follows.
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "x1", name: "Terminal", args: "{}", kind: "execute", status: "pending" });
+  assert.equal(p.doc.querySelector(".tool-group"), null, "not a lookup yet");
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "x1", name: "grep -n x src", args: "{}", kind: "execute", status: "running", command: "grep -n x src", description: "Find x", lookup: "search" });
+  const group = p.doc.querySelector<HTMLElement>(".tool-group")!;
+  assert.ok(group, "it joins the read before it");
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "x2", name: "cat b.ts", args: "{}", kind: "execute", status: "running", command: "cat b.ts", lookup: "read" });
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "x3", name: "npm test", args: "{}", kind: "execute", status: "running", command: "npm test" });
+  for (const id of ["r1", "x1", "x2", "x3"]) p.host({ type: "toolResult", workspace: "wt:fix", id, name: id, output: "ok" });
+  assert.equal(group.querySelector(".tool-action")!.textContent, "Explored 2 files, 1 search");
+  assert.equal(p.visibleLog().querySelectorAll(":scope > .tool").length, 2, "the group, then npm test on its own line");
+  assert.equal(group.querySelectorAll(".tool-group-rows > .tool")[1].querySelector(".tool-action")!.textContent, "Find x", "inside, the row keeps its description");
 });

@@ -621,6 +621,10 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       assert.deepEqual(read.map((m) => m.status ?? "-"), ["pending", "running", "-"], "one call, updated in place");
       assert.equal(read[0].kind, "read");
       assert.deepEqual(read[0].locations, [{ path: "src/a.ts", line: 3 }], "shown relative to the workspace");
+      const command = got.find((m) => m.type === "toolCall" && m.id === "x1");
+      assert.equal(command?.description, "Find usages of useRewards", "a command leads with the agent's description");
+      assert.equal(command?.command, "grep -n useRewards src", "without the cd into the workspace folder");
+      assert.equal(command?.lookup, "search", "a read-only command folds in with the other lookups");
       assert.ok(got.some((m) => m.type === "toolCall" && m.id === "e1" && m.diff?.added === 2 && m.diff?.removed === 1));
       assert.ok(got.some((m) => m.type === "plan" && m.entries.length === 2));
       assert.ok(got.some((m) => m.type === "context" && m.used === 150000 && m.size === 200000));

@@ -21,12 +21,17 @@
   - **Send in a forked session** (Option+Cmd+Enter, or Alt+Ctrl+Enter). The conversation is forked at its last message and the message goes to the fork; the original stays in Conversations. This works when the agent is idle. Claude Code forks its whole conversation; an agent that can't fork says so, and your message and its attachments go back in the box.
 
   Queued messages show above the input, each with Remove. When a run finishes normally, the next one sends. After Stop, an error, or a change of conversation, the queue pauses: use **Send now** on a message to continue. Queued messages are kept with your conversations: after a window reload they come back paused, and Clear history removes them.
-- **On your messages:**
+- **Under your messages:** Copy, Restore, and Fork. Under each finished reply: Copy and Fork. The newest turn's buttons always show; earlier ones show on hover or keyboard focus.
+  - **Copy** copies your message, or the whole reply of that turn (every part between tool calls, as Markdown).
   - **Restore checkpoint** puts the files back to before that message (kernl can also rewind the conversation). It lists the files first and offers Undo; terminal side effects can't be undone.
-  - **Fork from here** starts a new conversation with the history up to that point. Claude Code can fork only its whole conversation, from the last message.
+  - **Fork from here** starts a new conversation with the history up to and including that turn's reply; Fork under your message and under its reply do the same. CLI agents can fork only their whole conversation, so on earlier turns their Fork is dimmed and says why.
+- **Working:** while the agent works, "Working" shimmers at the end of the transcript with how long the run has taken; "Waiting for your approval" when a card is waiting. It stays still with Reduce Motion.
 - **Thinking:** when the agent thinks (Claude Code, Codex, OpenCode, and kernl's own agent with DeepSeek, or Claude with a reasoning effort set), "Thinking…" streams in place, then collapses to "Thought for 12s" and a preview; click to reopen. `kernl.thinkingDisplay` keeps it always collapsed or always open. What's shown is the model's own summary of its thinking.
 - **Tool calls:**
-  - One line each, updated in place as the call moves from waiting to running to done or failed: an icon for the kind of action, what it does in plain words ("Reading src/a.ts", "Running npm test"), and the time taken.
+  - One line each, updated in place as the call moves from waiting to running to done or failed: an icon for the kind of action, what it does in plain words ("Reading src/a.ts", "Running npm test"), and the time taken (not shown for instant calls). There are no tick marks: a running call's text shimmers, a finished one is plain, and a failed one reads "Failed: …" in red.
+  - A command leads with the agent's own description when it gives one ("Find usages of useRewards"), then the command; a `cd` into the workspace folder is left out.
+  - Reads and searches in a row fold into one line, "Explored 1 file, 4 searches" ("· 1 failed" in red when one failed); click it for the individual rows. A shell command counts when every part of it only reads or searches (`grep`, `rg`, `find`, `ls`, `cat`, `head`, `tail`, `wc`, `sed -n`, output thrown away at most); anything that could write a file or run a program stays its own line.
+  - Long output shows its first and last 5 lines, with **Show all**; a failed call opens itself.
   - An edit shows its size (+2 −1) and **View diff** (VS Code's diff editor).
   - Files the agent works on are links.
   - Click a row for its arguments and output.

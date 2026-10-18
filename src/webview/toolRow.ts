@@ -1,6 +1,6 @@
-// Tool calls in the transcript, one line each: a status mark (running, done, failed, stopped), what
-// the agent is doing in plain words ("Reading src/a.ts"), how long it has taken, and a chevron that
-// opens the arguments and output. Built with createElement + textContent only.
+// Tool calls in the transcript, one line each: what the agent is doing in plain words ("Reading
+// src/a.ts"), how long it has taken, and a chevron that opens the arguments and output. No status
+// marks: a running call's text shimmers, a failed one reads "Failed: …" in red. Built with createElement + textContent only.
 import type { ToolInfo, ToolLocation } from "../ui/protocol";
 import { icon, type IconName } from "./icons";
 
@@ -69,13 +69,26 @@ const KIND_OF_TOOL: Record<string, string> = {
   browser_navigate: "fetch", browser_click: "fetch", browser_type: "fetch", browser_read_page: "fetch", browser_screenshot: "fetch", task: "think",
 };
 const KIND_ICON: Record<string, IconName> = {
-  read: "file", edit: "pencil", delete: "trash", move: "branch", search: "search", execute: "terminal", think: "sparkle", fetch: "globe", switch_mode: "shield",
+  read: "file", edit: "pencil", delete: "trash", move: "branch", search: "search", execute: "terminal", think: "kernl", fetch: "globe", switch_mode: "shield",
 };
+
+/** Reads and searches: quiet steps that group into one "Explored …" line when they come in a row. */
+export function quietKind(name: string, kind?: string, lookup?: "read" | "search"): "read" | "search" | undefined {
+  if (lookup) return lookup; // a command that only reads or searches (the runner decides)
+  if (kind) return kind === "read" || kind === "search" ? kind : undefined;
+  return QUIET_TOOLS[name.replace(/^.+? > /, "")];
+}
+/** kernl's own file lookups (its job tools read job state, not files, so they don't group). */
+const QUIET_TOOLS: Record<string, "read" | "search"> = { read_file: "read", ls: "search", glob: "search", grep: "search" };
 
 export function kindIcon(name: string, kind?: string): IconName {
   const base = name.replace(/^.+? > /, "");
   return KIND_ICON[kind ?? KIND_OF_TOOL[base] ?? ""] ?? "tool";
 }
+
+/** Shorter than this, a call's time isn't shown: it was instant. */
+const INSTANT_MS = 1000;
+const shownElapsed = (ms: number) => (ms < INSTANT_MS ? "" : formatElapsed(ms));
 
 export function formatElapsed(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -105,6 +118,21 @@ function argsBlock(args: Record<string, unknown>, raw: string): HTMLElement {
   return block;
 }
 
+/** Lines kept from each end of a long output; the middle opens with "Show all". */
+const OUTPUT_EDGE_LINES = 5;
+
+/** A tool's output: the first and last lines of a long one, with a button for the whole of it. */
+function outputBlock(output: string): HTMLElement {
+  const lines = output.replace(/\n$/, "").split("\n");
+  // Hiding fewer than a couple of lines saves nothing.
+  if (lines.length <= OUTPUT_EDGE_LINES * 2 + 2) return el("pre", "tool-output", output);
+  const box = el("div", "tool-output-preview");
+  const all = el("button", "link tool-output-all", `Show all ${lines.length} lines`);
+  all.addEventListener("click", () => box.replaceWith(el("pre", "tool-output", output)));
+  box.append(el("pre", "tool-output", lines.slice(0, OUTPUT_EDGE_LINES).join("\n")), all, el("pre", "tool-output", lines.slice(-OUTPUT_EDGE_LINES).join("\n")));
+  return box;
+}
+
 export interface ToolRow {
   row: HTMLDetailsElement;
   /** Where a subagent's text and steps go (task rows only). */
@@ -126,7 +154,7 @@ let ticker: ReturnType<typeof setInterval> | undefined;
 
 /** One timer for every running row, only while any runs. */
 function tick() {
-  for (const r of running) r.time.textContent = formatElapsed(Date.now() - r.started);
+  for (const r of running) r.time.textContent = shownElapsed(Date.now() - r.started);
   if (!running.size && ticker) (clearInterval(ticker), (ticker = undefined));
 }
 
@@ -134,13 +162,12 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
   const row = el("details", "tool");
   row.open = open;
   const summary = el("summary");
-  const status = el("span", "tool-status");
   const kind = el("span", "tool-kind");
   const action = el("span", "tool-action");
   const target = el("span", "tool-target");
   const size = el("span", "tool-diff");
-  const time = el("span", "tool-time", "0s");
-  summary.append(status, kind, action, target, size, time, icon("chevron", 12));
+  const time = el("span", "tool-time");
+  summary.append(kind, action, target, size, time, icon("chevron", 12));
   const body = el("div", "tool-body");
   const argsView = el("div");
   const files = el("div", "tool-files");
@@ -148,18 +175,20 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
   row.append(summary, body);
 
   /** Everything that a later report of the same call can change. */
+  // A command without the agent's description reads "Running <command>", then "Ran <command>".
+  let undescribedCommand = false;
   const show = (n: string, a: Record<string, unknown>, raw: string, i: ToolInfo) => {
-    const d = describeTool(n, a);
+    // A command leads with what it's for; the command itself follows in monospace.
+    const d = i.command ? { action: i.description ?? (running.has(timer) ? "Running" : "Ran"), target: i.command } : describeTool(n, a);
+    undescribedCommand = !!i.command && !i.description;
     action.textContent = d.action;
     target.textContent = d.target ?? "";
     target.hidden = !d.target;
-    summary.title = d.target ? `${d.action} ${d.target}` : d.action;
+    row.classList.toggle("command", !!i.command);
+    summary.title = d.target ? `${d.action}${i.command ? "\n" : " "}${d.target}` : d.action;
     kind.replaceChildren(icon(kindIcon(n, i.kind), 13));
-    // A report without a status keeps the row's mark (a new row starts running).
-    if (running.has(timer) && (i.status || !row.dataset.status)) {
-      row.dataset.status = i.status === "pending" ? "pending" : "running";
-      status.replaceChildren(el("span", i.status === "pending" ? "tool-waiting" : "tool-pulse"));
-    }
+    // A report without a status keeps the row's state (a new row starts running).
+    if (running.has(timer) && (i.status || !row.dataset.status)) row.dataset.status = i.status === "pending" ? "pending" : "running";
     size.hidden = !i.diff;
     if (i.diff) {
       size.replaceChildren(el("span", "tool-added", `+${i.diff.added}`), el("span", "tool-removed", `−${i.diff.removed}`));
@@ -187,10 +216,12 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
 
   const settle = (state: ToolStatus) => {
     if (!running.delete(timer)) return;
-    time.textContent = formatElapsed(Date.now() - timer.started);
+    time.textContent = shownElapsed(Date.now() - timer.started);
+    // "Failed: Find usages of x" / "Stopped: Reading a.ts"; a command with no description reads "Failed: <command>".
+    const outcome = state === "failed" ? "Failed:" : state === "stopped" ? "Stopped:" : undefined;
+    if (outcome) action.textContent = undescribedCommand ? outcome : `${outcome} ${action.textContent}`;
+    else if (undescribedCommand) action.textContent = "Ran";
     row.dataset.status = state;
-    status.replaceChildren(state === "done" ? icon("check", 12) : state === "failed" ? icon("close", 12) : el("span", "tool-stopped"));
-    status.title = state === "done" ? "Done" : state === "failed" ? "Failed" : "Stopped";
     tick();
   };
   return {
@@ -198,8 +229,10 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
     body,
     update: (n, a, raw, i) => show(n, a, raw, i),
     setResult(output, failed) {
-      if (output) body.append(el("pre", "tool-output", output));
+      if (output) body.append(outputBlock(output));
       settle(failed ? "failed" : "done");
+      // A failure is worth reading: its row opens itself.
+      if (failed) row.open = true;
     },
     stop: () => settle("stopped"),
   };

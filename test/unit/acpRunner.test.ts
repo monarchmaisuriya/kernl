@@ -32,7 +32,7 @@ function harness(scenario: string, answer: boolean | "never", askMode: AskMode |
     notice: (t) => events.push(`notice:${t}`),
     events: {
       text: (d) => events.push(`text:${d}`),
-      toolCall: (id, name, _args, info) => events.push(info?.status ? `call:${name}:${info.status}${info.kind ? `:${info.kind}` : ""}${info.diff ? `:+${info.diff.added}-${info.diff.removed}` : ""}${info.locations?.length ? `:@${info.locations[0].line}` : ""}` : `call:${name}`),
+      toolCall: (id, name, _args, info) => (info?.command && events.push(`command:${info.description ?? "-"}|${info.command}|${info.lookup ?? "-"}`), events.push(info?.status ? `call:${name}:${info.status}${info.kind ? `:${info.kind}` : ""}${info.diff ? `:+${info.diff.added}-${info.diff.removed}` : ""}${info.locations?.length ? `:@${info.locations[0].line}` : ""}` : `call:${name}`)),
       toolDiff: (id, d) => events.push(`diff:${id}:${d.before === null ? "new" : "changed"}`),
       thinking: (d) => events.push(`thinking:${d}`),
       plan: (entries) => events.push(`plan:${entries.map((e) => `${e.status}=${e.content}`).join("|")}`),
@@ -229,6 +229,7 @@ test("a full agent's updates all reach the panel: thinking, one tool call merged
   assert.deepEqual(e.filter((x) => x.startsWith("thinking:")), ["thinking:Look at the hook ", "thinking:before answering."]);
   assert.deepEqual(e.filter((x) => x.startsWith("call:Read")), ["call:Read src/a.ts:pending:read:@3", "call:Read src/a.ts:running:read:@3", "call:Read src/a.ts"], JSON.stringify(e));
   assert.ok(e.includes("result:export const a = 1;"), "its output ends it");
+  assert.ok(e.includes("command:Find usages of useRewards|grep -n useRewards src|search"), `a command leads with its description, without the cd into the session folder: ${JSON.stringify(e)}`);
   assert.ok(e.includes("call:Edit src/a.ts:running:edit") && e.includes("call:Edit src/a.ts"), JSON.stringify(e));
   assert.ok(e.includes("diff:e1:changed"));
   assert.ok(e.includes("plan:completed=Read the hook|in_progress=Explain it"));
@@ -237,6 +238,17 @@ test("a full agent's updates all reach the panel: thinking, one tool call merged
   assert.ok(e.includes("title:Explain the rewards hook"));
   assert.ok(e.includes("config:mode=plan"));
   assert.equal(e.at(-1), "finished:done");
+});
+
+test("a command drops only a leading cd into the session's own folder, and keeps the agent's description", async () => {
+  const { describeCommand } = await import("../../src/acp/acpRunner");
+  assert.deepEqual(describeCommand({ command: "cd /ws && grep -n x src", description: "Find x" }, "/ws"), { command: "grep -n x src", description: "Find x", lookup: "search" });
+  assert.deepEqual(describeCommand({ command: 'cd "/ws/" ; npm test' }, "/ws"), { command: "npm test" }, "quoted, trailing slash, and ;");
+  assert.deepEqual(describeCommand({ command: "cd /ws/sub && npm test" }, "/ws"), { command: "cd /ws/sub && npm test" }, "a cd into a subfolder changes where it runs, so it stays");
+  assert.deepEqual(describeCommand({ command: "npm test", command_description: "Run the tests" }, "/ws"), { command: "npm test", description: "Run the tests" }, "newer Claude Code spells it command_description");
+  assert.deepEqual(describeCommand({ command: "cd /ws" }, "/ws"), { command: "cd /ws" }, "a bare cd is the whole command");
+  assert.deepEqual(describeCommand(undefined, "/ws"), {});
+  assert.deepEqual(describeCommand({ command: "cat /ws/src/a.ts" }, "/ws"), { command: "cat /ws/src/a.ts", lookup: "read" }, "a read-only command is marked as a lookup");
 });
 
 test("an edit's size counts added and removed lines; a new file is all added", async () => {

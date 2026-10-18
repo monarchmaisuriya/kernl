@@ -4,7 +4,7 @@
 import type { ModeView } from "../ui/protocol";
 import { icon, type IconName } from "./icons";
 
-const MODE_ICONS = ["shield", "pencil", "bulb", "sparkle", "warning"] as const satisfies readonly IconName[];
+const MODE_ICONS = ["shield", "pencil", "bulb", "kernl", "warning"] as const satisfies readonly IconName[];
 
 /** The host names each mode's icon; anything unknown gets the shield. */
 export function modeIcon(name: string): IconName {

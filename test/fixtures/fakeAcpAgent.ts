@@ -3,7 +3,7 @@
 //   write        asks to write hello.txt (with a diff); writes it only on allow_once
 //   stuck-mode   reports mode "auto" no matter what it is set to
 //   rich         streams what a full agent sends: thinking, a read (pending, in progress, completed),
-//                an edit with a diff, a plan, usage, slash commands, a title, and a switch to plan mode
+//                a described command run from its own folder, an edit with a diff, a plan, usage, slash commands, a title, and a switch to plan mode
 //   lagging-mode replies to a mode change with the previous value (OpenCode 2.0.27 leaving plan); the next reply is current
 //   session-mode has no config options; confirms set_mode with a current_mode_update
 //   crash        exits with code 3 during the prompt
@@ -86,6 +86,9 @@ new acp.AgentSideConnection((conn) => ({
       await send({ sessionUpdate: "tool_call", toolCallId: "r1", title: "Read src/a.ts", kind: "read", status: "pending", locations: [{ path: join(cwd, "src/a.ts"), line: 3 }], rawInput: { path: "src/a.ts" } });
       await send({ sessionUpdate: "tool_call_update", toolCallId: "r1", status: "in_progress" });
       await send({ sessionUpdate: "tool_call_update", toolCallId: "r1", status: "completed", content: [{ type: "content", content: { type: "text", text: "export const a = 1;" } }] });
+      const grep = `cd ${cwd} && grep -n useRewards src`;
+      await send({ sessionUpdate: "tool_call", toolCallId: "x1", title: grep, kind: "execute", status: "in_progress", rawInput: { command: grep, description: "Find usages of useRewards" } });
+      await send({ sessionUpdate: "tool_call_update", toolCallId: "x1", status: "completed", content: [{ type: "content", content: { type: "text", text: "src/a.ts:3" } }] });
       await send({ sessionUpdate: "tool_call", toolCallId: "e1", title: "Edit src/a.ts", kind: "edit", status: "in_progress" });
       await send({ sessionUpdate: "tool_call_update", toolCallId: "e1", status: "completed", content: [{ type: "diff", path: join(cwd, "src/a.ts"), oldText: "a\nb\n", newText: "a\nB\nc\n" }] });
       await send({ sessionUpdate: "plan", entries: [{ content: "Read the hook", status: "completed", priority: "high" }, { content: "Explain it", status: "in_progress", priority: "medium" }] });

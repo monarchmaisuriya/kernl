@@ -6,6 +6,7 @@ import type { SessionEvents } from "../agent/session";
 import type { ApprovalGate } from "../gate/approvalGate";
 import type { AskMode, Launch } from "./agents";
 import { toGateRequest, toPermissionResponse } from "./permission";
+import { lookupKind } from "./readOnlyCommand";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type Attachment, attachmentNote, type ToolInfo } from "../ui/protocol";
@@ -38,6 +39,23 @@ interface CallState {
   locations?: { path: string; line?: number }[];
   rawInput: unknown;
   diff?: { path: string; before: string | null; after: string };
+}
+
+/**
+ * An execute call's command and the agent's own description of it. A leading `cd <folder> &&` (or
+ * `;`) into the session's folder changes nothing, so it's dropped; a `cd` anywhere else stays. A
+ * command that only reads or searches is marked as a lookup (see readOnlyCommand.ts).
+ */
+export function describeCommand(rawInput: unknown, cwd: string): Pick<ToolInfo, "command" | "description" | "lookup"> {
+  const input = rawInput && typeof rawInput === "object" ? (rawInput as Record<string, unknown>) : {};
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const description = text(input.description) ?? text(input.command_description);
+  let command = text(input.command);
+  const cd = command && /^cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s*(?:&&|;)\s*/.exec(command);
+  const folder = (path: string) => path.replace(/\/+$/, "");
+  if (cd && folder(cd[1] ?? cd[2] ?? cd[3]) === folder(cwd)) command = command!.slice(cd[0].length) || command;
+  const lookup = command ? lookupKind(command) : undefined;
+  return { ...(command ? { command } : {}), ...(description ? { description } : {}), ...(lookup ? { lookup } : {}) };
 }
 
 /** Lines added and removed between two texts (multiset count: fast, and exact for the totals shown). */
@@ -316,6 +334,7 @@ export class AcpRunner implements Runner {
       status: call.status === "in_progress" ? "running" : call.status === "pending" ? "pending" : undefined,
       locations: call.locations,
       diff: call.diff ? { path: call.diff.path, ...diffSize(call.diff.before, call.diff.after) } : undefined,
+      ...(call.kind === "execute" ? describeCommand(call.rawInput, this.o.cwd) : {}),
     };
     this.o.events.toolCall(id, call.title, call.rawInput ?? {}, info);
     if (call.status === "completed" || call.status === "failed") {

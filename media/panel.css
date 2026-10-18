@@ -38,9 +38,17 @@ button.link { color: var(--vscode-textLink-foreground); padding-left: 4px; paddi
 .empty-text { margin: 0; max-width: 280px; }
 .empty button { pointer-events: auto; margin-top: 8px; }
 
-.user .restore { position: absolute; top: 2px; left: -26px; width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); opacity: 0; }
-.user .fork { position: absolute; top: 26px; left: -26px; width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); opacity: 0; }
-.user:hover .restore, .user .restore:focus-visible, .user:hover .fork, .user .fork:focus-visible { opacity: 1; }
+/* Your message, and the action row under it and under each finished reply (Copy, Restore, Fork) */
+.user-message { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.message-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.reply-actions { margin-top: -10px; }
+.user-message:hover .message-actions, .assistant:hover + .message-actions, .message-actions:hover, .message-actions:focus-within, .message-actions.latest { opacity: 1; }
+.message-action { width: 24px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
+.message-action:hover:not([aria-disabled="true"]) { color: var(--vscode-foreground); }
+.message-action[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+.message-action[aria-disabled="true"]:hover { background: none; }
+body.vscode-reduce-motion .message-actions { transition: none; }
+@media (prefers-reduced-motion: reduce) { .message-actions { transition: none; } }
 .user { position: relative; align-self: flex-end; max-width: 88%; background: var(--surface); border: 1px solid var(--border); padding: 6px 10px; border-radius: var(--radius) var(--radius) 2px var(--radius); white-space: pre-wrap; word-break: break-word; }
 .assistant { word-break: break-word; }
 /* Markdown in replies */
@@ -87,14 +95,21 @@ button.link { color: var(--vscode-textLink-foreground); padding-left: 4px; paddi
 .tool > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; min-width: 0; list-style: none; padding: 3px 6px; border-radius: var(--radius-sm); font-size: 0.92em; }
 .tool > summary:hover { background: var(--hover); color: var(--vscode-foreground); }
 .tool > summary::-webkit-details-marker, .thought > summary::-webkit-details-marker { display: none; }
-.tool-status { display: inline-flex; align-items: center; justify-content: center; width: 12px; flex: none; }
-.tool-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-progressBar-background, var(--vscode-focusBorder)); animation: working-pulse 1.2s ease-in-out infinite; }
-.tool-stopped { width: 7px; height: 2px; background: var(--muted); }
-.tool[data-status="done"] .tool-status { color: var(--vscode-testing-iconPassed, var(--muted)); }
-.tool[data-status="failed"] .tool-status, .tool[data-status="failed"] .tool-action { color: var(--vscode-errorForeground); }
+/* No status marks: a failed call's line is red; a running one shimmers (with "Working", below) */
+.tool[data-status="failed"] > summary .tool-action, .tool[data-status="failed"] > summary .tool-target { color: var(--vscode-errorForeground); }
 .tool-action { flex: none; color: var(--vscode-foreground); }
 .tool[data-status="done"] .tool-action, .tool[data-status="stopped"] .tool-action { color: inherit; }
 .tool-target { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
+/* Reads and searches in a row, as one line that opens to them */
+.tool-group-failed { color: var(--vscode-errorForeground); }
+.tool-group-failed { flex: none; }
+.tool-group > summary > .icon:last-child { margin-left: auto; }
+.tool-group-rows { margin: 2px 0 4px 18px; display: flex; flex-direction: column; }
+/* A command: its description (cut with an ellipsis past 60%), then the command, dimmer */
+.tool.command .tool-action { flex: 0 1 auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool.command .tool-target { color: var(--muted); }
+.tool-output-preview { display: flex; flex-direction: column; gap: 2px; }
+.tool-output-all { align-self: flex-start; padding: 0; font-size: 0.88em; }
 .tool-time { margin-left: auto; padding-left: 6px; flex: none; font-variant-numeric: tabular-nums; font-size: 0.9em; }
 .tool > summary > .icon:last-child, .thought > summary > .icon:last-child { flex: none; transform: rotate(-90deg); transition: transform 0.12s; }
 .tool[open] > summary > .icon:last-child, .thought[open] > summary > .icon:last-child { transform: none; }
@@ -104,7 +119,6 @@ button.link { color: var(--vscode-textLink-foreground); padding-left: 4px; paddi
 .tool-arg-key { flex: none; color: var(--muted); }
 .tool-arg-value { min-width: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--vscode-editor-font-family); color: var(--vscode-foreground); }
 .tool-output { max-height: 220px; overflow: auto; margin: 0; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--vscode-textCodeBlock-background, var(--surface)); color: var(--vscode-foreground); }
-.tool-waiting { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--muted); box-sizing: border-box; }
 .tool-kind { display: inline-flex; flex: none; color: var(--muted); }
 .tool-diff { display: inline-flex; gap: 4px; flex: none; font-size: 0.88em; font-variant-numeric: tabular-nums; }
 .tool-added { color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-testing-iconPassed, #3fb950)); }
@@ -112,8 +126,6 @@ button.link { color: var(--vscode-textLink-foreground); padding-left: 4px; paddi
 .tool-files { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 0.88em; }
 .tool-location { padding: 0; font-family: var(--vscode-editor-font-family); text-align: left; overflow-wrap: anywhere; }
 .tool-view-diff { padding: 0; }
-@media (prefers-reduced-motion: reduce) { .tool-pulse { animation: none; } }
-body.vscode-reduce-motion .tool-pulse, body.vscode-reduce-motion .working-dots span { animation: none; }
 
 /* Thinking: streams open, then collapses to "Thought for Ns" and a preview */
 .thinking { color: var(--muted); }
@@ -135,14 +147,17 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; font-famil
 .result { color: var(--muted); }
 .note { color: var(--muted); font-size: 0.92em; text-align: center; }
 /* The working indicator at the end of a running transcript */
-.working { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; color: var(--muted); font-size: 0.92em; }
-.working-dots { display: inline-flex; gap: 3px; }
-.working-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--vscode-progressBar-background, var(--vscode-focusBorder)); animation: working-pulse 1.2s ease-in-out infinite; }
-.working-dots span:nth-child(2) { animation-delay: 0.15s; }
-.working-dots span:nth-child(3) { animation-delay: 0.3s; }
-.working.waiting .working-dots span { background: var(--vscode-notificationsWarningIcon-foreground, var(--vscode-editorWarning-foreground, orange)); animation-duration: 2s; }
+/* "Working" itself is the loader: a bright band sweeps across the word every 2 s (as VS Code's chat does). */
+.working { display: flex; align-items: center; gap: 6px; padding: 2px 2px 6px; color: var(--muted); font-size: 0.92em; }
+.working-mark { display: inline-flex; flex: none; color: var(--vscode-progressBar-background, var(--vscode-focusBorder)); }
+.working-label, .tool[data-status="running"] > summary .tool-action, .tool-group[data-group-status="running"] > summary .tool-action { background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 38%, var(--vscode-foreground) 50%, var(--muted) 62%, var(--muted) 100%); background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: working-shimmer 2s linear infinite; }
+.working-time { font-variant-numeric: tabular-nums; }
+.working.waiting .working-mark { color: var(--vscode-notificationsWarningIcon-foreground, var(--vscode-editorWarning-foreground, orange)); }
+.working.waiting .working-label { animation: none; background: none; color: var(--vscode-foreground); }
+@keyframes working-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
 @keyframes working-pulse { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
-@media (prefers-reduced-motion: reduce) { .working-dots span { animation: none; opacity: 0.7; } }
+@media (prefers-reduced-motion: reduce) { .working-label, .tool[data-status="running"] > summary .tool-action, .tool-group[data-group-status="running"] > summary .tool-action { animation: none; background: none; color: var(--muted); } }
+body.vscode-reduce-motion .working-label, body.vscode-reduce-motion .tool[data-status="running"] > summary .tool-action, body.vscode-reduce-motion .tool-group[data-group-status="running"] > summary .tool-action { animation: none; background: none; color: var(--muted); }
 .error { color: var(--vscode-errorForeground); white-space: pre-wrap; border-left: 2px solid var(--vscode-errorForeground); padding-left: 8px; }
 
 /* Thinking steps and delegated subagents */

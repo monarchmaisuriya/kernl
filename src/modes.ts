@@ -8,14 +8,14 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export interface ModeInfo {
   label: string;
   /** Icon name in the panel's icon set. */
-  icon: "shield" | "pencil" | "bulb" | "sparkle" | "warning";
+  icon: "shield" | "pencil" | "bulb" | "kernl" | "warning";
 }
 
 export const MODE_INFO: Record<PermissionMode, ModeInfo> = {
   ask: { label: "Ask before edits", icon: "shield" },
   acceptEdits: { label: "Edit automatically", icon: "pencil" },
   plan: { label: "Plan mode", icon: "bulb" },
-  auto: { label: "Auto mode", icon: "sparkle" },
+  auto: { label: "Auto mode", icon: "kernl" },
   bypass: { label: "Bypass permissions", icon: "warning" },
 };
 

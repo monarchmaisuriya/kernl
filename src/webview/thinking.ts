@@ -26,7 +26,7 @@ export function createThinking(display: ThinkingDisplay): ThinkingBlock {
   label.textContent = "Thinking…";
   const preview = document.createElement("span");
   preview.className = "thinking-preview";
-  summary.append(icon("sparkle", 13), label, preview, icon("chevron", 12));
+  summary.append(icon("kernl", 13), label, preview, icon("chevron", 12));
   const body = document.createElement("div");
   body.className = "thinking-text";
   element.append(summary, body);

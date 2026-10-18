@@ -2,7 +2,8 @@
 // constants here and are set with setAttribute; host data never reaches an SVG.
 const NS = "http://www.w3.org/2000/svg";
 
-type Shape = { d: string; fill?: boolean };
+/** `fill` paints the shape as well as its outline; `solid` paints it with no outline (sharp, thin-gapped marks). */
+type Shape = { d: string; fill?: boolean; solid?: boolean };
 
 const ICONS = {
   send: [{ d: "M8 13V3.5M3.75 7.5 8 3.25l4.25 4.25" }],
@@ -12,9 +13,12 @@ const ICONS = {
   folder: [{ d: "M1.75 4.25v8h12.5v-6.5h-6.5l-1.5-1.5z" }],
   shield: [{ d: "M8 1.75 13 3.5v4c0 3.1-2.1 5.3-5 6.75C5.1 12.8 3 10.6 3 7.5v-4z" }],
   warning: [{ d: "M8 2 14.5 13.5h-13zM8 6.25v3.25M8 11.5v.25" }],
-  sparkle: [
-    { d: "M2.5 3.5h8a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H6.5L4 12.75V10.5H2.5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z" },
-    { d: "M13.25 1 13.8 2.2 15 2.75 13.8 3.3 13.25 4.5 12.7 3.3 11.5 2.75 12.7 2.2z", fill: true },
+  // kernl's K mark (media/activity.svg, from 24 to 16 units).
+  kernl: [
+    { d: "M3.33 3h2.13v4.13L3.33 9.27z", solid: true },
+    { d: "M3.33 13l7.6-7.6 1.53 1.53-4.87 4.87H3.33z", solid: true },
+    { d: "M8.4 9.73l1.53-1.53 3.4 4.8h-2.93z", solid: true },
+    { d: "M11.27 3.6a1.13 1.13 0 1 0 2.26 0a1.13 1.13 0 1 0-2.26 0z", solid: true },
   ],
   copy: [{ d: "M5.5 5.5h7v8h-7zM3.5 10.5v-8h7" }],
   plus: [{ d: "M8 3.25v9.5M3.25 8h9.5" }],
@@ -44,7 +48,8 @@ export function icon(name: IconName, size = 16): SVGSVGElement {
   for (const shape of ICONS[name] as Shape[]) {
     const path = document.createElementNS(NS, "path");
     path.setAttribute("d", shape.d);
-    if (shape.fill) path.setAttribute("fill", "currentColor");
+    if (shape.fill || shape.solid) path.setAttribute("fill", "currentColor");
+    if (shape.solid) path.setAttribute("stroke", "none");
     svg.append(path);
   }
   return svg;

@@ -30,6 +30,12 @@ export interface ToolInfo {
   locations?: ToolLocation[];
   /** An edit's size; "View diff" opens it (the content stays on the host). */
   diff?: { path: string; added: number; removed: number };
+  /** An execute call's command, without a leading `cd` into the agent's own folder. */
+  command?: string;
+  /** What the command is for, in the agent's words (Claude Code's `description`). */
+  description?: string;
+  /** A command that only reads or searches (grep, ls, cat, …): it folds in with the other lookups. */
+  lookup?: "read" | "search";
 }
 
 /** One step of the agent's plan (ACP plan entries, or the kernl agent's to-do list). */

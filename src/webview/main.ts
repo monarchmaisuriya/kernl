@@ -7,12 +7,14 @@ import { icon } from "./icons";
 import { attachmentChip, createAttachments } from "./attachments";
 import { MarkdownView } from "./markdown";
 import { createMenu } from "./menu";
+import { createMessageActions, type MessageActions } from "./messageActions";
 import { createModeMenu, modeIcon } from "./modeMenu";
 import { createSendMenu, sendModeOf } from "./sendMenu";
 import { type ContextUsage, createContextRing } from "./contextRing";
 import { createPlanBar } from "./planBar";
 import { createThinking, type ThinkingBlock } from "./thinking";
-import { createToolRow, type ToolRow } from "./toolRow";
+import { createToolGroup, type ToolGroup } from "./toolGroup";
+import { createToolRow, formatElapsed, quietKind, type ToolRow } from "./toolRow";
 
 declare function acquireVsCodeApi(): { postMessage(m: PanelToHost): void };
 const vscode = acquireVsCodeApi();
@@ -44,6 +46,8 @@ interface Pane {
   toolRows: Map<string, HTMLElement>;
   /** Tool calls shown as one-line rows (status, plain description, time), by call id. */
   tools: Map<string, ToolRow>;
+  /** Groups of reads and searches that came in a row ("Explored 1 file, 4 searches"), by group element. */
+  toolGroups: Map<HTMLElement, ToolGroup>;
   /** Whether this turn's reply already has its hidden heading. */
   replyHeading?: boolean;
   /** The thinking block being streamed, until text, a tool call, or the end of the run follows. */
@@ -58,8 +62,16 @@ interface Pane {
   subagents: Map<string, { view: MarkdownView; text: string; steps: HTMLElement }>;
   /** The latest task row: where a subagent's own tool calls go. */
   lastSubagent?: string;
+  /** When the panel saw the current run start (for the Working indicator's time). */
+  runStarted?: number;
   /** Background jobs in this workspace (the footer's jobs chip). */
   jobs: { running: number; total: number };
+  /** The action row under each of your messages, by message id (Restore is added once its restore point is ready). */
+  messageActions: Map<string, MessageActions>;
+  /** The action row under each finished reply. */
+  replyActions: MessageActions[];
+  /** The current turn: its message id (for Fork) and all its reply text (for Copy). */
+  turn?: { messageId?: string; text: string };
 }
 
 /** Tool arguments arrive as JSON text; a malformed or truncated one just isn't read. */
@@ -80,7 +92,7 @@ function thoughtRow(args: Record<string, unknown>): HTMLElement {
   const kind = args.isRevision === true || args.isRevision === "true" ? `Revision ${n}${args.revisesThought ? ` (of thought ${args.revisesThought})` : ""}` : args.branchFromThought ? `Branch ${n} (from thought ${args.branchFromThought}${args.branchId ? `, ${args.branchId}` : ""})` : `Thought ${n}`;
   const thought = String(args.thought ?? "");
   const summary = el("summary");
-  summary.append(icon("sparkle", 13), el("span", "thought-head", kind), el("span", "thought-preview", thought.split("\n")[0]), icon("chevron", 12));
+  summary.append(icon("kernl", 13), el("span", "thought-head", kind), el("span", "thought-preview", thought.split("\n")[0]), icon("chevron", 12));
   row.append(summary, el("div", "thought-text", thought));
   return row;
 }
@@ -111,7 +123,7 @@ const emptyText = el("p", "empty-text");
 // Shown instead of a transcript when the window has no folder kernl can work in.
 const openFolder = el("button", "primary", "Open Folder");
 openFolder.addEventListener("click", () => send({ type: "openFolder" }));
-empty.append(icon("sparkle", 40), el("h2", "empty-title", "Build with kernl"), emptyText, openFolder);
+empty.append(icon("kernl", 40), el("h2", "empty-title", "Build with kernl"), emptyText, openFolder);
 logs.append(empty);
 
 const composer = el("div", "composer");
@@ -187,25 +199,46 @@ function scroll() {
 }
 
 /** Everything outside the transcripts: composer, chips, banner, empty state. */
-// While the agent works: a pulsing row kept at the end of the shown transcript.
+// While the agent works: "Working" (shimmering) and how long the run has taken, kept at the end of
+// the shown transcript. Only the label is a live region: the ticking time isn't read out.
 const working = el("div", "working");
-working.setAttribute("role", "status");
-const workingText = el("span", "working-text");
-const workingDots = el("span", "working-dots");
-workingDots.append(el("span"), el("span"), el("span"));
-working.append(workingDots, workingText);
+const workingMark = el("span", "working-mark");
+const workingText = el("span", "working-label");
+workingText.setAttribute("role", "status");
+const workingTime = el("span", "working-time");
+workingTime.setAttribute("aria-hidden", "true");
+working.append(workingMark, workingText, workingTime);
+let workingTicker: ReturnType<typeof setInterval> | undefined;
+
+/** The elapsed time beside the label, from 1 s (same format as tool rows). */
+function showElapsed() {
+  const started = pane(active)?.runStarted;
+  const ms = started === undefined ? 0 : Date.now() - started;
+  workingTime.textContent = ms < 1000 ? "" : `· ${formatElapsed(ms)}`;
+}
 
 function render() {
   const p = pane(active);
   const running = p?.view.running ?? false;
   const deepAgents = p?.view.harness === "deepagents";
-  for (const [id, q] of panes) q.log.hidden = id !== active;
+  for (const [id, q] of panes) {
+    q.log.hidden = id !== active;
+    if (!q.view.running) q.runStarted = undefined;
+    else q.runStarted ??= Date.now();
+  }
   if (p && running) {
     const waiting = p.view.waiting > 0;
-    workingText.textContent = waiting ? "Waiting for your approval" : "Working";
+    const label = waiting ? "Waiting for your approval" : "Working";
+    if (workingText.textContent !== label) workingText.textContent = label;
     working.classList.toggle("waiting", waiting);
+    workingMark.replaceChildren(icon(waiting ? "shield" : "kernl", 13));
+    showElapsed();
+    workingTicker ??= setInterval(showElapsed, 1000);
     if (p.log.lastElementChild !== working) p.log.append(working);
-  } else working.remove();
+  } else {
+    working.remove();
+    if (workingTicker) (clearInterval(workingTicker), (workingTicker = undefined));
+  }
   empty.hidden = p ? p.log.childElementCount > 0 : !noWorkspace;
   emptyText.textContent = p ? p.view.disclosure : (noWorkspace ?? "");
   openFolder.hidden = !!p || !noWorkspace;
@@ -303,12 +336,72 @@ function renderQueue(p: Pane | undefined) {
   queueList.replaceChildren(head, ...rows);
 }
 
-/** Hover action on a message: put the files (and maybe the conversation) back to before it. */
-function addRestore(bubble: HTMLElement, workspace: string, messageId: string) {
-  const restore = iconButton("restore", "Restore checkpoint", icon("undo", 14));
+/**
+ * Adds a tool row to the transcript (or a subagent's steps). Reads and searches that come in a row,
+ * with nothing else between them, share one "Explored …" line; a single one stays a plain row.
+ */
+function placeToolRow(p: Pane, container: HTMLElement, row: HTMLElement, quiet: "read" | "search" | undefined) {
+  if (!quiet) return container.append(row);
+  const last = lastLine(container);
+  const previous = last instanceof HTMLElement ? last : undefined;
+  const group = previous && p.toolGroups.get(previous);
+  if (group) return group.add(row, quiet);
+  const earlier = previous?.dataset.quiet as "read" | "search" | undefined;
+  if (!previous || !earlier) {
+    row.dataset.quiet = quiet;
+    return container.append(row);
+  }
+  const created = createToolGroup();
+  p.toolGroups.set(created.element, created);
+  previous.replaceWith(created.element);
+  created.add(previous, earlier);
+  created.add(row, quiet);
+}
+
+/** The newest line in a transcript or a subagent's steps (the Working indicator isn't part of it). */
+function lastLine(container: HTMLElement): Element | null {
+  const last = container.lastElementChild;
+  return last === working ? last.previousElementSibling : last;
+}
+
+function refreshGroups(p: Pane) {
+  for (const group of p.toolGroups.values()) group.refresh();
+}
+
+/** Restore under a message: put the files (and maybe the conversation) back to before it. */
+function addRestore(actions: MessageActions, workspace: string, messageId: string) {
+  const restore = actions.add("restore", "Restore checkpoint", () => send({ type: "restore", workspace, messageId }));
   restore.dataset.anchor = `restore:${messageId}`;
-  restore.addEventListener("click", () => send({ type: "restore", workspace, messageId }));
-  bubble.prepend(restore);
+}
+
+/** Fork under a message or a reply: a new conversation up to and including that turn's reply. */
+function addFork(p: Pane, actions: MessageActions, messageId: string) {
+  const workspace = p.view.id;
+  actions.add("fork", "Fork from here", () => send({ type: "fork", workspace, messageId }));
+}
+
+/** A CLI agent copies its whole session to fork, so only the latest turn can be forked. */
+function cliForkLimit(p: Pane): string | undefined {
+  if (p.view.harness.startsWith("deepagents")) return undefined;
+  const label = (harnesses.find((h) => h.id === p.view.harness)?.label ?? "This agent").replace(/ \(experimental\)$/, "");
+  return `${label} can fork only from the last message`;
+}
+
+/** Under a finished reply: Copy (every block of the turn's reply) and Fork. */
+function addReplyActions(p: Pane, turn: { messageId?: string; text: string }) {
+  const actions = createMessageActions("reply");
+  const text = turn.text.trim();
+  actions.add("copy", "Copy reply", () => send({ type: "copy", text }));
+  if (turn.messageId) addFork(p, actions, turn.messageId);
+  p.replyActions.push(actions);
+  actions.row.classList.add("latest");
+  p.log.append(actions.row);
+}
+
+/** The newest turn's action rows stay visible; earlier ones show on hover or focus. */
+function markLatest(p: Pane, rows: HTMLElement[]) {
+  for (const old of p.log.querySelectorAll(".message-actions.latest")) old.classList.remove("latest");
+  for (const row of rows) row.classList.add("latest");
 }
 
 function select(id: string) {
@@ -329,7 +422,7 @@ function setWorkspaces(items: WorkspaceView[], focus?: string) {
     else {
       const log = el("div", "log");
       logs.append(log);
-      panes.set(view.id, { view, log, usage: "", replyText: "", toolRows: new Map(), tools: new Map(), subagents: new Map(), jobs: { running: 0, total: 0 } });
+      panes.set(view.id, { view, log, usage: "", replyText: "", toolRows: new Map(), tools: new Map(), subagents: new Map(), jobs: { running: 0, total: 0 }, messageActions: new Map(), replyActions: [], toolGroups: new Map() });
     }
   }
   const next = focus && panes.has(focus) ? focus : panes.has(active) ? active : (items[0]?.id ?? "main");
@@ -491,26 +584,36 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       // A hidden heading per turn, so screen readers can jump between turns.
       p.log.append(el("h3", "sr-only", "Your message"));
       p.replyHeading = false;
+      const message = el("div", "user-message");
       const bubble = el("div", "user", m.text);
       if (m.id) bubble.dataset.messageId = m.id;
-      if (m.checkpoint && m.id) addRestore(bubble, p.view.id, m.id);
-      if (m.id) {
-        const fork = iconButton("fork", "Fork from here", icon("branch", 14));
-        const messageId = m.id;
-        fork.addEventListener("click", () => send({ type: "fork", workspace: p.view.id, messageId }));
-        bubble.append(fork);
-      }
       if (m.attachments?.length) {
         const row = el("div", "user-attachments");
         row.append(...m.attachments.map((a) => attachmentChip(a)));
         bubble.append(row);
       }
-      p.log.append(bubble);
+      // Under the message: Copy, Restore (once its restore point is ready), Fork.
+      const actions = createMessageActions("user");
+      const text = m.text;
+      actions.add("copy", "Copy message", () => send({ type: "copy", text }));
+      if (m.id) {
+        p.messageActions.set(m.id, actions);
+        if (m.checkpoint) addRestore(actions, p.view.id, m.id);
+        addFork(p, actions, m.id);
+      }
+      // A CLI agent can't fork earlier turns any more.
+      const limit = cliForkLimit(p);
+      if (limit) for (const earlier of p.messageActions.values()) if (earlier !== actions) earlier.setUnavailable("fork", limit);
+      for (const reply of p.replyActions) reply.setUnavailable("fork", limit);
+      message.append(bubble, actions.row);
+      p.log.append(message);
+      p.turn = { messageId: m.id, text: "" };
+      markLatest(p, [actions.row]);
       break;
     }
     case "checkpoint": {
-      const bubble = p.log.querySelector<HTMLElement>(`.user[data-message-id="${CSS.escape(m.messageId)}"]`);
-      if (bubble && !bubble.querySelector(".restore")) addRestore(bubble, p.view.id, m.messageId);
+      const actions = p.messageActions.get(m.messageId);
+      if (actions) addRestore(actions, p.view.id, m.messageId);
       break;
     }
     case "text":
@@ -524,8 +627,11 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
         p.log.append(reply);
         p.assistant = new MarkdownView(reply, markdownActions);
         p.replyText = "";
+        // Copy under the reply copies every block of this turn's reply, a blank line apart.
+        if (p.turn?.text) p.turn.text += "\n\n";
       }
       p.replyText += m.delta;
+      if (p.turn) p.turn.text += m.delta;
       p.assistant.update(p.replyText);
       break;
     case "thinking": {
@@ -543,6 +649,16 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       const known = p.tools.get(m.id);
       if (known) {
         known.update(m.name, args, m.args, m);
+        // A command's input can arrive after its first report: once it shows the call is a lookup,
+        // the row joins the lookups just before it (only while it's still the newest line).
+        const quiet = quietKind(m.name, m.kind, m.lookup);
+        const row = known.row;
+        const container = row.parentElement;
+        if (quiet && container && !row.dataset.quiet && !p.toolGroups.has(container.parentElement as HTMLElement) && lastLine(container) === row) {
+          row.remove();
+          placeToolRow(p, container, row, quiet);
+        }
+        refreshGroups(p);
         break;
       }
       if (m.name === "sequential_thinking") {
@@ -571,7 +687,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       p.toolRows.set(m.id, row);
       // A subagent's own tool calls ("explorer > grep") go inside its row.
       const parent = m.name.includes(" > ") && p.lastSubagent ? p.subagents.get(p.lastSubagent) : undefined;
-      (parent ? parent.steps : p.log).append(row);
+      placeToolRow(p, parent ? parent.steps : p.log, row, quietKind(m.name, m.kind, m.lookup));
       break;
     }
     case "subagentText": {
@@ -600,6 +716,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       if (tool) tool.setResult(m.output, m.failed === true);
       else if (row) row.append(el("pre", "result", m.output));
       else p.log.append(el("pre", "result", `${m.name}\n${m.output}`));
+      refreshGroups(p);
       break;
     }
     case "usage":
@@ -614,8 +731,11 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       }
       // Calls that never reported back (Stop, an error) stop their timers.
       for (const tool of p.tools.values()) tool.stop();
+      refreshGroups(p);
       if (m.reason === "stopped") p.log.append(el("div", "note", "Stopped."));
       if (m.reason === "error") p.log.append(el("div", "error", m.message ?? "Something went wrong."));
+      if (p.turn?.text.trim()) addReplyActions(p, p.turn);
+      p.turn = undefined;
       break;
     case "setInput":
       input.value = m.text;
@@ -630,10 +750,14 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       for (const tool of p.tools.values()) tool.stop();
       p.tools.clear();
       p.toolRows.clear();
+      p.toolGroups.clear();
       p.usage = "";
       p.assistant = undefined;
       p.plan = undefined;
       p.context = undefined;
+      p.messageActions.clear();
+      p.replyActions = [];
+      p.turn = undefined;
       break;
   }
   render();
