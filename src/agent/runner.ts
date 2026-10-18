@@ -21,5 +21,7 @@ export interface Runner {
    * and return its history; undefined when the agent can't fork.
    */
   forkSession?(): Promise<unknown>;
+  /** CLI agents: put the live session into the current permission mode now (throws if not confirmed). */
+  applyMode?(): Promise<void>;
   dispose(): void;
 }

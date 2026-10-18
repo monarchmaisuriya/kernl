@@ -2,6 +2,7 @@
 // notable event so tests can check what the agent saw and did.
 //   write        asks to write hello.txt (with a diff); writes it only on allow_once
 //   stuck-mode   reports mode "auto" no matter what it is set to
+//   lagging-mode replies to a mode change with the previous value (OpenCode 2.0.27 leaving plan); the next reply is current
 //   session-mode has no config options; confirms set_mode with a current_mode_update
 //   crash        exits with code 3 during the prompt
 //   cancel-on-reject  like write, but ends the turn as "cancelled" after a rejection (OpenCode does this)
@@ -45,7 +46,9 @@ new acp.AgentSideConnection((conn) => ({
   },
   async setSessionConfigOption(p: any) {
     log(`setConfig ${p.configId}=${p.value}`);
+    const previous = mode;
     if (scenario !== "stuck-mode") mode = p.value;
+    if (scenario === "lagging-mode") return { configOptions: [{ ...modeOption(), currentValue: previous }] } as any;
     return { configOptions: [modeOption()] } as any;
   },
   async setSessionMode(p: any) {

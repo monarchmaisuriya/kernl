@@ -10,7 +10,8 @@ type BuiltInProvider = (typeof BUILT_IN_PROVIDERS)[number];
 export type ProviderId = BuiltInProvider | `custom:${string}`;
 
 /** Used when yourstack.model is empty. */
-const DEFAULT_MODELS: Partial<Record<BuiltInProvider, string>> = { deepseek: "deepseek-flash" };
+// Only ids verified to exist; other providers need yourstack.model.
+const DEFAULT_MODELS: Partial<Record<BuiltInProvider, string>> = { anthropic: "claude-sonnet-5-5", deepseek: "deepseek-flash" };
 
 /** An OpenAI-compatible service the user named in yourstack.customProviders. Its key lives in SecretStorage. */
 export interface CustomProvider {
@@ -121,7 +122,7 @@ export function resolveProvider(s: ProviderSettings): ResolvedProvider | { error
   }
   const provider = s.provider as BuiltInProvider;
   const model = s.model.trim() || DEFAULT_MODELS[provider] || "";
-  if (!model) return { error: "Set yourstack.model to a model id for your provider." };
+  if (!model) return { error: `Choose a model for ${provider}: use the model chip, or set yourstack.model.` };
   if (provider === "openai-compatible" && !isHttpUrl(s.baseUrl)) {
     return { error: `Expected yourstack.baseUrl to be an http(s) URL for the openai-compatible provider, got '${s.baseUrl}'.` };
   }
@@ -134,7 +135,7 @@ export function settingsProblem(s: ProviderSettings, apiKey: string | undefined)
   if ("error" in r) return r.error;
   const options = modelOptions(s.modelOptions, r.provider);
   if ("error" in options) return options.error;
-  if (!apiKey && r.keyRequired) return `No API key stored for ${r.provider}. Run "YourStack: Set API key".`;
+  if (!apiKey && r.keyRequired) return `No API key stored for ${r.provider}: add one with the model chip (or "Choose provider and model").`;
   return undefined;
 }
 

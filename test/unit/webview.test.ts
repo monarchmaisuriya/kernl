@@ -29,8 +29,8 @@ function loadPanel() {
   return { window, doc, sent, host, all, button, visibleLog };
 }
 
-const MAIN: WorkspaceView = { id: "main", label: "Main", harness: "deepagents", running: false, waiting: 0, disclosure: "Deep Agents asks before every edit.", queue: [], queuePaused: false };
-const WT: WorkspaceView = { id: "wt:fix", label: "fix", harness: "claude-code", branch: "yourstack/fix", running: false, waiting: 0, disclosure: "Claude Code runs approved actions itself.", queue: [], queuePaused: false };
+const MAIN: WorkspaceView = { id: "main", label: "Main", harness: "deepagents", running: false, waiting: 0, disclosure: "Deep Agents asks before every edit.", queue: [], queuePaused: false, mode: "ask", modes: [] };
+const WT: WorkspaceView = { id: "wt:fix", label: "fix", harness: "claude-code", branch: "yourstack/fix", running: false, waiting: 0, disclosure: "Claude Code runs approved actions itself.", queue: [], queuePaused: false, mode: "ask", modes: [] };
 const STATUS: HostToPanel = { type: "status", ready: true, provider: "deepseek", model: "deepseek-flash", restricted: false };
 const HARNESSES: HarnessView[] = [
   { id: "deepagents", label: "YourStack", group: "yourstack", ready: true },
@@ -193,9 +193,9 @@ test("a setup problem shows as a banner with working buttons on Deep Agents only
   assert.equal(banner.hidden, false);
   assert.match(banner.textContent!, /No API key stored/);
   assert.match(p.doc.querySelector(".mode")!.textContent!, /Read-only/);
-  p.button("Set API key")!.click();
+  p.button("Choose provider and model")!.click();
   p.button("Open settings")!.click();
-  assert.deepEqual(p.sent.slice(-2), [{ type: "setKey" }, { type: "openSettings" }]);
+  assert.deepEqual(p.sent.slice(-2), [{ type: "pickModel" }, { type: "openSettings" }]);
   p.host(workspaces([MAIN, WT], "wt:fix"));
   assert.equal(banner.hidden, true, "the Deep Agents key problem doesn't concern Claude Code");
 });
@@ -545,4 +545,43 @@ test("with no folder to work in, the panel says why and offers Open Folder inste
   p.host(workspaces([MAIN]));
   assert.equal(p.button("Open Folder")!.hidden, true, "gone once a folder is open");
   assert.match(empty.textContent!, /Deep Agents asks before every edit/);
+});
+
+test("permission modes: the mode chip shows the current mode and opens a menu of only the agent's modes; picking one sends it", () => {
+  const p = loadPanel();
+  const modes = [
+    { id: "ask", label: "Ask before edits", icon: "shield", description: "Asks before every edit." },
+    { id: "acceptEdits", label: "Edit automatically", icon: "pencil", description: "Edits without asking." },
+    { id: "plan", label: "Plan mode", icon: "bulb", description: "Plans only." },
+  ];
+  p.host(STATUS);
+  p.host(workspaces([{ ...MAIN, mode: "ask", modes }]));
+  const chip = p.doc.querySelector<HTMLButtonElement>(".footer .mode")!;
+  assert.match(chip.textContent!, /Ask before edits/);
+  assert.equal(chip.disabled, false);
+  const menu = p.doc.querySelector<HTMLElement>(".mode-menu")!;
+  assert.equal(menu.hidden, true);
+  chip.click();
+  assert.equal(menu.hidden, false);
+  const options = p.all(".mode-option");
+  assert.deepEqual(options.map((o) => o.querySelector(".mode-option-label")!.textContent), ["Ask before edits", "Edit automatically", "Plan mode"]);
+  assert.match(options[1].textContent!, /Edits without asking\./, "each mode says what it means");
+  assert.equal(options[0].getAttribute("aria-checked"), "true");
+  options[2].click();
+  assert.deepEqual(p.sent.at(-1), { type: "setMode", workspace: "main", mode: "plan" });
+  assert.equal(menu.hidden, true);
+  p.host(workspaces([{ ...MAIN, mode: "plan", modes }]));
+  assert.match(chip.textContent!, /Plan mode/);
+});
+
+test("permission modes: Restricted Mode shows Read-only and no menu; an agent with one mode has nothing to choose", () => {
+  const p = loadPanel();
+  p.host({ ...STATUS, restricted: true } as HostToPanel);
+  p.host(workspaces([{ ...MAIN, mode: "ask", modes: [{ id: "ask", label: "Ask before edits", icon: "shield", description: "x" }, { id: "plan", label: "Plan mode", icon: "bulb", description: "y" }] }]));
+  const chip = p.doc.querySelector<HTMLButtonElement>(".footer .mode")!;
+  assert.match(chip.textContent!, /Read-only/);
+  assert.equal(chip.disabled, true);
+  p.host(STATUS);
+  p.host(workspaces([{ ...MAIN, mode: "ask", modes: [{ id: "ask", label: "Ask before edits", icon: "shield", description: "x" }] }]));
+  assert.equal(chip.disabled, true);
 });

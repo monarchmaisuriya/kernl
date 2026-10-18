@@ -75,3 +75,27 @@ test("the gate refuses a denied action without a card and reports the rule; an a
   assert.deepEqual(asked.map((r) => (r as any).command), ["ls"]);
   assert.deepEqual(denied, ["run(rm *)"]);
 });
+
+test("permission modes at the gate: Edit automatically lets file edits through (not credential files); Plan refuses every change; a deny rule beats both", async () => {
+  let mode: "ask" | "acceptEdits" | "plan" = "acceptEdits";
+  const asked: GateRequest[] = [];
+  const refused: GateRequest[] = [];
+  const rules = parseRules({ deny: ["edit(locked/**)"] }).rules;
+  const gate = new ApprovalGate({ ask: async (_id, r) => (asked.push(r), false) }, { rules: () => rules, mode: () => mode, refusedInPlan: (r) => refused.push(r) });
+  const write: GateRequest = { kind: "write", path: "src/new.ts", before: null, after: "x" };
+  assert.equal(await gate.request(edit("src/a.ts")), true, "an edit goes through");
+  assert.equal(await gate.request(write), true, "a new file goes through");
+  assert.equal(await gate.request(edit(".env")), false, "a credential file still asks");
+  assert.equal(await gate.request(run("npm test")), false, "a command still asks");
+  assert.equal(await gate.request({ kind: "delete", path: "src/a.ts" }), false, "a delete still asks");
+  assert.equal(await gate.request(edit("locked/x.ts")), false, "a deny rule wins");
+  assert.deepEqual(asked.map((r) => r.kind), ["edit", "execute", "delete"]);
+  mode = "plan";
+  asked.length = 0;
+  assert.equal(await gate.request(edit("src/a.ts")), false);
+  assert.equal(await gate.request(run("ls")), false);
+  assert.equal(asked.length, 0, "plan mode refuses without a card");
+  assert.deepEqual(refused.map((r) => r.kind), ["edit", "execute"]);
+  assert.equal(await gate.request({ kind: "read", path: ".env" }), false, "reads still follow the usual rules (a credential file asks)");
+  assert.deepEqual(asked.map((r) => r.kind), ["read"]);
+});

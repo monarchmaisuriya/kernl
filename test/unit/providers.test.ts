@@ -19,7 +19,8 @@ test("builds one model class per provider from settings and a stub key", () => {
 });
 
 test("explains what is missing instead of building a broken model", () => {
-  assert.match(settingsProblem({ ...base, model: " " }, "k")!, /yourstack.model/);
+  assert.match(settingsProblem({ ...base, provider: "openai", model: " " }, "k")!, /Choose a model for openai: use the model chip, or set yourstack.model/);
+  assert.equal(settingsProblem({ ...base, model: " " }, "k"), undefined, "Anthropic has a default model");
   assert.match(settingsProblem(base, undefined)!, /No API key stored for anthropic/);
   assert.match(settingsProblem({ ...base, provider: "openai-compatible", baseUrl: "localhost:11434" }, undefined)!, /http\(s\) URL/);
   assert.match(settingsProblem({ ...base, provider: "bogus" as any }, "k")!, /one of anthropic, openai, google, deepseek, openai-compatible/);

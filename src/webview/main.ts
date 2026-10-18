@@ -6,6 +6,7 @@ import type { ApprovalCard, HarnessView, HostToPanel, PanelToHost, SendMode, Wor
 import { icon } from "./icons";
 import { attachmentChip, createAttachments } from "./attachments";
 import { MarkdownView } from "./markdown";
+import { createModeMenu, modeIcon } from "./modeMenu";
 import { createSendMenu, sendModeOf } from "./sendMenu";
 
 declare function acquireVsCodeApi(): { postMessage(m: PanelToHost): void };
@@ -104,11 +105,23 @@ composer.append(attachments.popover, sendMenu.menu, queueList, context, inputWra
 
 const footer = el("div", "footer");
 const workspaceChip = el("button", "chip workspace");
-const modeChip = el("span", "chip mode");
+// The permission mode: opens a menu of the modes this workspace's agent supports.
+const modeChip = el("button", "chip mode");
+const modeMenu = createModeMenu((mode) => send({ type: "setMode", workspace: active, mode }));
+modeChip.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const p = pane(active);
+  if (!p || status?.restricted || p.view.modes.length < 2) return;
+  if (modeMenu.isOpen()) modeMenu.close();
+  else modeMenu.open(p.view.modes, p.view.mode);
+});
+document.addEventListener("click", (e) => {
+  if (modeMenu.isOpen() && !modeMenu.menu.contains(e.target as Node)) modeMenu.close();
+});
 const jobsChip = el("button", "chip jobs");
 jobsChip.addEventListener("click", () => send({ type: "pickJob" }));
 const usage = el("span", "usage");
-footer.append(workspaceChip, modeChip, jobsChip, el("span", "spacer"), usage);
+footer.append(modeMenu.menu, workspaceChip, modeChip, jobsChip, el("span", "spacer"), usage);
 app.append(banner, logs, composer, footer);
 
 const markdownActions = { openLink: (url: string) => send({ type: "openLink", url }), copy: (text: string) => send({ type: "copy", text }) };
@@ -164,8 +177,9 @@ function render() {
   banner.replaceChildren();
   banner.hidden = !(deepAgents && status?.problem);
   if (status?.problem && deepAgents) {
-    const setKey = el("button", "primary", "Set API key");
-    setKey.addEventListener("click", () => send({ type: "setKey" }));
+    // One flow fixes either problem: provider, then a key if it has none, then the model.
+    const setKey = el("button", "primary", "Choose provider and model");
+    setKey.addEventListener("click", () => send({ type: "pickModel" }));
     const settings = el("button", "", "Open settings");
     settings.addEventListener("click", () => send({ type: "openSettings" }));
     const actions = el("div", "banner-actions");
@@ -185,9 +199,16 @@ function render() {
     workspaceChip.title = p.view.branch ? `${label}\nBranch ${p.view.branch}` : label;
   }
   const restricted = status?.restricted ?? false;
-  modeChip.replaceChildren(icon("shield", 14), el("span", "chip-text", restricted ? "Read-only" : "Asks first"));
+  const mode = p?.view.modes.find((m) => m.id === p.view.mode);
+  const choosable = !!p && !restricted && p.view.modes.length > 1;
+  modeChip.replaceChildren(icon(restricted ? "shield" : modeIcon(mode?.icon ?? "shield"), 14), el("span", "chip-text", restricted ? "Read-only" : (mode?.label ?? "Ask before edits")));
+  if (choosable) modeChip.append(icon("chevron", 14));
   modeChip.classList.toggle("restricted", restricted);
-  modeChip.title = restricted ? "Restricted Mode: the agent can only read." : (p?.view.disclosure ?? "");
+  modeChip.classList.toggle("bypass", p?.view.mode === "bypass");
+  modeChip.disabled = !choosable;
+  modeChip.title = restricted ? "Restricted Mode: the agent can only read." : `${p?.view.disclosure ?? ""}${choosable ? "\nChange the permission mode" : ""}`;
+  modeChip.setAttribute("aria-label", `Permission mode: ${restricted ? "Read-only" : (mode?.label ?? "")}${choosable ? ". Change mode" : ""}`);
+  if (!choosable) modeMenu.close();
   usage.textContent = p?.usage ?? "";
   const jobs = p?.jobs ?? { running: 0, total: 0 };
   jobsChip.hidden = jobs.total === 0;

@@ -17,6 +17,7 @@ import { GitHubApi, type GitHubKind, type GitHubSource, parseGitHubRemote } from
 import { cliReadiness, type Readiness, runQuiet } from "./harnesses";
 import { addCustomProvider, type KeyTargets, promptForApiKey, useDeepSeekForClaudeCode } from "./keyCommands";
 import { Logger, Redactor } from "./log";
+import { isPermissionMode } from "./modes";
 import { agentLogins, manageProviders, pickModel } from "./providerManager";
 import { KeyStore } from "./providers/keys";
 import { createChatModel, isProviderId, type ProviderId, resolveProvider, settingsProblem } from "./providers/registry";
@@ -184,7 +185,7 @@ export class Controller implements vscode.Disposable {
       let label = this.multiRoot ? folder.name : "Main";
       for (let n = 2; this.workspaces.has(id); n++) (id = `folder:${folder.name} #${n}`), (label = `${folder.name} #${n}`);
       const harness = (this.multiRoot && this.context.workspaceState.get<string>(this.harnessKey(folder.root))) || defaultHarness;
-      this.workspaces.set(id, new WorkspaceRuntime(id, label, folder.root, isHarness(harness) ? harness : "deepagents", this.host, undefined, !this.multiRoot));
+      this.track(new WorkspaceRuntime(id, label, folder.root, isHarness(harness) ? harness : "deepagents", this.host, undefined, !this.multiRoot));
       try {
         const repo = await repoRoot(folder.root);
         for (const info of await listWorkspaces(repo, join(this.context.globalStorageUri.fsPath, "worktrees"))) this.addWorktree(info, id);
@@ -208,8 +209,7 @@ export class Controller implements vscode.Disposable {
     const folder = this.workspace(folderId)!;
     const id = this.multiRoot ? `wt:${folder.label}/${info.name}` : `wt:${info.name}`;
     const label = this.multiRoot ? `${folder.label}/${info.name}` : info.name;
-    const runtime = new WorkspaceRuntime(id, label, info.path, isHarness(info.harness) ? info.harness : "deepagents", this.host, info);
-    this.workspaces.set(runtime.id, runtime);
+    const runtime = this.track(new WorkspaceRuntime(id, label, info.path, isHarness(info.harness) ? info.harness : "deepagents", this.host, info));
     this.worktreeFolder.set(runtime.id, folderId);
     return runtime;
   }
@@ -227,6 +227,41 @@ export class Controller implements vscode.Disposable {
   /** Where a folder's agent choice is kept in a multi-root window. */
   private harnessKey(root: string) {
     return `yourstack.harness:${root}`;
+  }
+
+  /** A new workspace runtime, in the permission mode kept for its folder or worktree. */
+  private track(runtime: WorkspaceRuntime) {
+    const kept = this.context.workspaceState.get<string>(this.modeKey(runtime.root));
+    if (isPermissionMode(kept)) runtime.restoreMode(kept);
+    this.workspaces.set(runtime.id, runtime);
+    return runtime;
+  }
+
+  /** Where a workspace's permission mode is kept (per folder or worktree path). */
+  private modeKey(root: string) {
+    return `yourstack.mode:${root}`;
+  }
+
+  /** The mode chip's menu. Bypass asks first; a mode the agent can't confirm leaves the old one in place. */
+  private async setMode(id: string, mode: string) {
+    const ws = this.workspace(id);
+    if (!ws || !isPermissionMode(mode)) return;
+    if (mode === "bypass") {
+      const agent = this.harnessList().find((h) => h.id === ws.harness)?.label ?? ws.harness;
+      const ok = await this.prompts.confirm(
+        "Bypass permissions?",
+        `${agent} will run every tool (edits, shell commands, network) in ${ws.label} without asking you. Use it only in a sandbox or a throwaway checkout.`,
+        "Bypass permissions",
+      );
+      if (!ok) return this.postWorkspaces();
+    }
+    try {
+      await ws.setMode(mode);
+      await this.context.workspaceState.update(this.modeKey(ws.root), ws.mode);
+    } catch (err: any) {
+      void vscode.window.showWarningMessage(err?.message ?? String(err));
+    }
+    this.postWorkspaces();
   }
 
   private harnessList(): HarnessView[] {
@@ -256,7 +291,9 @@ export class Controller implements vscode.Disposable {
 
   /** The agent chip: YourStack and its named agents first, then the CLI agents, each with what it needs. */
   private async pickHarness() {
-    await this.refreshReadiness();
+    // Readiness is kept current (startup, window focus, key and login changes); only the first menu waits for it.
+    if (this.readiness.size) void this.refreshReadiness();
+    else await this.refreshReadiness();
     const ws = this.workspace(this.active);
     if (!ws) return void vscode.window.showWarningMessage(this.noWorkspaceReason() ?? "YourStack is still loading this window's folders.");
     if (ws.running) return void vscode.window.showWarningMessage("Stop the agent before changing it.");
@@ -279,9 +316,14 @@ export class Controller implements vscode.Disposable {
     const h = picked?.harness;
     if (!h) return;
     if (!h.ready) {
-      const fix = h.group === "yourstack" ? this.manageProviders() : this.agentLogins();
-      await fix;
+      // Set it up first; switch only once it can run, so a cancelled setup doesn't leave a broken agent.
+      await (h.group === "yourstack" ? this.pickModel() : this.agentLogins());
       await this.refreshReadiness();
+      const now = this.harnessList().find((x) => x.id === h.id);
+      if (!now?.ready) {
+        const current = this.harnessList().find((x) => x.id === ws.harness)?.label ?? ws.harness;
+        return void vscode.window.showWarningMessage(`${h.label} still needs setup (${now?.problem ?? "not ready"}); ${ws.label} stays on ${current}.`);
+      }
     }
     await this.setHarness(ws.id, h.id);
   }
@@ -594,6 +636,8 @@ export class Controller implements vscode.Disposable {
         }
         return;
       }
+      case "setMode":
+        return this.setMode(m.workspace, m.mode);
       case "openFolder":
         return void vscode.commands.executeCommand("workbench.action.files.openFolder");
       case "pickWorkspace":
@@ -620,6 +664,8 @@ export class Controller implements vscode.Disposable {
     if (!ws || !this.harnessList().some((h) => h.id === harness)) return;
     if (ws.running) return void vscode.window.showWarningMessage("Stop the agent before changing it.");
     ws.setHarness(harness);
+    // The new agent may not support the old mode (it falls back to Ask before edits).
+    await this.context.workspaceState.update(this.modeKey(ws.root), ws.mode);
     if (ws.info) await this.commands.rememberHarness(ws.info, harness);
     // In a multi-root window each folder keeps its own choice (yourstack.harness is only the default).
     else if (this.multiRoot) await this.context.workspaceState.update(this.harnessKey(ws.root), harness);

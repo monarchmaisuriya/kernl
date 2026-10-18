@@ -449,14 +449,15 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
   // `inputs`, when set, answers input boxes in order; otherwise every input box gets `name`.
   let scripted: { name: string; harness: string; confirm: boolean; pickFirst: boolean; menu?: RegExp; inputs?: string[] } = { name: "ui-ws", harness: "claude-code", confirm: true, pickFirst: true };
   const menusShown: any[][] = [];
-  testing.usePrompts({
+  const scriptedPrompts = {
     input: async () => (scripted.inputs?.length ? scripted.inputs.shift() : scripted.name),
     pick: async (items: any[]) => (
       menusShown.push(items),
       !scripted.pickFirst ? undefined : ((scripted.menu && items.find((i) => i.kind !== -1 && scripted.menu!.test(i.label))) ?? items.find((i) => i.id === scripted.harness) ?? items.find((i) => i.kind !== -1))
     ),
     confirm: async () => scripted.confirm,
-  });
+  };
+  testing.usePrompts(scriptedPrompts);
 
   await check("panel: the real webview loads under its CSP and shakes hands with the host", async () => {
     await vscode.commands.executeCommand("yourstack.panel.focus");
@@ -584,6 +585,40 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     assert.equal(readFileSync(join(root, "hello.txt"), "utf8"), "hi\n");
     assert.ok(delivered.slice(from).some((m) => m.type === "text" && /hello from fake/.test(m.delta)), "agent text streamed to the panel");
     rmSync(join(root, "hello.txt"));
+  });
+
+  await check("permission modes: Claude Code lists its five modes; a change is set on the live session and confirmed; Bypass asks first", async () => {
+    const mainView = (from: number) => delivered.slice(from).filter((m) => m.type === "workspaces").at(-1)?.items.find((w: any) => w.id === "main");
+    let from = delivered.length;
+    await testing.receive({ type: "setMode", workspace: "main", mode: "acceptEdits" });
+    const view = mainView(from);
+    assert.deepEqual(view.modes.map((m: any) => m.id), ["ask", "acceptEdits", "plan", "auto", "bypass"]);
+    assert.equal(view.mode, "acceptEdits");
+    assert.match(view.disclosure, /edits files without asking/);
+    assert.ok(delivered.slice(from).some((m) => m.type === "notice" && /Permission mode: Edit automatically/.test(m.text)));
+    from = delivered.length;
+    scripted = { ...scripted, confirm: false };
+    await testing.receive({ type: "setMode", workspace: "main", mode: "bypass" });
+    assert.equal(mainView(from).mode, "acceptEdits", "declining the Bypass confirmation keeps the mode");
+    scripted = { ...scripted, confirm: true };
+    from = delivered.length;
+    await testing.receive({ type: "setMode", workspace: "main", mode: "bypass" });
+    assert.equal(mainView(from).mode, "bypass");
+    from = delivered.length;
+    await testing.receive({ type: "setMode", workspace: "main", mode: "ask" });
+    assert.equal(mainView(from).mode, "ask");
+  });
+
+  await check("agent chip: picking an agent that needs setup and cancelling the setup keeps the current agent", async () => {
+    let picks = 0;
+    testing.usePrompts({ ...scriptedPrompts, pick: async (items: any[]) => (picks++ === 0 ? items.find((i) => i.harness?.id === "deepagents") : undefined) });
+    try {
+      await testing.receive({ type: "pickHarness" });
+      assert.ok(picks >= 2, "the setup flow was offered");
+      assert.equal(delivered.filter((m) => m.type === "workspaces").at(-1).items.find((w: any) => w.id === "main").harness, "claude-code");
+    } finally {
+      testing.usePrompts(scriptedPrompts);
+    }
   });
 
   await check("current-file suggestion: the panel is told about a workspace file open in the editor, and not about one outside it", async () => {

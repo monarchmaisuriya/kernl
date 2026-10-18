@@ -6,8 +6,8 @@ import { AgentCredentials, credentialEnv, DEEPSEEK_ANTHROPIC_URL } from "../../s
 import { Redactor } from "../../src/log";
 
 test("each agent has a fail-closed ask-mode strategy", () => {
-  assert.deepEqual(CLI_AGENTS["claude-code"].askMode, { kind: "configOption", optionId: "mode", value: "default" });
-  assert.deepEqual(CLI_AGENTS.codex.askMode, { kind: "configOption", optionId: "mode", value: "read-only" });
+  assert.deepEqual(CLI_AGENTS["claude-code"].modes.ask.session, { kind: "configOption", optionId: "mode", value: "default" });
+  assert.deepEqual(CLI_AGENTS.codex.modes.ask.session, { kind: "configOptions", options: [{ optionId: "mode", value: "read-only" }, { optionId: "collaboration_mode", value: "default" }] });
   assert.equal(CLI_AGENTS.codex.experimental, true);
   assert.deepEqual(JSON.parse(OPENCODE_ASK_CONFIG).permission, { edit: "ask", bash: "ask", webfetch: "ask", external_directory: "ask" });
 });
@@ -64,4 +64,16 @@ test("agent credentials live in their own secrets, are redacted once read, and C
   await store.clearAll();
   assert.deepEqual([...map.keys()], ["yourstack.apiKey.anthropic"]);
   assert.equal(await store.get("claude-code"), undefined);
+});
+
+test("each agent offers only the permission modes it supports, each set through the agent's own options", () => {
+  const modes = (id: keyof typeof CLI_AGENTS) => Object.keys(CLI_AGENTS[id].modes);
+  assert.deepEqual(modes("claude-code"), ["ask", "acceptEdits", "plan", "auto", "bypass"]);
+  assert.deepEqual(modes("codex"), ["ask", "acceptEdits", "plan", "auto", "bypass"]);
+  assert.deepEqual(modes("opencode"), ["ask", "acceptEdits", "plan"]);
+  assert.deepEqual(CLI_AGENTS["claude-code"].modes.bypass!.session, { kind: "configOption", optionId: "mode", value: "bypassPermissions" });
+  assert.deepEqual(CLI_AGENTS.codex.modes.plan!.session, { kind: "configOptions", options: [{ optionId: "mode", value: "read-only" }, { optionId: "collaboration_mode", value: "plan" }] });
+  const oc = resolveLaunch("opencode", { opencode: { command: "/opt/oc", args: ["acp"] } }, {}, "acceptEdits") as any;
+  assert.equal(JSON.parse(oc.env.OPENCODE_CONFIG_CONTENT).permission.edit, "allow", "Edit automatically relaunches OpenCode with edits allowed");
+  assert.equal(JSON.parse(oc.env.OPENCODE_CONFIG_CONTENT).permission.bash, "ask", "commands still ask");
 });

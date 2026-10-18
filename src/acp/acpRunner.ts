@@ -13,7 +13,8 @@ import { type Attachment, attachmentNote } from "../ui/protocol";
 export interface AcpRunnerOptions {
   agentLabel: string;
   launch: Launch;
-  askMode: AskMode;
+  /** The permission mode to put each session in (read when a session starts and on applyMode). */
+  mode: () => AskMode;
   cwd: string;
   gate: ApprovalGate;
   events: SessionEvents;
@@ -49,6 +50,8 @@ export class AcpRunner implements Runner {
   /** The previous session's close; the next session waits for it, so the agent never holds both. */
   private closing: Promise<void> | undefined;
   private agentCapabilities: acp.AgentCapabilities | undefined;
+  /** The current session's modes (for agents that use session modes rather than config options). */
+  private sessionModes: acp.NewSessionResponse["modes"];
   private loggedUnknown = new Set<string>();
 
   constructor(private o: AcpRunnerOptions) {}
@@ -115,7 +118,7 @@ export class AcpRunner implements Runner {
     if (this.active) throw new Error("Stop the agent before forking.");
     if (!this.connection || !this.sessionId || !this.agentCapabilities?.sessionCapabilities?.fork) return undefined;
     const forked = await this.connection.unstable_forkSession({ sessionId: this.sessionId, cwd: this.o.cwd, mcpServers: [] });
-    await this.forceAskMode(this.connection, forked as unknown as acp.NewSessionResponse);
+    await this.forceMode(this.connection, forked as unknown as acp.NewSessionResponse);
     this.sessionId = forked.sessionId;
     return { sessionId: forked.sessionId };
   }
@@ -188,7 +191,7 @@ export class AcpRunner implements Runner {
       try {
         const loaded = await conn.loadSession({ sessionId: resumeId, cwd: this.o.cwd, mcpServers: [] });
         const session = { ...loaded, sessionId: resumeId } as acp.NewSessionResponse;
-        await this.forceAskMode(conn, session);
+        await this.forceMode(conn, session);
         this.sessionId = resumeId;
         return resumeId;
       } catch (err: any) {
@@ -202,21 +205,40 @@ export class AcpRunner implements Runner {
       this.o.notice?.(`${this.o.agentLabel} can't reload earlier conversations; this message starts a new one.`);
     }
     const session = await conn.newSession({ cwd: this.o.cwd, mcpServers: [] });
-    await this.forceAskMode(conn, session);
+    await this.forceMode(conn, session);
     this.sessionId = session.sessionId;
     return session.sessionId;
   }
 
-  private async forceAskMode(conn: acp.ClientSideConnection, session: acp.NewSessionResponse) {
-    const mode = this.o.askMode;
+  /**
+   * Puts the live session into the current permission mode now (the user changed it). With no
+   * session yet, the next session gets it. Throws when the agent doesn't confirm it.
+   */
+  async applyMode(): Promise<void> {
+    if (!this.connection || !this.sessionId) return;
+    await this.forceMode(this.connection, { sessionId: this.sessionId, modes: this.sessionModes } as acp.NewSessionResponse);
+  }
+
+  /** Sets the session's permission mode and confirms it from the agent's reply; nothing is sent to an unconfirmed session. */
+  private async forceMode(conn: acp.ClientSideConnection, session: acp.NewSessionResponse) {
+    const mode = this.o.mode();
+    this.sessionModes = session.modes ?? this.sessionModes;
     const refuse = (why: string) => {
-      throw new AskModeRefusal(`refusing to run: could not confirm it will ask before every action (${why})`);
+      throw new AskModeRefusal(`refusing to run: could not confirm its permission mode (${why})`);
     };
     if (mode.kind === "environment") return;
-    if (mode.kind === "configOption") {
-      const res = await conn.setSessionConfigOption({ sessionId: session.sessionId, configId: mode.optionId, value: mode.value });
-      const now = (res.configOptions ?? []).find((o: any) => o.id === mode.optionId) as any;
-      if (now?.currentValue !== mode.value) refuse(`${mode.optionId} is '${now?.currentValue ?? "missing"}', expected '${mode.value}'`);
+    if (mode.kind === "configOption" || mode.kind === "configOptions") {
+      for (const { optionId, value } of mode.kind === "configOption" ? [mode] : mode.options) {
+        const set = async () => {
+          const res = await conn.setSessionConfigOption({ sessionId: session.sessionId, configId: optionId, value });
+          return ((res.configOptions ?? []).find((o: any) => o.id === optionId) as any)?.currentValue;
+        };
+        // OpenCode 2.0.27 replies with the previous value when leaving its plan mode; setting it again
+        // returns the current one. Anything still unconfirmed after that is refused.
+        let now = await set();
+        if (now !== value) now = await set();
+        if (now !== value) refuse(`${optionId} is '${now ?? "missing"}', expected '${value}'`);
+      }
       return;
     }
     const available = (session.modes?.availableModes ?? []).map((m) => m.id);

@@ -29,8 +29,8 @@ import type { Checkpoints } from "./checkpoints";
 import { cutHistory, type QueuedMessage, type SessionRecord, type SessionStore, type TranscriptEvent } from "./sessions";
 import { createHash, randomUUID } from "node:crypto";
 import type { WorkspaceInfo } from "./workspaces/worktrees";
+import { MODE_INFO, PERMISSION_MODES, type PermissionMode, PLAN_NOTE, YOURSTACK_MODES } from "./modes";
 
-const DEEP_AGENTS_DISCLOSURE = "YourStack asks before every edit, command, browser action, and MCP tool call.";
 
 /** Our own harness (Deep Agents with the user's keys) is shown as "YourStack"; its settings value stays `deepagents`. */
 export const HARNESSES = [
@@ -103,6 +103,8 @@ export class WorkspaceRuntime {
   private queueSaving: Promise<void> = Promise.resolve();
   /** Set when a run was stopped or failed, or the conversation changed: the queue waits for Send now. */
   private queuePaused = false;
+  /** How much the agent may do without asking (see modes.ts); checked against the agent's supported modes. */
+  private permissionMode: PermissionMode = "ask";
   /** How the last run ended; decides whether the queue carries on. */
   private lastFinish: "done" | "stopped" | "error" | undefined;
 
@@ -127,6 +129,9 @@ export class WorkspaceRuntime {
     this.gate = new ApprovalGate(this.approvals, {
       rules: () => host.approvalRules(),
       denied: (_request, rule) => this.post({ type: "notice", workspace: this.id, text: `Refused by your approval rule deny: ${rule}` }),
+      // CLI agents enforce their own mode (their permission requests, like leaving plan mode, still ask here).
+      mode: () => (isCliAgentId(this.harness) ? "ask" : this.permissionMode),
+      refusedInPlan: (request) => this.post({ type: "notice", workspace: this.id, text: `Plan mode: refused ${request.kind === "execute" ? `running ${request.command}` : request.kind === "edit" || request.kind === "write" || request.kind === "delete" ? `changing ${request.path}` : "a change"}. Switch modes to make changes.` }),
     });
   }
 
@@ -135,10 +140,64 @@ export class WorkspaceRuntime {
   }
 
   view(): WorkspaceView {
-    const cli = isCliAgentId(this.harness) ? CLI_AGENTS[this.harness] : undefined;
-    const disclosure = cli?.disclosure ?? DEEP_AGENTS_DISCLOSURE;
+    const modes = this.modeDisclosures();
+    const disclosure = modes[this.permissionMode] ?? modes.ask!;
     const queue = this.queue.map((q) => ({ id: q.id, text: q.text, attachments: q.attachments.length }));
-    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused };
+    const modeList = PERMISSION_MODES.filter((m) => modes[m]).map((m) => ({ id: m, label: MODE_INFO[m].label, icon: MODE_INFO[m].icon, description: modes[m]! }));
+    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused, mode: this.permissionMode, modes: modeList };
+  }
+
+  /** The current agent's supported modes, each with what it means for this agent. */
+  private modeDisclosures(harness = this.harness): Partial<Record<PermissionMode, string>> {
+    if (!isCliAgentId(harness)) return YOURSTACK_MODES;
+    return Object.fromEntries(Object.entries(CLI_AGENTS[harness].modes).map(([m, spec]) => [m, spec!.disclosure]));
+  }
+
+  get mode(): PermissionMode {
+    return this.permissionMode;
+  }
+
+  /** A mode the current agent supports, else "ask" (after an agent change, or a stored mode it no longer offers). */
+  private supportedMode(mode: PermissionMode, harness = this.harness): PermissionMode {
+    return this.modeDisclosures(harness)[mode] ? mode : "ask";
+  }
+
+  /**
+   * Switches the permission mode. YourStack applies it at its gate at once; a CLI agent's live
+   * session is switched and confirmed (refused: the previous mode stays). A mode that needs a
+   * different launch environment (OpenCode's edit permissions) relaunches the agent and reloads
+   * the conversation.
+   */
+  async setMode(mode: PermissionMode): Promise<void> {
+    if (this.supportedMode(mode) !== mode || mode === this.permissionMode) return;
+    const previous = this.permissionMode;
+    if (isCliAgentId(this.harness)) {
+      const spec = CLI_AGENTS[this.harness];
+      const relaunch = JSON.stringify(spec.modes[previous]?.env ?? {}) !== JSON.stringify(spec.modes[mode]?.env ?? {});
+      if (relaunch && this.running) throw new Error(`Stop ${spec.label} before switching to ${MODE_INFO[mode].label}: it restarts the agent.`);
+      this.permissionMode = mode;
+      if (relaunch) {
+        this.pendingHistory = (await this.runner?.exportHistory()) ?? this.pendingHistory;
+        this.reset();
+      } else {
+        try {
+          await this.runner?.applyMode?.();
+        } catch (err) {
+          this.permissionMode = previous;
+          // Put the session back in the mode it was in; if even that can't be confirmed, start over.
+          await this.runner?.applyMode?.().catch(() => this.reset());
+          this.host.workspacesChanged();
+          throw err;
+        }
+      }
+    } else this.permissionMode = mode;
+    this.post({ type: "notice", workspace: this.id, text: `Permission mode: ${MODE_INFO[mode].label}.` });
+    this.host.workspacesChanged();
+  }
+
+  /** The mode kept for this workspace, applied before any session starts. */
+  restoreMode(mode: PermissionMode) {
+    this.permissionMode = this.supportedMode(mode);
   }
 
   /**
@@ -239,7 +298,9 @@ export class WorkspaceRuntime {
       return;
     }
     this.lastFinish = undefined;
-    const sending = runner.send(trimmed, attachments);
+    // The YourStack agent is told it's in plan mode (its gate refuses changes either way).
+    const forAgent = !isCliAgentId(this.harness) && this.permissionMode === "plan" ? PLAN_NOTE + trimmed : trimmed;
+    const sending = runner.send(forAgent, attachments);
     this.host.workspacesChanged();
     await sending;
     await this.saveSession();
@@ -270,6 +331,7 @@ export class WorkspaceRuntime {
     this.holdQueue();
     this.reset();
     this.harness = isHarness(harness) ? harness : this.harness;
+    this.permissionMode = this.supportedMode(this.permissionMode);
     this.post({ type: "notice", workspace: this.id, text: "Settings changed: the next message starts a new conversation." });
   }
 
@@ -294,6 +356,7 @@ export class WorkspaceRuntime {
     this.holdQueue();
     this.reset();
     this.harness = harness;
+    this.permissionMode = this.supportedMode(this.permissionMode);
     this.session = this.host.sessions.create(harness);
     this.host.post({ type: "cleared", workspace: this.id });
   }
@@ -488,13 +551,13 @@ export class WorkspaceRuntime {
     if (!this.host.trusted()) {
       throw new Error(`${spec.label} can't run in Restricted Mode: its read-only limits can't be enforced on an external agent. Trust the workspace, or use Deep Agents.`);
     }
-    const launch = resolveLaunch(spec.id, this.host.providerSettings().agentCommands, await this.host.agentEnv(spec.id));
+    const launch = resolveLaunch(spec.id, this.host.providerSettings().agentCommands, await this.host.agentEnv(spec.id), this.permissionMode);
     if ("error" in launch) throw new Error(launch.error);
     return this.withHistory(new AcpRunner({
       notice: (text) => this.post({ type: "notice", workspace: this.id, text }),
       agentLabel: spec.label,
       launch,
-      askMode: spec.askMode,
+      mode: () => (spec.modes[this.permissionMode] ?? spec.modes.ask).session,
       cwd: this.root,
       gate: this.gate,
       events: this.events(),

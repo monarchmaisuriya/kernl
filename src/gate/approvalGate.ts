@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PermissionMode } from "../modes";
 import { decide, type Rule } from "./rules";
 
 /** Everything the agent can ask permission for. One shape per kind of side effect. */
@@ -22,6 +23,10 @@ export interface GatePolicy {
   rules(): readonly Rule[];
   /** A deny rule refused `request` without asking. */
   denied?(request: GateRequest, rule: string): void;
+  /** The permission mode, read on every request (absent: ask before edits). */
+  mode?(): PermissionMode;
+  /** Plan mode refused `request` without asking. */
+  refusedInPlan?(request: GateRequest): void;
 }
 
 // Files whose contents would hand credentials to the model provider.
@@ -39,13 +44,24 @@ export function isSensitivePath(path: string): boolean {
 export class ApprovalGate {
   constructor(private prompter: ApprovalPrompter, private policy: GatePolicy) {}
 
+  /**
+   * A deny rule always wins. Plan mode refuses every change (reads still follow the rules). Then
+   * allow rules apply, and in "Edit automatically" edits and new files (not credential files) are
+   * allowed; everything else asks.
+   */
   async request(request: GateRequest): Promise<boolean> {
     const { verdict, rule } = decide(request, this.policy.rules());
-    if (verdict === "allow") return true;
     if (verdict === "deny") {
       this.policy.denied?.(request, rule!.text);
       return false;
     }
+    const mode = this.policy.mode?.() ?? "ask";
+    if (mode === "plan" && request.kind !== "read") {
+      this.policy.refusedInPlan?.(request);
+      return false;
+    }
+    if (verdict === "allow") return true;
+    if (mode === "acceptEdits" && (request.kind === "edit" || request.kind === "write") && !isSensitivePath(request.path)) return true;
     return this.prompter.ask(randomUUID(), request);
   }
 }

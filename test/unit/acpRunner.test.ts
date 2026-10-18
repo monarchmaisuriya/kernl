@@ -12,7 +12,7 @@ import { PendingApprovals } from "../../src/gate/pendingApprovals";
 const fake = resolve(__dirname, "fakeAcpAgent.cjs");
 const MANUAL: AskMode = { kind: "configOption", optionId: "mode", value: "default" };
 
-function harness(scenario: string, answer: boolean | "never", askMode: AskMode = MANUAL, extraEnv: Record<string, string> = {}) {
+function harness(scenario: string, answer: boolean | "never", askMode: AskMode | (() => AskMode) = MANUAL, extraEnv: Record<string, string> = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "yourstack-acp-"));
   const logFile = join(cwd, "..", `fake-${Math.random().toString(36).slice(2)}.log`);
   const asked: GateRequest[] = [];
@@ -25,7 +25,7 @@ function harness(scenario: string, answer: boolean | "never", askMode: AskMode =
   const runner = new AcpRunner({
     agentLabel: "Fake Agent",
     launch: { command: process.execPath, args: [fake], env: { FAKE_SCENARIO: scenario, FAKE_LOG: logFile, ...extraEnv } },
-    askMode,
+    mode: typeof askMode === "function" ? askMode : () => askMode,
     cwd,
     gate,
     onStop: () => pending.denyAll(),
@@ -88,7 +88,7 @@ test("if ask mode cannot be confirmed, the agent refuses and no prompt is sent",
   await h.runner.send("write it");
   assert.ok(Date.now() - started < 500, `refusal took ${Date.now() - started} ms; a live agent must not wait for an exit`);
   h.runner.dispose();
-  assert.match(h.events.at(-1)!, /finished:error:.*refusing to run: could not confirm it will ask before every action \(mode is 'auto', expected 'default'\)/);
+  assert.match(h.events.at(-1)!, /finished:error:.*refusing to run: could not confirm its permission mode \(mode is 'auto', expected 'default'\)/);
   assert.ok(!h.fakeLog().includes("prompt"), h.fakeLog().join(" | "));
 });
 
@@ -188,5 +188,28 @@ test("an agent without session/fork can't fork", async () => {
   const h = harness("write", false);
   await h.runner.send("first");
   assert.equal(await h.runner.forkSession(), undefined);
+  h.runner.dispose();
+});
+
+test("a permission mode change is applied to the live session and confirmed; an agent that doesn't confirm it is refused", async () => {
+  let mode: AskMode = MANUAL;
+  const h = harness("write", false, () => mode);
+  await h.runner.send("first");
+  mode = { kind: "configOption", optionId: "mode", value: "acceptEdits" };
+  await h.runner.applyMode();
+  assert.ok(h.fakeLog().includes("setConfig mode=acceptEdits"), h.fakeLog().join(" | "));
+  h.runner.dispose();
+  const stuck = harness("stuck-mode", false, () => MANUAL);
+  await stuck.runner.applyMode(); // no session yet: applied when one starts
+  stuck.runner.dispose();
+});
+
+test("an agent whose reply lags one mode behind (OpenCode leaving plan) is confirmed by setting the mode again", async () => {
+  let mode: AskMode = { kind: "configOption", optionId: "mode", value: "plan" };
+  const h = harness("lagging-mode", false, () => mode);
+  await h.runner.send("first");
+  mode = { kind: "configOption", optionId: "mode", value: "build" };
+  await h.runner.applyMode();
+  assert.deepEqual(h.fakeLog().filter((l) => l.startsWith("setConfig")), ["setConfig mode=plan", "setConfig mode=plan", "setConfig mode=build", "setConfig mode=build"]);
   h.runner.dispose();
 });

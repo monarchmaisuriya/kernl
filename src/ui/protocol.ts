@@ -75,6 +75,18 @@ export interface WorkspaceView {
   queue: QueuedView[];
   /** True after a run was stopped or failed (or the conversation changed): queued messages wait for Send now. */
   queuePaused: boolean;
+  /** The permission mode (see src/modes.ts) and the modes this workspace's agent supports. */
+  mode: string;
+  modes: ModeView[];
+}
+
+export interface ModeView {
+  id: string;
+  label: string;
+  /** An icon name from the panel's icon set. */
+  icon: string;
+  /** What the mode means for this agent. */
+  description: string;
 }
 
 export interface QueuedView {
@@ -150,6 +162,8 @@ export type PanelToHost =
   | { type: "pickModel" }
   /** The composer's agent chip: pick the harness for the shown workspace. */
   | { type: "pickHarness" }
+  /** The mode chip's menu: switch this workspace's permission mode. */
+  | { type: "setMode"; workspace: string; mode: string }
   /** The empty panel's Open Folder button (shown when the window has no usable folder). */
   | { type: "openFolder" }
   /** A link in a reply; the host opens it in the browser if httpUrl() accepts it. */
@@ -157,7 +171,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

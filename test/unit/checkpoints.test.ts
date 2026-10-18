@@ -72,3 +72,38 @@ test("snapshots on one workspace run one at a time (no git lock clashes)", async
   const ids = await Promise.all([store.snapshot(root, "1"), store.snapshot(root, "2"), store.changes(root, "HEAD").catch(() => []), store.snapshot(root, "3")]);
   assert.equal(new Set([ids[0], ids[1], ids[3]].map((x) => typeof x)).size, 1);
 });
+
+test("a folder holding git repositories (like ~/Develop): files inside each nested repository are snapshotted, listed, and restored", async () => {
+  const root = mkdtempSync(join(tmpdir(), "yourstack-ckpt-folder-"));
+  writeFileSync(join(root, "notes.txt"), "top\n");
+  const nestedRepo = (name: string) => {
+    const dir = join(root, name);
+    mkdirSync(dir);
+    const git = (...a: string[]) => execFileSync("git", a, { cwd: dir, encoding: "utf8" });
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(dir, ".gitignore"), "build/\n");
+    writeFileSync(join(dir, "app.ts"), `${name} original\n`);
+    writeFileSync(join(dir, "old.ts"), "to delete\n");
+    git("add", "-A");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init");
+    return { dir, git };
+  };
+  const api = nestedRepo("api");
+  nestedRepo("web");
+  const store = new Checkpoints(mkdtempSync(join(tmpdir(), "yourstack-ckpt-store-")));
+  const before = await store.snapshot(root, "before message");
+  writeFileSync(join(api.dir, "app.ts"), "agent changed\n");
+  writeFileSync(join(api.dir, "new.ts"), "agent created\n");
+  rmSync(join(api.dir, "old.ts"));
+  mkdirSync(join(api.dir, "build"));
+  writeFileSync(join(api.dir, "build", "out.js"), "ignored\n");
+  const changes = await store.changes(root, before);
+  assert.deepEqual(changes.map((c) => `${c.status} ${c.path}`).sort(), ["A api/old.ts", "D api/new.ts", "M api/app.ts"]);
+  await store.restore(root, before);
+  assert.equal(readFileSync(join(api.dir, "app.ts"), "utf8"), "api original\n");
+  assert.equal(readFileSync(join(api.dir, "old.ts"), "utf8"), "to delete\n");
+  assert.equal(existsSync(join(api.dir, "new.ts")), false);
+  assert.equal(readFileSync(join(api.dir, "build", "out.js"), "utf8"), "ignored\n", "ignored files are left alone");
+  assert.equal(api.git("status", "--porcelain").trim(), "", "the nested repository's own index and working tree match its HEAD again");
+  assert.equal(api.git("rev-list", "--count", "HEAD").trim(), "1");
+});

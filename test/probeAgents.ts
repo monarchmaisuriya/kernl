@@ -23,7 +23,7 @@ async function probe(id: CliAgentId): Promise<boolean> {
   const runner = new AcpRunner({
     agentLabel: spec.label,
     launch,
-    askMode: spec.askMode,
+    mode: () => spec.modes.ask.session,
     cwd,
     gate,
     events: { text() {}, toolCall() {}, toolResult() {}, usage() {}, finished: (r, m) => (outcome = m ? `${r}: ${m}` : r) },
