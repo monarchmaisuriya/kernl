@@ -1,0 +1,453 @@
+{
+  "name": "yourstack",
+  "displayName": "YourStack",
+  "description": "Coding agents in VS Code: Deep Agents with your own model key, or Claude Code, Codex, and OpenCode, in parallel worktree workspaces. Every edit, command, and browser action waits for your approval.",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#18191D",
+    "theme": "dark"
+  },
+  "version": "0.1.0",
+  "publisher": "local",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.140.0"
+  },
+  "main": "./out/extension.cjs",
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode the agent can only read files: no edits, commands, browser, or MCP tools. The project's AGENTS.md, .yourstack rules, and .yourstack agents are not loaded, and settings that run programs, skip approvals, or choose endpoints come only from your user settings.",
+      "restrictedConfigurations": [
+        "yourstack.customProviders",
+        "yourstack.baseUrl",
+        "yourstack.commandAllowList",
+        "yourstack.mcpServers",
+        "yourstack.agentCommands",
+        "yourstack.approvals.allow",
+        "yourstack.approvals.ask",
+        "yourstack.approvals.deny"
+      ]
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "yourstack",
+          "title": "YourStack",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "yourstack": [
+        {
+          "id": "yourstack.panel",
+          "name": "Agent",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "yourstack.setApiKey",
+        "title": "Set API key",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.addCustomProvider",
+        "title": "Add custom provider",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.useDeepSeekForClaudeCode",
+        "title": "Use DeepSeek for Claude Code",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.clearKeys",
+        "title": "Clear stored keys",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.newChat",
+        "title": "New chat",
+        "icon": "$(add)",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.newWorkspace",
+        "title": "New workspace (git worktree)",
+        "icon": "$(git-branch)",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.openSettings",
+        "title": "Open settings",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.pickHarness",
+        "title": "Choose agent",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.manageProviders",
+        "title": "Manage providers",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.agentLogins",
+        "title": "Agent logins",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.attachToChat",
+        "title": "Add to YourStack chat",
+        "category": "YourStack"
+      },
+      {
+        "command": "yourstack.sessions",
+        "title": "Conversations",
+        "category": "YourStack",
+        "icon": "$(history)"
+      },
+      {
+        "command": "yourstack.clearHistory",
+        "title": "Delete conversations and checkpoints",
+        "category": "YourStack"
+      }
+    ],
+    "configuration": [
+      {
+        "id": "yourstack.agent",
+        "title": "YourStack agent",
+        "order": 1,
+        "properties": {
+          "yourstack.provider": {
+            "type": "string",
+            "default": "anthropic",
+            "examples": [
+              "anthropic",
+              "openai",
+              "google",
+              "deepseek",
+              "openai-compatible"
+            ],
+            "order": 1,
+            "markdownDescription": "Model provider for the YourStack agent: `anthropic`, `openai`, `google`, `deepseek`, `openai-compatible`, or `custom:<id>` for an entry in `#yourstack.customProviders#`. Easiest: the model chip in the panel, or **YourStack: Manage providers**."
+          },
+          "yourstack.model": {
+            "type": "string",
+            "default": "",
+            "order": 2,
+            "markdownDescription": "Model id, e.g. `claude-sonnet-5-5`, `gpt-5.6`, `gemini-3.1-pro`, `deepseek-flash`, or a local model name. Empty uses `deepseek-flash` for `deepseek` and the entry's model for a custom provider."
+          },
+          "yourstack.modelOptions": {
+            "type": "object",
+            "default": {},
+            "order": 3,
+            "tags": [
+              "advanced"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "temperature": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "reasoningEffort": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "markdownDescription": "Optional model parameters for Deep Agents:\n\n- `temperature`: 0 to 2 (0 to 1 for anthropic)\n- `maxOutputTokens`: the longest reply\n- `reasoningEffort`: `low`, `medium`, or `high`. OpenAI-style providers get reasoning effort, anthropic gets extended thinking (2048 / 8192 / 24576 tokens; not with `temperature`), google gets a thinking level. Not supported for deepseek.\n\nA value a provider can't take is named in the panel instead of being dropped."
+          },
+          "yourstack.customProviders": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "baseUrl",
+                "model"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9-]+$"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "baseUrl": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "order": 4,
+            "scope": "application",
+            "markdownDescription": "OpenAI-compatible services, each selectable as `yourstack.provider` `custom:<id>`. Keys are stored with **YourStack: Set API key**, never here.\n\nUser settings only: a workspace can't point your keys at another server."
+          },
+          "yourstack.baseUrl": {
+            "type": "string",
+            "default": "",
+            "order": 5,
+            "scope": "application",
+            "markdownDescription": "Base URL for the `openai-compatible` provider, e.g. `http://localhost:11434/v1` for Ollama.\n\nUser settings only."
+          },
+          "yourstack.mcpServers": {
+            "type": "object",
+            "default": {},
+            "order": 6,
+            "scope": "machine",
+            "markdownDescription": "MCP servers: `{ name: { command, args?, env? } | { url } }`. Every MCP tool call asks first.\n\nUser settings only: a workspace can't start programs through this setting."
+          },
+          "yourstack.sequentialThinking": {
+            "type": "boolean",
+            "default": true,
+            "order": 7,
+            "markdownDescription": "Give the YourStack agent a built-in sequential-thinking tool for complex tasks: numbered thoughts it can revise or branch, shown in the conversation. (Built in, adapted from the Model Context Protocol reference server; no MCP server runs.)"
+          }
+        }
+      },
+      {
+        "id": "yourstack.approvals",
+        "title": "Approvals",
+        "order": 2,
+        "properties": {
+          "yourstack.approvals.allow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "order": 1,
+            "scope": "application",
+            "markdownDescription": "Actions that run **without a card**. An allow never matches a command with shell operators (`;`, `&&`, `|`, `>`, `$(`...), so `npm test && rm x` still asks.\n\nRules: `run(command *)`, `edit(glob)` (edits and new files), `delete(glob)`, `read(glob)` (only sensitive files like `.env` ask to be read), `tool(name *)` for browser and MCP tools. Globs are relative to the workspace: `**` spans folders, `*` stays in one. A trailing ` *` in `run(...)` also matches the bare command.\n\nDeny beats ask beats allow; no match asks. Applies to Deep Agents; CLI agents use their own settings. User settings only."
+          },
+          "yourstack.approvals.ask": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "order": 2,
+            "scope": "application",
+            "markdownDescription": "Actions that always ask, even when an allow rule also matches. Example: `edit(src/migrations/**)`.\n\nRules: `run(command *)`, `edit(glob)` (edits and new files), `delete(glob)`, `read(glob)` (only sensitive files like `.env` ask to be read), `tool(name *)` for browser and MCP tools. Globs are relative to the workspace: `**` spans folders, `*` stays in one. A trailing ` *` in `run(...)` also matches the bare command.\n\nDeny beats ask beats allow; no match asks. Applies to Deep Agents; CLI agents use their own settings. User settings only."
+          },
+          "yourstack.approvals.deny": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "order": 3,
+            "scope": "application",
+            "markdownDescription": "Actions refused **without a card**; the transcript names the rule. Deny matches the command as written, so it isn't a security boundary: `rm` behind another command or script still reaches a card, never runs on its own.\n\nRules: `run(command *)`, `edit(glob)` (edits and new files), `delete(glob)`, `read(glob)` (only sensitive files like `.env` ask to be read), `tool(name *)` for browser and MCP tools. Globs are relative to the workspace: `**` spans folders, `*` stays in one. A trailing ` *` in `run(...)` also matches the bare command.\n\nDeny beats ask beats allow; no match asks. Applies to Deep Agents; CLI agents use their own settings. User settings only."
+          },
+          "yourstack.commandAllowList": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "order": 4,
+            "scope": "application",
+            "markdownDescription": "Commands that run without asking. Exact match only; any command with shell operators always asks.\n\nUser settings only.",
+            "tags": [
+              "advanced"
+            ],
+            "markdownDeprecationMessage": "Use `#yourstack.approvals.allow#` with `run(...)` rules. Entries here still work as exact matches."
+          }
+        }
+      },
+      {
+        "id": "yourstack.agents",
+        "title": "Claude Code, Codex, OpenCode",
+        "order": 3,
+        "properties": {
+          "yourstack.harness": {
+            "type": "string",
+            "default": "deepagents",
+            "order": 1,
+            "markdownDescription": "Agent for the main workspace (the panel's agent picker sets this). Worktree workspaces pick their own.\n\n- `deepagents`: the YourStack agent with your own model keys\n- `deepagents:<name>`: a named agent from `.yourstack/agents/` or `.claude/agents/` (project or your home folder)\n- `claude-code`: Claude Code (your installed CLI and login), Manual mode\n- `codex`: Codex (experimental), Read-only mode\n- `opencode`: OpenCode (your installed CLI); every edit, command, and fetch asks",
+            "pattern": "^(deepagents(:[a-z0-9-]+)?|claude-code|codex|opencode)$"
+          },
+          "yourstack.agentCommands": {
+            "type": "object",
+            "default": {},
+            "order": 2,
+            "scope": "machine",
+            "tags": [
+              "advanced"
+            ],
+            "markdownDescription": "Override how a CLI agent is launched: `{ \"claude-code\" | \"codex\" | \"opencode\": { \"command\": string, \"args\"?: string[], \"env\"?: object } }`. Ask-mode forcing still applies.\n\nUser settings only: a workspace can't choose what program runs."
+          }
+        }
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "yourstack.newChat",
+          "when": "view == yourstack.panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "yourstack.newWorkspace",
+          "when": "view == yourstack.panel",
+          "group": "navigation@2"
+        },
+        {
+          "command": "yourstack.sessions",
+          "when": "view == yourstack.panel",
+          "group": "navigation@3"
+        },
+        {
+          "command": "yourstack.pickHarness",
+          "when": "view == yourstack.panel",
+          "group": "1_agent@1"
+        },
+        {
+          "command": "yourstack.manageProviders",
+          "when": "view == yourstack.panel",
+          "group": "1_agent@2"
+        },
+        {
+          "command": "yourstack.agentLogins",
+          "when": "view == yourstack.panel",
+          "group": "1_agent@3"
+        },
+        {
+          "command": "yourstack.clearKeys",
+          "when": "view == yourstack.panel",
+          "group": "2_keys@1"
+        },
+        {
+          "command": "yourstack.openSettings",
+          "when": "view == yourstack.panel",
+          "group": "3_settings@1"
+        },
+        {
+          "command": "yourstack.clearHistory",
+          "when": "view == yourstack.panel",
+          "group": "2_keys@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "yourstack.attachToChat",
+          "group": "yourstack@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "yourstack.attachToChat",
+          "when": "false"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "yourstack.start",
+        "title": "Get started with YourStack",
+        "description": "Pick an agent, connect it, and start building.",
+        "steps": [
+          {
+            "id": "pickAgent",
+            "title": "Pick an agent",
+            "description": "Use YourStack's own agent with your model keys, or Claude Code, Codex, or OpenCode.\n[Choose agent](command:yourstack.pickHarness)",
+            "media": {
+              "markdown": "media/walkthrough/agents.md"
+            },
+            "completionEvents": [
+              "onCommand:yourstack.pickHarness"
+            ]
+          },
+          {
+            "id": "connect",
+            "title": "Connect it",
+            "description": "Add a provider key for the YourStack agent, or log in to a CLI agent.\n[Manage providers](command:yourstack.manageProviders)\n[Agent logins](command:yourstack.agentLogins)",
+            "media": {
+              "markdown": "media/walkthrough/connect.md"
+            },
+            "completionEvents": [
+              "onCommand:yourstack.manageProviders",
+              "onCommand:yourstack.agentLogins"
+            ]
+          },
+          {
+            "id": "chat",
+            "title": "Start a conversation",
+            "description": "Open the panel and describe what to build.\n[Open YourStack](command:yourstack.panel.focus)",
+            "media": {
+              "markdown": "media/walkthrough/chat.md"
+            },
+            "completionEvents": [
+              "onView:yourstack.panel"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test:unit": "node scripts/build.mjs --tests && node scripts/run-unit.mjs",
+    "test:vscode": "node scripts/build.mjs --tests && node out/test/runVscode.cjs",
+    "test:live": "node scripts/build.mjs --tests && YOURSTACK_SUITE=liveSuite.cjs node out/test/runVscode.cjs",
+    "check:upgrade": "node scripts/build.mjs --tests && node scripts/run-unit.mjs && node out/test/backendMethods.cjs",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository --skip-license -o yourstack.vsix",
+    "smoke": "node scripts/build.mjs --tests && node out/test/smoke.cjs",
+    "probe:agents": "node scripts/build.mjs --tests && node out/test/probeAgents.cjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.9.0",
+    "@langchain/anthropic": "1.5.12",
+    "@langchain/core": "1.2.18",
+    "@langchain/deepseek": "1.1.17",
+    "@langchain/google-genai": "2.3.2",
+    "@langchain/langgraph": "1.5.1",
+    "@langchain/langgraph-checkpoint": "1.2.0",
+    "@langchain/mcp-adapters": "2.0.1",
+    "@langchain/openai": "1.6.2",
+    "deepagents": "1.15.1",
+    "highlight.js": "11.11.2",
+    "langchain": "1.5.18",
+    "lowlight": "3.3.0",
+    "marked": "18.0.14",
+    "ws": "8.22.0",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
+    "@types/jsdom": "30.0.0",
+    "@types/node": "26.6.5",
+    "@types/vscode": "1.140.0",
+    "@types/ws": "8.18.2",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2",
+    "jsdom": "30.1.3",
+    "typescript": "7.0.2"
+  }
+}

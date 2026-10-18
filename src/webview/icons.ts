@@ -1,0 +1,42 @@
+// Inline SVG icons for the panel, on a 16 px grid in the style of VS Code's codicons. Paths are
+// constants here and are set with setAttribute; host data never reaches an SVG.
+const NS = "http://www.w3.org/2000/svg";
+
+type Shape = { d: string; fill?: boolean };
+
+const ICONS = {
+  send: [{ d: "M8 13V3.5M3.75 7.5 8 3.25l4.25 4.25" }],
+  stop: [{ d: "M4.5 4.5h7v7h-7z", fill: true }],
+  chevron: [{ d: "M4.5 6.25 8 9.75l3.5-3.5" }],
+  branch: [{ d: "M5 4.5v7M5 11.5a1.5 1.5 0 1 0 0 .01M5 4.5a1.5 1.5 0 1 0 0-.01M11 6a1.5 1.5 0 1 0 0-.01M11 6c0 2.5-6 2-6 5" }],
+  folder: [{ d: "M1.75 4.25v8h12.5v-6.5h-6.5l-1.5-1.5z" }],
+  shield: [{ d: "M8 1.75 13 3.5v4c0 3.1-2.1 5.3-5 6.75C5.1 12.8 3 10.6 3 7.5v-4z" }],
+  warning: [{ d: "M8 2 14.5 13.5h-13zM8 6.25v3.25M8 11.5v.25" }],
+  sparkle: [
+    { d: "M2.5 3.5h8a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H6.5L4 12.75V10.5H2.5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z" },
+    { d: "M13.25 1 13.8 2.2 15 2.75 13.8 3.3 13.25 4.5 12.7 3.3 11.5 2.75 12.7 2.2z", fill: true },
+  ],
+  copy: [{ d: "M5.5 5.5h7v8h-7zM3.5 10.5v-8h7" }],
+  plus: [{ d: "M8 3.25v9.5M3.25 8h9.5" }],
+  file: [{ d: "M4 1.75h5l3 3v9.5H4zM9 1.75v3h3" }],
+  close: [{ d: "M4.5 4.5l7 7M11.5 4.5l-7 7" }],
+  clock: [{ d: "M8 2.25a5.75 5.75 0 1 0 0 11.5 5.75 5.75 0 0 0 0-11.5zM8 5v3.25l2 1.25" }],
+  undo: [{ d: "M5.5 3.5 2.75 6.25 5.5 9M3 6.25h6.25a3.75 3.75 0 0 1 0 7.5H7" }],
+  tool: [{ d: "M10.5 2.25a3 3 0 0 0-2.9 3.75L2.5 11.1a1.25 1.25 0 0 0 1.75 1.75l5.1-5.1a3 3 0 0 0 3.75-2.9l-1.6 1.6-1.6-.5-.5-1.6z" }],
+} satisfies Record<string, Shape[]>;
+
+export type IconName = keyof typeof ICONS;
+
+export function icon(name: IconName, size = 16): SVGSVGElement {
+  const svg = document.createElementNS(NS, "svg");
+  for (const [k, v] of [["viewBox", "0 0 16 16"], ["width", String(size)], ["height", String(size)], ["fill", "none"], ["stroke", "currentColor"], ["stroke-width", "1.25"], ["stroke-linecap", "round"], ["stroke-linejoin", "round"], ["aria-hidden", "true"], ["class", "icon"]]) {
+    svg.setAttribute(k, v);
+  }
+  for (const shape of ICONS[name] as Shape[]) {
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", shape.d);
+    if (shape.fill) path.setAttribute("fill", "currentColor");
+    svg.append(path);
+  }
+  return svg;
+}

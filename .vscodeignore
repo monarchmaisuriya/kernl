@@ -1,0 +1,6 @@
+**
+!out/extension.cjs
+!out/webview/**
+!media/**
+!package.json
+!README.md
