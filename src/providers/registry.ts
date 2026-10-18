@@ -152,7 +152,7 @@ export function createChatModel(s: ProviderSettings, apiKey: string | undefined)
       const budget = effort ? THINKING_BUDGET[effort] : undefined;
       // max_tokens must exceed the thinking budget; leave room for the answer when it isn't set.
       const maxTokens = o.maxOutputTokens ?? (budget ? budget + 8192 : undefined);
-      return new ChatAnthropic({ model: r.model, apiKey, streaming: true, temperature: o.temperature, maxTokens, thinking: budget ? { type: "enabled", budget_tokens: budget } : undefined });
+      return new ChatAnthropic({ model: r.model, apiKey, streaming: true, temperature: o.temperature, maxTokens, thinking: budget ? { type: "enabled", budget_tokens: budget, display: "summarized" } : undefined });
     }
     case "openai":
       return new ChatOpenAI({ model: r.model, apiKey, streaming: true, ...openAiStyle });

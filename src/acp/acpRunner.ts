@@ -8,7 +8,7 @@ import type { AskMode, Launch } from "./agents";
 import { toGateRequest, toPermissionResponse } from "./permission";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { type Attachment, attachmentNote } from "../ui/protocol";
+import { type Attachment, attachmentNote, type ToolInfo } from "../ui/protocol";
 
 export interface AcpRunnerOptions {
   agentLabel: string;
@@ -29,6 +29,31 @@ export interface AcpRunnerOptions {
 class AskModeRefusal extends Error {}
 
 const textOf = (content: any): string => (content?.type === "text" ? String(content.text ?? "") : content?.type === "content" ? textOf(content.content) : "");
+
+/** One tool call as it changes (ACP sends the call, then partial updates that change only some fields). */
+interface CallState {
+  title: string;
+  kind?: string;
+  status: string;
+  locations?: { path: string; line?: number }[];
+  rawInput: unknown;
+  diff?: { path: string; before: string | null; after: string };
+}
+
+/** Lines added and removed between two texts (multiset count: fast, and exact for the totals shown). */
+export function diffSize(before: string | null, after: string): { added: number; removed: number } {
+  const old = new Map<string, number>();
+  for (const line of (before ?? "").split("\n")) if (before !== null) old.set(line, (old.get(line) ?? 0) + 1);
+  let added = 0;
+  for (const line of after.split("\n")) {
+    const n = old.get(line) ?? 0;
+    if (n > 0) old.set(line, n - 1);
+    else added++;
+  }
+  let removed = 0;
+  for (const n of old.values()) removed += n;
+  return { added, removed };
+}
 
 /**
  * Runs an external coding agent (Claude Code, Codex, OpenCode) over ACP as a subprocess.
@@ -53,6 +78,8 @@ export class AcpRunner implements Runner {
   /** The current session's modes (for agents that use session modes rather than config options). */
   private sessionModes: acp.NewSessionResponse["modes"];
   private loggedUnknown = new Set<string>();
+  /** Tool calls of the current session, merged as updates arrive. */
+  private calls = new Map<string, CallState>();
 
   constructor(private o: AcpRunnerOptions) {}
 
@@ -99,6 +126,7 @@ export class AcpRunner implements Runner {
     this.stop();
     const previous = this.sessionId;
     this.sessionId = undefined;
+    this.calls.clear();
     const id = (history as { sessionId?: unknown } | undefined)?.sessionId;
     this.resumeId = typeof id === "string" ? id : undefined;
     if (previous && this.connection) {
@@ -264,13 +292,46 @@ export class AcpRunner implements Runner {
     });
   }
 
+  /**
+   * A tool call and its updates, merged into one state per id: the panel row shows its status
+   * (pending, running) and kind, its files, and an edit's size; completion or failure ends it with
+   * its output. An update carries only what changed.
+   */
+  private toolCallUpdate(u: any) {
+    const id = String(u.toolCallId);
+    const call = this.calls.get(id) ?? { title: "tool", status: "pending", rawInput: {} };
+    if (u.title) call.title = String(u.title);
+    else if (!this.calls.has(id) && u.kind) call.title = String(u.kind);
+    if (u.kind) call.kind = String(u.kind);
+    if (u.status) call.status = String(u.status);
+    if (Array.isArray(u.locations)) call.locations = u.locations.filter((l: any) => l?.path).map((l: any) => ({ path: String(l.path), line: typeof l.line === "number" ? l.line : undefined }));
+    if (u.rawInput !== undefined) call.rawInput = u.rawInput;
+    const diff = (u.content ?? []).find((c: any) => c?.type === "diff");
+    if (diff) call.diff = { path: String(diff.path), before: diff.oldText ?? null, after: String(diff.newText ?? "") };
+    this.calls.set(id, call);
+    if (call.diff) this.o.events.toolDiff?.(id, call.diff);
+    const info: ToolInfo = {
+      kind: call.kind,
+      // Completed or failed: no in-flight status; the result that follows ends the row.
+      status: call.status === "in_progress" ? "running" : call.status === "pending" ? "pending" : undefined,
+      locations: call.locations,
+      diff: call.diff ? { path: call.diff.path, ...diffSize(call.diff.before, call.diff.after) } : undefined,
+    };
+    this.o.events.toolCall(id, call.title, call.rawInput ?? {}, info);
+    if (call.status === "completed" || call.status === "failed") {
+      const out = (u.content ?? []).map(textOf).filter(Boolean).join("\n");
+      this.o.events.toolResult(id, call.title, out || call.status, call.status === "failed");
+      this.calls.delete(id);
+    }
+  }
+
   private client(): acp.Client {
     return {
       requestPermission: async (params) => {
         const run = this.active;
         if (!run || run.stopped) return toPermissionResponse(params.options, false, true);
-        const approved = await this.o.gate.request(toGateRequest(this.o.agentLabel, params));
-        return toPermissionResponse(params.options, approved, run.stopped);
+        const decision = await this.o.gate.decide(toGateRequest(this.o.agentLabel, params));
+        return toPermissionResponse(params.options, decision, run.stopped);
       },
       sessionUpdate: async ({ sessionId, update }) => {
         const u: any = update;
@@ -279,17 +340,26 @@ export class AcpRunner implements Runner {
           case "agent_message_chunk":
             if (this.active && !this.active.stopped) this.o.events.text(textOf(u.content));
             return;
+          case "agent_thought_chunk":
+            if (this.active && !this.active.stopped) this.o.events.thinking?.(textOf(u.content));
+            return;
           case "tool_call":
-            this.o.events.toolCall(u.toolCallId, u.title ?? u.kind ?? "tool", u.rawInput ?? {});
-            return;
           case "tool_call_update":
-            if (u.status === "completed" || u.status === "failed") {
-              const out = (u.content ?? []).map(textOf).filter(Boolean).join("\n");
-              this.o.events.toolResult(u.toolCallId, u.title ?? "", out || u.status, u.status === "failed");
-            }
-            return;
+            return this.toolCallUpdate(u);
           case "plan":
-            this.o.events.toolResult(`plan-${sessionId}`, "plan", (u.entries ?? []).map((e: any) => `[${e.status}] ${e.content}`).join("\n"));
+            this.o.events.plan?.((u.entries ?? []).map((e: any) => ({ content: String(e.content ?? ""), status: String(e.status ?? "pending"), priority: e.priority })));
+            return;
+          case "usage_update":
+            if (typeof u.used === "number" && typeof u.size === "number" && u.size > 0) this.o.events.context?.({ used: u.used, size: u.size, cost: u.cost ?? undefined });
+            return;
+          case "available_commands_update":
+            this.o.events.commands?.((u.availableCommands ?? []).map((c: any) => ({ name: String(c.name), description: String(c.description ?? "") })));
+            return;
+          case "session_info_update":
+            if (typeof u.title === "string" && u.title.trim()) this.o.events.title?.(u.title.trim());
+            return;
+          case "config_option_update":
+            this.o.events.configChanged?.(Object.fromEntries((u.configOptions ?? []).map((o: any) => [String(o.id), String(o.currentValue)])));
             return;
           case "current_mode_update":
             for (const w of [...this.modeWaiters]) w(sessionId, u.currentModeId);

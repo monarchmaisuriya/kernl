@@ -20,7 +20,7 @@ export function toApprovalCard(id: string, ws: { id: string; label: string }, r:
     case "tool":
       return card({ title: `Use tool ${r.tool}`, detail: clip(JSON.stringify(r.args, null, 2)), hasDiff: false });
     case "agent":
-      return card({ title: `${r.agent}: ${r.title}`, detail: clip(r.detail), hasDiff: r.diff !== undefined });
+      return card({ title: `${r.agent}: ${r.title}`, detail: clip(r.detail), hasDiff: r.diff !== undefined, ...(r.alwaysLabel ? { always: r.alwaysLabel } : {}) });
   }
 }
 

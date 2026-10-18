@@ -16,6 +16,8 @@ function recorder() {
     toolCall: (_id, name) => log.push(`call:${name}`),
     toolResult: (_id, name, out) => log.push(`result:${name}:${out.slice(0, 40)}`),
     usage: () => log.push("usage"),
+    thinking: (d) => log.push(`thinking:${d}`),
+    plan: (entries) => log.push(`plan:${entries.map((e) => `${e.status}=${e.content}`).join("|")}`),
     finished: (reason, msg) => log.push(`finished:${reason}${msg ? `:${msg}` : ""}`),
   };
   return { log, events };
@@ -85,4 +87,24 @@ test("Stop ends a run blocked in a command within 2 seconds and tells the blocke
   assert.equal(toldToStop, true);
   assert.equal(log.at(-1), "finished:stopped");
   assert.equal(session.running, false);
+});
+
+test("the model's thinking streams to the panel (Anthropic thinking parts and DeepSeek reasoning_content), apart from the reply", async () => {
+  const w = workspace(true);
+  const reply = new AIMessage({ content: [{ type: "thinking", thinking: "Check the files first." } as any, { type: "text", text: "Here is the answer." }], additional_kwargs: { reasoning_content: " Then answer." } });
+  const agent = buildAgent({ model: new ScriptedChatModel([reply]), workspaceBackend: w.workspaceBackend, tools: [], loadProjectRules: false });
+  const { log, events } = recorder();
+  await new AgentSession(async () => agent, events).send("explain");
+  assert.ok(log.includes("thinking:Check the files first. Then answer."), log.join(" | "));
+  assert.ok(log.includes("text:Here is the answer."), "the reply has no thinking in it");
+});
+
+test("the agent's to-do list becomes the plan, not a tool row", async () => {
+  const w = workspace(true);
+  const model = new ScriptedChatModel([toolCall("write_todos", { todos: [{ content: "Read the hook", status: "completed" }, { content: "Explain it", status: "in_progress" }] }), new AIMessage("Explained.")]);
+  const agent = buildAgent({ model, workspaceBackend: w.workspaceBackend, tools: [], loadProjectRules: false });
+  const { log, events } = recorder();
+  await new AgentSession(async () => agent, events).send("explain");
+  assert.ok(log.includes("plan:completed=Read the hook|in_progress=Explain it"), log.join(" | "));
+  assert.ok(!log.some((l) => l.startsWith("call:write_todos") || l.startsWith("result:write_todos")), log.join(" | "));
 });

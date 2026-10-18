@@ -43,7 +43,17 @@ use provider `openai-compatible` and `kernl.baseUrl` (e.g. `http://localhost:114
 - **On your messages:**
   - **Restore checkpoint** puts the files back to before that message (kernl can also rewind the conversation). It lists the files first and offers Undo; terminal side effects can't be undone.
   - **Fork from here** starts a new conversation with the history up to that point. Claude Code can fork only its whole conversation, from the last message.
-- **Tool calls:** one line each, in plain words ("Reading src/a.ts", "Running npm test"), with a status (pulsing while running, a check when done, a red cross on failure) and the time taken; click to see the arguments and output. Thinking steps are one line too, opening to the full thought.
+- **Thinking:** when the agent thinks (Claude Code, Codex, OpenCode, and kernl's own agent with DeepSeek, or Claude with a reasoning effort set), "Thinking…" streams in place, then collapses to "Thought for 12s" and a preview; click to reopen. `kernl.thinkingDisplay` keeps it always collapsed or always open. What's shown is the model's own summary of its thinking.
+- **Tool calls:**
+  - One line each, updated in place as the call moves from waiting to running to done or failed: an icon for the kind of action, what it does in plain words ("Reading src/a.ts", "Running npm test"), and the time taken.
+  - An edit shows its size (+2 −1) and **View diff** (VS Code's diff editor).
+  - Files the agent works on are links.
+  - Click a row for its arguments and output.
+- **Plan:** the agent's plan (or kernl's to-do list) is pinned above the input. It shows "Current: …" and how far along it is; click it for every step.
+- **Context:** agents that report it get a ring in the footer showing how full the context window is. It turns yellow from 75%, orange from 90%, and red from 95%; hover for the numbers and cost.
+- **Slash commands:** "/" offers kernl's skills to its own agent, and a CLI agent's own commands to that agent.
+- **Approvals:** Approve allows once. An agent's own "always" option shows in its words when it offers one, and is never the default. Shortcuts: ⌘/Ctrl+Y allows once, ⌘/Ctrl+⌥/Alt+Y allows always, ⌘/Ctrl+⌥/Alt+Z rejects. They don't fire while you're typing a message.
+- **Accessibility:** screen readers hear "Reply finished" with the reply, approvals, and errors, not every streamed word; each turn has a heading. Animations stop with Reduce Motion, and high-contrast themes get borders.
 - **Replies:** agent replies render as Markdown (code blocks with Copy, lists, tables, links). Only `http(s)` links are clickable and they open in your browser; images are never loaded; raw HTML in a reply shows as text. Your own messages, tool output, and approval cards stay plain text.
 - **Footer:** the workspace chip (a dot means another workspace is running, or waiting for your approval) and the permission mode chip (below).
 
@@ -195,7 +205,7 @@ They run your installed CLIs over the Agent Client Protocol (ACP) and use your e
 | Codex (experimental) | `npx -y @agentclientprotocol/codex-acp@2.2.2` | Read-only: edits and network ask; read-only commands run in its sandbox |
 
 If the forced mode can't be confirmed, the agent refuses to run. Every permission request becomes an
-approval card (with a diff when the agent sends one). Approve picks "allow once", never "always".
+approval card (with a diff when the agent sends one). Approve picks "allow once"; the agent's "always" option is used only when you click its own button on the card.
 CLI agents perform approved actions themselves, and refuse to run in Restricted Mode. Override a
 launch with `kernl.agentCommands`; the ask settings still apply. Check on your machine with
 `npm run probe:agents` (asks each agent to write a file, rejects it, checks nothing was written).

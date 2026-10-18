@@ -22,6 +22,8 @@ export interface SessionRecord {
   history?: unknown;
   /** Set on a conversation forked from another; its title says so. */
   forkOf?: string;
+  /** A title the agent gave the conversation (ACP session_info_update); preferred over the first message. */
+  agentTitle?: string;
 }
 
 /** A message waiting for the current run to end (the composer's queue). */
@@ -54,7 +56,8 @@ export class SessionStore {
   async save(workspaceKey: string, s: SessionRecord): Promise<void> {
     if (!s.events.some((e) => e.type === "userMessage")) return; // empty conversations aren't kept
     const first = s.events.find((e) => e.type === "userMessage") as Extract<TranscriptEvent, { type: "userMessage" }> | undefined;
-    s.title = first ? `${first.text.replace(/\s+/g, " ").slice(0, 80)}${s.forkOf ? " (fork)" : ""}` : s.title;
+    const base = s.agentTitle ?? (first ? first.text.replace(/\s+/g, " ").slice(0, 80) : undefined);
+    s.title = base ? `${base}${s.forkOf ? " (fork)" : ""}` : s.title;
     s.updatedAt = Date.now();
     await mkdir(this.folder(workspaceKey), { recursive: true });
     await writeFile(join(this.folder(workspaceKey), `${s.id}.json`), JSON.stringify(s));

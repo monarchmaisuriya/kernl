@@ -11,11 +11,14 @@ export type GateRequest =
   | { kind: "execute"; command: string }
   | { kind: "tool"; tool: string; args: unknown }
   /** An external CLI agent (Claude Code, Codex, OpenCode) asking over ACP. */
-  | { kind: "agent"; agent: string; title: string; toolKind: string; detail: string; diff?: { path: string; before: string | null; after: string } };
+  | { kind: "agent"; agent: string; title: string; toolKind: string; detail: string; diff?: { path: string; before: string | null; after: string }; alwaysLabel?: string };
+
+/** The user's answer: once, "always" (only where the agent offers it), or no. */
+export type Decision = boolean | "always";
 
 /** Shows one request to the user and resolves true only on an explicit approve. */
 export interface ApprovalPrompter {
-  ask(id: string, request: GateRequest): Promise<boolean>;
+  ask(id: string, request: GateRequest): Promise<Decision>;
 }
 
 export interface GatePolicy {
@@ -50,6 +53,11 @@ export class ApprovalGate {
    * allowed; everything else asks.
    */
   async request(request: GateRequest): Promise<boolean> {
+    return (await this.decide(request)) !== false;
+  }
+
+  /** Like request(), but keeps "always" (a CLI agent's own allow-always option, when the user picks it). */
+  async decide(request: GateRequest): Promise<Decision> {
     const { verdict, rule } = decide(request, this.policy.rules());
     if (verdict === "deny") {
       this.policy.denied?.(request, rule!.text);

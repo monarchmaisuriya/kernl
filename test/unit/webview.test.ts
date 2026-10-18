@@ -36,7 +36,7 @@ function loadPanel() {
 
 const MAIN: WorkspaceView = { id: "main", label: "Main", harness: "deepagents", running: false, waiting: 0, disclosure: "Deep Agents asks before every edit.", queue: [], queuePaused: false, mode: "ask", modes: [] };
 const WT: WorkspaceView = { id: "wt:fix", label: "fix", harness: "claude-code", branch: "kernl/fix", running: false, waiting: 0, disclosure: "Claude Code runs approved actions itself.", queue: [], queuePaused: false, mode: "ask", modes: [] };
-const STATUS: HostToPanel = { type: "status", ready: true, provider: "deepseek", model: "deepseek-flash", restricted: false };
+const STATUS: HostToPanel = { type: "status", ready: true, provider: "deepseek", model: "deepseek-flash", restricted: false, thinkingDisplay: "auto" };
 const HARNESSES: HarnessView[] = [
   { id: "deepagents", label: "kernl", group: "kernl", ready: true },
   { id: "claude-code", label: "Claude Code", group: "agents", ready: true },
@@ -193,7 +193,7 @@ test("model, file, and page text is shown as text and never becomes HTML", () =>
 test("a setup problem shows as a banner with working buttons on Deep Agents only; Restricted Mode shows Read-only", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN, WT]));
-  p.host({ type: "status", ready: false, problem: "No API key stored for anthropic.", provider: "anthropic", model: "", restricted: true });
+  p.host({ type: "status", ready: false, problem: "No API key stored for anthropic.", provider: "anthropic", model: "", restricted: true, thinkingDisplay: "auto" });
   const banner = p.doc.querySelector<HTMLElement>(".banner")!;
   assert.equal(banner.hidden, false);
   assert.match(banner.textContent!, /No API key stored/);
@@ -681,4 +681,124 @@ test("a message shows at once; Restore appears on it when its restore point is r
   assert.deepEqual(p.sent.at(-1), { type: "restore", workspace: "main", messageId: "u1" });
   p.host({ type: "checkpoint", workspace: "main", messageId: "u1", checkpoint: "abc123" });
   assert.equal(bubble.querySelectorAll(".restore").length, 1, "only once");
+});
+
+test("thinking streams open as 'Thinking…', then collapses to 'Thought for …' with a preview when the reply starts; the setting can keep it open", () => {
+  const p = loadPanel();
+  p.host(STATUS);
+  p.host(workspaces([MAIN]));
+  p.host({ type: "thinking", workspace: "main", delta: "Look at the hook " });
+  p.host({ type: "thinking", workspace: "main", delta: "before answering." });
+  const block = p.doc.querySelector<HTMLDetailsElement>(".thinking")!;
+  assert.equal(p.all(".thinking").length, 1, "chunks join one block");
+  assert.equal(block.open, true);
+  assert.equal(block.querySelector(".thinking-label")!.textContent, "Thinking…");
+  assert.equal(block.querySelector(".thinking-text")!.textContent, "Look at the hook before answering.");
+  p.host({ type: "text", workspace: "main", delta: "It loads rewards." });
+  assert.equal(block.open, false, "collapses when the reply starts");
+  assert.match(block.querySelector(".thinking-label")!.textContent!, /^Thought for \d+s$/);
+  assert.equal(block.querySelector(".thinking-preview")!.textContent, "Look at the hook before answering.");
+  p.host({ type: "thinking", workspace: "main", delta: "More thinking" });
+  assert.equal(p.all(".thinking").length, 2, "new thinking after a reply is a new block");
+
+  const q = loadPanel();
+  q.host({ ...STATUS, thinkingDisplay: "expanded" } as HostToPanel);
+  q.host(workspaces([MAIN]));
+  q.host({ type: "thinking", workspace: "main", delta: "x" });
+  q.host({ type: "finished", workspace: "main", reason: "done" });
+  assert.equal(q.doc.querySelector<HTMLDetailsElement>(".thinking")!.open, true, "expanded stays open");
+});
+
+test("an agent's tool call is one row updated in place: kind icon, waiting, running, an edit's size with View diff, and file links", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT], "wt:fix"));
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "e1", name: "Edit src/a.ts", args: "{}", kind: "edit", status: "pending", locations: [{ path: "src/a.ts", line: 3 }] });
+  const row = p.doc.querySelector<HTMLDetailsElement>(".tool")!;
+  assert.equal(row.dataset.status, "pending");
+  assert.ok(row.querySelector(".tool-waiting"), "a hollow mark while waiting");
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "e1", name: "Edit src/a.ts", args: "{}", kind: "edit", status: "running", diff: { path: "src/a.ts", added: 2, removed: 1 } });
+  assert.equal(p.all(".tool").length, 1, "the same row, not a new one");
+  assert.equal(row.dataset.status, "running");
+  assert.equal(row.querySelector(".tool-diff")!.textContent, "+2−1");
+  p.button("View diff", row)!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "showToolDiff", workspace: "wt:fix", id: "e1" });
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "e1", name: "Edit src/a.ts", args: "{}", kind: "edit", locations: [{ path: "src/a.ts", line: 3 }], diff: { path: "src/a.ts", added: 2, removed: 1 } });
+  assert.equal(row.dataset.status, "running", "a report without a status keeps the mark");
+  p.button("src/a.ts:3", row)!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "openLocation", workspace: "wt:fix", path: "src/a.ts", line: 3 });
+  p.host({ type: "toolResult", workspace: "wt:fix", id: "e1", name: "Edit src/a.ts", output: "done" });
+  assert.equal(row.dataset.status, "done");
+});
+
+test("the plan is pinned above the input: what's being done now and how far along; each update replaces it; a new conversation clears it", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const bar = p.doc.querySelector<HTMLDetailsElement>(".plan-bar")!;
+  assert.equal(bar.hidden, true);
+  p.host({ type: "plan", workspace: "main", entries: [{ content: "Read the hook", status: "completed" }, { content: "Explain it", status: "in_progress" }, { content: "Suggest fixes", status: "pending" }] });
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.querySelector(".plan-current")!.textContent, "Current: Explain it");
+  assert.equal(bar.querySelector(".plan-count")!.textContent, "1/3");
+  assert.deepEqual(p.all(".plan-entry").map((e) => e.dataset.status), ["completed", "in_progress", "pending"]);
+  p.host({ type: "plan", workspace: "main", entries: [{ content: "Only step", status: "completed" }] });
+  assert.equal(p.all(".plan-entry").length, 1, "replaced, not merged");
+  assert.equal(bar.querySelector(".plan-current")!.textContent, "Plan complete");
+  p.host({ type: "cleared", workspace: "main" });
+  assert.equal(bar.hidden, true);
+});
+
+test("the context ring shows how full the context is, with warning levels and the numbers in its label", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const ring = p.doc.querySelector<HTMLElement>(".context-ring")!;
+  assert.equal(ring.hidden, true, "hidden until the agent reports it");
+  p.host({ type: "context", workspace: "main", used: 150000, size: 200000, cost: { amount: 0.42, currency: "USD" } });
+  assert.equal(ring.querySelector(".context-label")!.textContent, "75%");
+  assert.equal(ring.dataset.level, "filling");
+  assert.match(ring.getAttribute("aria-label")!, /150k of 200k tokens \(75%\).*0\.42/);
+  p.host({ type: "context", workspace: "main", used: 196000, size: 200000 });
+  assert.equal(ring.dataset.level, "full");
+  assert.match(ring.title, /nearly full/);
+});
+
+test("approval cards: an agent's 'always' option shows in its own words; shortcuts approve once, always, or reject the newest card, but not while typing", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT], "wt:fix"));
+  p.host({ type: "approval", card: { ...card("c1", "wt:fix", "fix"), always: "Always allow" } });
+  p.button("Always allow")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "answer", id: "c1", approved: true, always: true });
+  p.host({ type: "approval", card: card("c2", "wt:fix", "fix") });
+  assert.equal(p.button("Always allow", p.doc.querySelector('[data-card-id="c2"]')!), undefined, "not offered: no always button");
+  const key = (k: string, alt = false) => p.doc.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: k, metaKey: true, altKey: alt, bubbles: true }));
+  key("y");
+  assert.deepEqual(p.sent.at(-1), { type: "answer", id: "c2", approved: true });
+  const before = p.sent.length;
+  key("y", true);
+  assert.equal(p.sent.length, before, "always isn't offered on c2, so nothing is sent");
+  key("z", true);
+  assert.deepEqual(p.sent.at(-1), { type: "answer", id: "c2", approved: false });
+  const count = p.sent.length;
+  p.doc.querySelector<HTMLTextAreaElement>(".input")!.focus();
+  key("y");
+  assert.equal(p.sent.length, count, "ignored while the message box has focus");
+});
+
+test("screen readers: the transcript doesn't read out tokens; finished replies, approvals, and errors are announced; each turn has a heading", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const logs = p.doc.querySelector<HTMLElement>(".logs")!;
+  assert.deepEqual([logs.getAttribute("role"), logs.getAttribute("aria-live")], ["log", "off"]);
+  const polite = p.doc.querySelector<HTMLElement>('[role="status"][aria-live="polite"].sr-only')!;
+  const urgent = p.doc.querySelector<HTMLElement>('[role="alert"]')!;
+  p.host({ type: "userMessage", workspace: "main", text: "explain" });
+  p.host({ type: "text", workspace: "main", delta: "It loads " });
+  p.host({ type: "text", workspace: "main", delta: "rewards." });
+  assert.equal(polite.textContent, "", "nothing while streaming");
+  p.host({ type: "finished", workspace: "main", reason: "done" });
+  assert.equal(polite.textContent, "Reply finished. It loads rewards.");
+  assert.deepEqual(p.all(".log h3.sr-only").map((h) => h.textContent), ["Your message", "Reply"]);
+  p.host({ type: "approval", card: card("a1", "main", "Main") });
+  assert.equal(polite.textContent, "Approval needed: Run command");
+  p.host({ type: "finished", workspace: "main", reason: "error", message: "No API key stored." });
+  assert.equal(urgent.textContent, "Something went wrong: No API key stored.");
 });

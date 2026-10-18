@@ -1,7 +1,8 @@
 // Tool calls in the transcript, one line each: a status mark (running, done, failed, stopped), what
 // the agent is doing in plain words ("Reading src/a.ts"), how long it has taken, and a chevron that
 // opens the arguments and output. Built with createElement + textContent only.
-import { icon } from "./icons";
+import type { ToolInfo, ToolLocation } from "../ui/protocol";
+import { icon, type IconName } from "./icons";
 
 export type ToolStatus = "running" | "done" | "failed" | "stopped";
 
@@ -61,6 +62,21 @@ function humanize(name: string) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+/** The kind of action a tool call is (ACP kinds; kernl's own tools mapped by name), for its icon. */
+const KIND_OF_TOOL: Record<string, string> = {
+  ls: "search", glob: "search", grep: "search", read_file: "read", write_file: "edit", edit_file: "edit", execute: "execute",
+  start_background_job: "execute", check_background_job: "read", stop_background_job: "execute", list_background_jobs: "read",
+  browser_navigate: "fetch", browser_click: "fetch", browser_type: "fetch", browser_read_page: "fetch", browser_screenshot: "fetch", task: "think",
+};
+const KIND_ICON: Record<string, IconName> = {
+  read: "file", edit: "pencil", delete: "trash", move: "branch", search: "search", execute: "terminal", think: "sparkle", fetch: "globe", switch_mode: "shield",
+};
+
+export function kindIcon(name: string, kind?: string): IconName {
+  const base = name.replace(/^.+? > /, "");
+  return KIND_ICON[kind ?? KIND_OF_TOOL[base] ?? ""] ?? "tool";
+}
+
 export function formatElapsed(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
@@ -93,8 +109,16 @@ export interface ToolRow {
   row: HTMLDetailsElement;
   /** Where a subagent's text and steps go (task rows only). */
   body: HTMLElement;
+  /** A later report of the same call: new title, arguments, status, files, or edit. */
+  update(name: string, args: Record<string, unknown>, rawArgs: string, info: ToolInfo): void;
   setResult(output: string, failed: boolean): void;
   stop(): void;
+}
+
+/** What a row can ask the host for. */
+export interface ToolActions {
+  showDiff(): void;
+  openLocation(location: ToolLocation): void;
 }
 
 const running = new Set<{ started: number; time: HTMLElement }>();
@@ -106,26 +130,60 @@ function tick() {
   if (!running.size && ticker) (clearInterval(ticker), (ticker = undefined));
 }
 
-export function createToolRow(name: string, args: Record<string, unknown>, rawArgs: string, open = false): ToolRow {
-  const { action, target } = describeTool(name, args);
+export function createToolRow(name: string, args: Record<string, unknown>, rawArgs: string, open = false, info: ToolInfo = {}, actions?: ToolActions): ToolRow {
   const row = el("details", "tool");
-  row.dataset.status = "running";
   row.open = open;
   const summary = el("summary");
   const status = el("span", "tool-status");
-  status.append(el("span", "tool-pulse"));
+  const kind = el("span", "tool-kind");
+  const action = el("span", "tool-action");
+  const target = el("span", "tool-target");
+  const size = el("span", "tool-diff");
   const time = el("span", "tool-time", "0s");
-  summary.append(status, el("span", "tool-action", action));
-  if (target) summary.append(el("span", "tool-target", target));
-  summary.append(time, icon("chevron", 12));
-  summary.title = target ? `${action} ${target}` : action;
+  summary.append(status, kind, action, target, size, time, icon("chevron", 12));
   const body = el("div", "tool-body");
-  body.append(argsBlock(args, rawArgs));
+  const argsView = el("div");
+  const files = el("div", "tool-files");
+  body.append(files, argsView);
   row.append(summary, body);
+
+  /** Everything that a later report of the same call can change. */
+  const show = (n: string, a: Record<string, unknown>, raw: string, i: ToolInfo) => {
+    const d = describeTool(n, a);
+    action.textContent = d.action;
+    target.textContent = d.target ?? "";
+    target.hidden = !d.target;
+    summary.title = d.target ? `${d.action} ${d.target}` : d.action;
+    kind.replaceChildren(icon(kindIcon(n, i.kind), 13));
+    // A report without a status keeps the row's mark (a new row starts running).
+    if (running.has(timer) && (i.status || !row.dataset.status)) {
+      row.dataset.status = i.status === "pending" ? "pending" : "running";
+      status.replaceChildren(el("span", i.status === "pending" ? "tool-waiting" : "tool-pulse"));
+    }
+    size.hidden = !i.diff;
+    if (i.diff) {
+      size.replaceChildren(el("span", "tool-added", `+${i.diff.added}`), el("span", "tool-removed", `−${i.diff.removed}`));
+      size.title = `${i.diff.path}: ${i.diff.added} line(s) added, ${i.diff.removed} removed`;
+    }
+    files.replaceChildren();
+    for (const location of i.locations ?? []) {
+      const link = el("button", "tool-location link", `${location.path}${location.line ? `:${location.line}` : ""}`);
+      link.addEventListener("click", () => actions?.openLocation(location));
+      files.append(link);
+    }
+    if (i.diff && actions) {
+      const view = el("button", "tool-view-diff link", "View diff");
+      view.addEventListener("click", () => actions.showDiff());
+      files.append(view);
+    }
+    files.hidden = !files.childElementCount;
+    argsView.replaceChildren(argsBlock(a, raw));
+  };
 
   const timer = { started: Date.now(), time };
   running.add(timer);
   ticker ??= setInterval(tick, 1000);
+  show(name, args, rawArgs, info);
 
   const settle = (state: ToolStatus) => {
     if (!running.delete(timer)) return;
@@ -138,6 +196,7 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
   return {
     row,
     body,
+    update: (n, a, raw, i) => show(n, a, raw, i),
     setResult(output, failed) {
       if (output) body.append(el("pre", "tool-output", output));
       settle(failed ? "failed" : "done");

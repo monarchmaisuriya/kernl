@@ -2,13 +2,16 @@
 // and page text are untrusted, so nothing is ever parsed as HTML (test/unit/webviewSafety.test.ts).
 // One transcript per workspace (the main folder plus worktree workspaces); the footer's workspace
 // chip switches between them. New chat and New workspace live in VS Code's view title bar.
-import type { ApprovalCard, HarnessView, HostToPanel, PanelToHost, SendMode, WorkspaceView } from "../ui/protocol";
+import type { ApprovalCard, HarnessView, HostToPanel, PanelToHost, PlanEntryView, SendMode, SkillView, WorkspaceView } from "../ui/protocol";
 import { icon } from "./icons";
 import { attachmentChip, createAttachments } from "./attachments";
 import { MarkdownView } from "./markdown";
 import { createMenu } from "./menu";
 import { createModeMenu, modeIcon } from "./modeMenu";
 import { createSendMenu, sendModeOf } from "./sendMenu";
+import { type ContextUsage, createContextRing } from "./contextRing";
+import { createPlanBar } from "./planBar";
+import { createThinking, type ThinkingBlock } from "./thinking";
 import { createToolRow, type ToolRow } from "./toolRow";
 
 declare function acquireVsCodeApi(): { postMessage(m: PanelToHost): void };
@@ -41,6 +44,16 @@ interface Pane {
   toolRows: Map<string, HTMLElement>;
   /** Tool calls shown as one-line rows (status, plain description, time), by call id. */
   tools: Map<string, ToolRow>;
+  /** Whether this turn's reply already has its hidden heading. */
+  replyHeading?: boolean;
+  /** The thinking block being streamed, until text, a tool call, or the end of the run follows. */
+  thinking?: ThinkingBlock;
+  /** The agent's latest plan (replaced whole by each update). */
+  plan?: PlanEntryView[];
+  /** How full the agent's context window is (agents that report it). */
+  context?: ContextUsage;
+  /** The agent's own slash commands (CLI agents). */
+  commands?: SkillView[];
   /** Delegated subagents' text, per task call, rendered as Markdown inside the task row. */
   subagents: Map<string, { view: MarkdownView; text: string; steps: HTMLElement }>;
   /** The latest task row: where a subagent's own tool calls go. */
@@ -77,6 +90,22 @@ type Status = Extract<HostToPanel, { type: "status" }>;
 const app = document.getElementById("app")!;
 const banner = el("div", "banner");
 const logs = el("div", "logs");
+// The transcript is a log, but streaming tokens aren't read out one by one: the announcer below
+// says when a reply is finished, when an approval is needed, and when something went wrong.
+logs.setAttribute("role", "log");
+logs.setAttribute("aria-live", "off");
+logs.setAttribute("aria-label", "Conversation");
+const politeAnnouncer = el("div", "sr-only");
+politeAnnouncer.setAttribute("role", "status");
+politeAnnouncer.setAttribute("aria-live", "polite");
+const urgentAnnouncer = el("div", "sr-only");
+urgentAnnouncer.setAttribute("role", "alert");
+urgentAnnouncer.setAttribute("aria-live", "assertive");
+function announce(text: string, urgent = false) {
+  const target = urgent ? urgentAnnouncer : politeAnnouncer;
+  target.textContent = "";
+  target.textContent = text;
+}
 const empty = el("div", "empty");
 const emptyText = el("p", "empty-text");
 // Shown instead of a transcript when the window has no folder kernl can work in.
@@ -134,8 +163,10 @@ jobsChip.dataset.anchor = "jobs";
 const anchoredMenu = createMenu((id, index) => send(index === undefined ? { type: "menuPick", id } : { type: "menuPick", id, index }));
 jobsChip.addEventListener("click", () => send({ type: "pickJob" }));
 const usage = el("span", "usage");
-footer.append(modeMenu.menu, workspaceChip, modeChip, jobsChip, el("span", "spacer"), usage);
-app.append(banner, logs, composer, footer, anchoredMenu.menu);
+const contextRing = createContextRing();
+const planBar = createPlanBar();
+footer.append(modeMenu.menu, workspaceChip, modeChip, jobsChip, el("span", "spacer"), contextRing.ring, usage);
+app.append(banner, logs, planBar.bar, composer, footer, anchoredMenu.menu, politeAnnouncer, urgentAnnouncer);
 
 const markdownActions = { openLink: (url: string) => send({ type: "openLink", url }), copy: (text: string) => send({ type: "copy", text }) };
 const panes = new Map<string, Pane>();
@@ -144,6 +175,8 @@ let harnesses: HarnessView[] = [];
 let active = "main";
 /** Why there is no workspace (no folder open, or only remote ones), from the host. */
 let noWorkspace: string | undefined;
+/** kernl's skills (for its own agent's "/" menu); CLI agents send their own commands per workspace. */
+let kernlSkills: SkillView[] = [];
 let status: Status | undefined;
 
 const pane = (id: string) => panes.get(id);
@@ -237,6 +270,8 @@ function render() {
   modeChip.setAttribute("aria-label", `Permission mode: ${restricted ? "Read-only" : (mode?.label ?? "")}${choosable ? ". Change mode" : ""}`);
   if (!choosable) modeMenu.close();
   usage.textContent = p?.usage ?? "";
+  contextRing.show(p?.context);
+  planBar.show(p?.plan);
   const jobs = p?.jobs ?? { running: 0, total: 0 };
   jobsChip.hidden = jobs.total === 0;
   jobsChip.replaceChildren(icon("tool", 14), el("span", "chip-text", jobs.running ? `${jobs.running} job${jobs.running === 1 ? "" : "s"} running` : `${jobs.total} job${jobs.total === 1 ? "" : "s"} done`));
@@ -315,6 +350,23 @@ function submit(mode: SendMode = "now") {
   render();
 }
 
+// Approval shortcuts act on the newest card in the shown workspace: allow once, allow always (when offered), reject.
+document.addEventListener("keydown", (e) => {
+  // Not while typing a message (Ctrl+Y is Redo there on Windows): approvals are never a typing accident.
+  if (!(e.metaKey || e.ctrlKey) || document.activeElement === input) return;
+  const key = e.key.toLowerCase();
+  const action = key === "y" && !e.altKey ? "once" : (key === "y" || e.code === "KeyY") && e.altKey ? "always" : (key === "z" || e.code === "KeyZ") && e.altKey ? "reject" : undefined;
+  if (!action) return;
+  const p = pane(active);
+  const open = p ? [...p.log.querySelectorAll<HTMLElement>(".card[data-card-id]")].filter((c) => cards.get(c.dataset.cardId!) === c) : [];
+  const newest = open.at(-1);
+  if (!newest) return;
+  if (action === "always" && !newest.querySelector('[data-action="always"]')) return;
+  e.preventDefault();
+  const id = newest.dataset.cardId!;
+  send(action === "reject" ? { type: "answer", id, approved: false } : action === "always" ? { type: "answer", id, approved: true, always: true } : { type: "answer", id, approved: true });
+});
+
 sendButton.addEventListener("click", () => (pane(active)?.view.running ? send({ type: "stop", workspace: active }) : submit()));
 input.addEventListener("keydown", (e) => {
   if (attachments.onKeydown(e)) return;
@@ -325,7 +377,11 @@ input.addEventListener("keydown", (e) => {
   }
 });
 input.addEventListener("input", () => {
-  attachments.onInput(pane(active)?.view.harness.startsWith("deepagents") ?? false);
+  // "/" offers kernl's skills to its own agent, and a CLI agent's own commands to that agent.
+  const p = pane(active);
+  const slash = !p ? [] : p.view.harness.startsWith("deepagents") ? kernlSkills : (p.commands ?? []);
+  attachments.setSkills(slash);
+  attachments.onInput(slash.length > 0);
   render();
 });
 attachButton.addEventListener("click", () => send({ type: "pickAttachments" }));
@@ -343,12 +399,28 @@ function renderCard(card: ApprovalCard) {
   const head = el("div", "card-head");
   head.append(icon("shield", 14), el("span", "card-title", card.title), el("span", "card-workspace", card.workspace));
   box.append(head, el("pre", "card-detail", card.detail));
+  box.setAttribute("role", "group");
+  box.setAttribute("aria-label", `Approval needed: ${card.title}`);
   const row = el("div", "buttons");
+  const mod = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl+";
+  const alt = mod === "⌘" ? "⌥" : "Alt+";
   const approve = el("button", "primary", "Approve");
+  approve.title = `Allow this once (${mod}Y)`;
   const reject = el("button", "", "Reject");
+  reject.title = `Reject (${mod}${alt}Z)`;
   approve.addEventListener("click", () => send({ type: "answer", id: card.id, approved: true }));
   reject.addEventListener("click", () => send({ type: "answer", id: card.id, approved: false }));
-  row.append(approve, reject);
+  row.append(approve);
+  // Only when the agent itself offers it, in its own words (e.g. "Always allow"): never the default.
+  if (card.always) {
+    const always = el("button", "", card.always);
+    always.title = `${card.always} (${mod}${alt}Y)`;
+    always.dataset.action = "always";
+    always.addEventListener("click", () => send({ type: "answer", id: card.id, approved: true, always: true }));
+    row.append(always);
+  }
+  row.append(reject);
+  box.dataset.cardId = card.id;
   if (card.hasDiff) {
     const diff = el("button", "link", "View diff");
     diff.addEventListener("click", () => send({ type: "showDiff", id: card.id }));
@@ -357,6 +429,7 @@ function renderCard(card: ApprovalCard) {
   box.append(row);
   cards.set(card.id, box);
   p.log.append(box);
+  announce(`Approval needed: ${card.title}`);
   if (card.workspaceId !== active) select(card.workspaceId);
   else render();
 }
@@ -394,7 +467,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       attachments.onFileMatches(m.query, m.items);
       return;
     case "skills":
-      attachments.setSkills(m.items);
+      kernlSkills = m.items;
       return;
     case "activeFile":
       attachments.setActiveFile(m.path);
@@ -408,8 +481,16 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
   }
   const p = pane(m.workspace);
   if (!p) return;
+  // Thinking ends when anything else from the agent (or the end of the run) arrives.
+  if (p.thinking && m.type !== "thinking" && m.type !== "usage" && m.type !== "context" && m.type !== "jobs" && m.type !== "commands") {
+    p.thinking.done();
+    p.thinking = undefined;
+  }
   switch (m.type) {
     case "userMessage": {
+      // A hidden heading per turn, so screen readers can jump between turns.
+      p.log.append(el("h3", "sr-only", "Your message"));
+      p.replyHeading = false;
       const bubble = el("div", "user", m.text);
       if (m.id) bubble.dataset.messageId = m.id;
       if (m.checkpoint && m.id) addRestore(bubble, p.view.id, m.id);
@@ -434,6 +515,10 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
     }
     case "text":
       if (!p.assistant) {
+        if (!p.replyHeading) {
+          p.log.append(el("h3", "sr-only", "Reply"));
+          p.replyHeading = true;
+        }
         // A new reply starts wherever the previous one was closed (send, tool call, finished, cleared).
         const reply = el("div", "assistant md");
         p.log.append(reply);
@@ -443,9 +528,23 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       p.replyText += m.delta;
       p.assistant.update(p.replyText);
       break;
+    case "thinking": {
+      if (!p.thinking) {
+        p.assistant = undefined;
+        p.thinking = createThinking(status?.thinkingDisplay ?? "auto");
+        p.log.append(p.thinking.element);
+      }
+      p.thinking.append(m.delta);
+      break;
+    }
     case "toolCall": {
       p.assistant = undefined;
       const args = argsOf(m.args);
+      const known = p.tools.get(m.id);
+      if (known) {
+        known.update(m.name, args, m.args, m);
+        break;
+      }
       if (m.name === "sequential_thinking") {
         const row = thoughtRow(args);
         p.toolRows.set(m.id, row);
@@ -453,7 +552,12 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
         break;
       }
       // A delegated subagent's row stays open while it works: its steps and text stream into it.
-      const tool = createToolRow(m.name, args, m.args, m.name === "task");
+      const workspace = p.view.id;
+      const id = m.id;
+      const tool = createToolRow(m.name, args, m.args, m.name === "task", m, {
+        showDiff: () => send({ type: "showToolDiff", workspace, id }),
+        openLocation: (l) => send({ type: "openLocation", workspace, path: l.path, ...(l.line ? { line: l.line } : {}) }),
+      });
       const row = tool.row;
       if (m.name === "task") {
         row.classList.add("subagent");
@@ -480,6 +584,15 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
     case "jobs":
       p.jobs = { running: m.running, total: m.total };
       break;
+    case "plan":
+      p.plan = m.entries;
+      break;
+    case "context":
+      p.context = { used: m.used, size: m.size, cost: m.cost };
+      break;
+    case "commands":
+      p.commands = m.items;
+      break;
     case "toolResult": {
       const row = p.toolRows.get(m.id);
       if (row?.classList.contains("thought")) break; // the thought itself is the content; its JSON reply isn't
@@ -494,6 +607,11 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       break;
     case "finished":
       p.assistant = undefined;
+      if (m.workspace === active) {
+        if (m.reason === "done") announce(`Reply finished. ${p.replyText.replace(/\s+/g, " ").slice(0, 200)}`);
+        else if (m.reason === "error") announce(`Something went wrong: ${m.message ?? ""}`, true);
+        else announce("Stopped.");
+      }
       // Calls that never reported back (Stop, an error) stop their timers.
       for (const tool of p.tools.values()) tool.stop();
       if (m.reason === "stopped") p.log.append(el("div", "note", "Stopped."));
@@ -514,6 +632,8 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       p.toolRows.clear();
       p.usage = "";
       p.assistant = undefined;
+      p.plan = undefined;
+      p.context = undefined;
       break;
   }
   render();

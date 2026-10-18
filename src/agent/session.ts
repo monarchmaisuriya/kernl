@@ -1,13 +1,28 @@
 import { randomUUID } from "node:crypto";
 import { AIMessageChunk, type BaseMessage, mapChatMessagesToStoredMessages, mapStoredMessagesToChatMessages, type StoredMessage, ToolMessage } from "@langchain/core/messages";
-import { type Attachment, attachmentNote } from "../ui/protocol";
+import { type Attachment, attachmentNote, type PlanEntryView, type SkillView, type ToolInfo } from "../ui/protocol";
 import type { BuiltAgent } from "./createAgent";
 import type { Runner } from "./runner";
 import { untracedRunConfig } from "./tracing";
 
 export interface SessionEvents {
   text(delta: string): void;
-  toolCall(id: string, name: string, args: unknown): void;
+  /** Reported again with the same id as the call progresses (`info`: status, kind, locations, diff size). */
+  toolCall(id: string, name: string, args: unknown, info?: ToolInfo): void;
+  /** An edit's full before and after, kept by the host for "View diff". */
+  toolDiff?(id: string, diff: { path: string; before: string | null; after: string }): void;
+  /** The model's or agent's thinking, streamed. */
+  thinking?(delta: string): void;
+  /** The agent's whole plan (each call replaces it). */
+  plan?(entries: PlanEntryView[]): void;
+  /** How full the context window is (agents that report it). */
+  context?(usage: { used: number; size: number; cost?: { amount: number; currency: string } }): void;
+  /** The agent's own slash commands. */
+  commands?(items: SkillView[]): void;
+  /** A title the agent gave the conversation. */
+  title?(title: string): void;
+  /** The agent changed its own config options (e.g. left plan mode): option id -> current value. */
+  configChanged?(values: Record<string, string>): void;
   /** `failed`: the tool reported an error (LangChain status "error", ACP status "failed"). */
   toolResult(id: string, name: string, output: string, failed?: boolean): void;
   /** Text a delegated subagent writes, for the `task` call that started it (not the main reply). */
@@ -23,6 +38,19 @@ function textOf(content: unknown): string {
 }
 
 /**
+ * A message's thinking: Anthropic `thinking` parts, LangChain's normalized `reasoning` parts, and
+ * DeepSeek's `reasoning_content` (which arrives outside the content).
+ */
+function thinkingOf(message: any): string {
+  const parts = Array.isArray(message.content) ? message.content.map((b: any) => (b?.type === "thinking" ? (b.thinking ?? "") : b?.type === "reasoning" ? (b.reasoning ?? "") : "")).join("") : "";
+  const deepseek = message.additional_kwargs?.reasoning_content;
+  return parts + (typeof deepseek === "string" ? deepseek : "");
+}
+
+/** The kernl agent's to-do tool is shown as the plan, not as a tool row. */
+const TODO_TOOL = "write_todos";
+
+/**
  * One chat thread with the agent. Streams tokens and tool activity to the UI, keeps history
  * in the agent's checkpointer (keyed by thread id), and cancels through one AbortController.
  */
@@ -32,6 +60,8 @@ export class AgentSession implements Runner {
   private seed: BaseMessage[] | undefined;
   private controller: AbortController | undefined;
   private seenToolCalls = new Set<string>();
+  /** Calls shown some other way (the to-do list as the plan): their results aren't shown as tool output. */
+  private hiddenCalls = new Set<string>();
 
   constructor(private agent: () => Promise<BuiltAgent>, private events: SessionEvents, private onStop: () => void = () => {}) {}
 
@@ -83,6 +113,11 @@ export class AgentSession implements Runner {
             }
           }
           if (!pending!.nested && c.name === "task") task = { id: c.id, subagent: String(args?.subagent_type ?? "subagent") };
+          if (!pending!.nested && c.name === TODO_TOOL && Array.isArray(args?.todos)) {
+            this.hiddenCalls.add(c.id);
+            this.events.plan?.(args.todos.map((t: any) => ({ content: String(t?.content ?? ""), status: String(t?.status ?? "pending") })));
+            continue;
+          }
           this.events.toolCall(c.id, pending!.nested && task ? `${task.subagent} > ${c.name}` : c.name, args);
         }
         pending = undefined;
@@ -95,6 +130,8 @@ export class AgentSession implements Runner {
           const key = `${nested}:${message.id ?? ""}`;
           if (pending && pending.key !== key) flush();
           pending ??= { key, nested, calls: new Map() };
+          const thought = nested ? "" : thinkingOf(message);
+          if (thought) this.events.thinking?.(thought);
           const delta = textOf(message.content);
           if (delta && !nested) this.events.text(delta);
           else if (delta && task) this.events.subagentText?.(task.id, delta);
@@ -113,9 +150,11 @@ export class AgentSession implements Runner {
           if (message.usage_metadata) {
             inputTokens += message.usage_metadata.input_tokens ?? 0;
             outputTokens += message.usage_metadata.output_tokens ?? 0;
+            this.events.usage(inputTokens, outputTokens); // live, not only at the end
           }
         } else if (ToolMessage.isInstance(message)) {
           flush();
+          if (this.hiddenCalls.has(message.tool_call_id)) continue;
           this.events.toolResult(message.tool_call_id, message.name ?? "", textOf(message.content), message.status === "error");
         }
       }

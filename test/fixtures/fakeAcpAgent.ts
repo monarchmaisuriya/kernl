@@ -2,6 +2,8 @@
 // notable event so tests can check what the agent saw and did.
 //   write        asks to write hello.txt (with a diff); writes it only on allow_once
 //   stuck-mode   reports mode "auto" no matter what it is set to
+//   rich         streams what a full agent sends: thinking, a read (pending, in progress, completed),
+//                an edit with a diff, a plan, usage, slash commands, a title, and a switch to plan mode
 //   lagging-mode replies to a mode change with the previous value (OpenCode 2.0.27 leaving plan); the next reply is current
 //   session-mode has no config options; confirms set_mode with a current_mode_update
 //   crash        exits with code 3 during the prompt
@@ -77,6 +79,24 @@ new acp.AgentSideConnection((conn) => ({
     const attached = links.length ? ` [links: ${links.join(", ")}]` : "";
     const credential = process.env.ANTHROPIC_API_KEY ? ` [env ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY} ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL ?? "unset"} CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "unset"}]` : "";
     await conn.sessionUpdate({ sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `hello from fake${credential}${attached}` } } as any });
+    if (scenario === "rich") {
+      const send = (update: any) => conn.sessionUpdate({ sessionId, update });
+      await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Look at the hook " } });
+      await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "before answering." } });
+      await send({ sessionUpdate: "tool_call", toolCallId: "r1", title: "Read src/a.ts", kind: "read", status: "pending", locations: [{ path: join(cwd, "src/a.ts"), line: 3 }], rawInput: { path: "src/a.ts" } });
+      await send({ sessionUpdate: "tool_call_update", toolCallId: "r1", status: "in_progress" });
+      await send({ sessionUpdate: "tool_call_update", toolCallId: "r1", status: "completed", content: [{ type: "content", content: { type: "text", text: "export const a = 1;" } }] });
+      await send({ sessionUpdate: "tool_call", toolCallId: "e1", title: "Edit src/a.ts", kind: "edit", status: "in_progress" });
+      await send({ sessionUpdate: "tool_call_update", toolCallId: "e1", status: "completed", content: [{ type: "diff", path: join(cwd, "src/a.ts"), oldText: "a\nb\n", newText: "a\nB\nc\n" }] });
+      await send({ sessionUpdate: "plan", entries: [{ content: "Read the hook", status: "completed", priority: "high" }, { content: "Explain it", status: "in_progress", priority: "medium" }] });
+      await send({ sessionUpdate: "usage_update", used: 150000, size: 200000, cost: { amount: 0.42, currency: "USD" } });
+      await send({ sessionUpdate: "available_commands_update", availableCommands: [{ name: "review", description: "Review the changes" }] });
+      await send({ sessionUpdate: "session_info_update", title: "Explain the rewards hook" });
+      mode = "plan";
+      await send({ sessionUpdate: "config_option_update", configOptions: [modeOption()] });
+      await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } });
+      return { stopReason: "end_turn" };
+    }
     if (scenario === "crash") {
       process.stderr.write("fake agent: boom\n");
       process.exit(3);

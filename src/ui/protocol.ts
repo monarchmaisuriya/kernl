@@ -11,6 +11,32 @@ export interface ApprovalCard {
   detail: string;
   /** Edits and writes can be opened as a VS Code diff. */
   hasDiff: boolean;
+  /** The agent also offers "allow always" (its own words for where it applies); absent otherwise. */
+  always?: string;
+}
+
+/** Where a tool call is acting: a file, and a line when the agent says one. */
+export interface ToolLocation {
+  path: string;
+  line?: number;
+}
+
+/** Live state of a tool call beyond its name and arguments (ACP tool calls carry all of it). */
+export interface ToolInfo {
+  /** ACP kind: read, edit, delete, move, search, execute, think, fetch, switch_mode, other. */
+  kind?: string;
+  /** Still waiting (input streaming or approval) or running; results end it (toolResult). */
+  status?: "pending" | "running";
+  locations?: ToolLocation[];
+  /** An edit's size; "View diff" opens it (the content stays on the host). */
+  diff?: { path: string; added: number; removed: number };
+}
+
+/** One step of the agent's plan (ACP plan entries, or the kernl agent's to-do list). */
+export interface PlanEntryView {
+  content: string;
+  status: string;
+  priority?: string;
 }
 
 /**
@@ -114,7 +140,7 @@ export interface MenuItemView {
 }
 
 export type HostToPanel =
-  | { type: "status"; ready: boolean; problem?: string; provider: string; model: string; restricted: boolean }
+  | { type: "status"; ready: boolean; problem?: string; provider: string; model: string; restricted: boolean; thinkingDisplay: "auto" | "collapsed" | "expanded" }
   /** The full workspace list and run state; sent on ready and whenever it changes. */
   | { type: "workspaces"; items: WorkspaceView[]; harnesses: HarnessView[]; focus?: string; problem?: string }
   /** Sent whenever a webview becomes ready: every open approval card. */
@@ -138,7 +164,16 @@ export type HostToPanel =
   /** The file open in the editor, relative to the shown workspace (offered as a suggestion); undefined when none or outside it. */
   | { type: "activeFile"; path?: string }
   | { type: "text"; workspace: string; delta: string }
-  | { type: "toolCall"; workspace: string; id: string; name: string; args: string }
+  /** Sent again with the same id as the call progresses: the panel updates that row. */
+  | ({ type: "toolCall"; workspace: string; id: string; name: string; args: string } & ToolInfo)
+  /** The agent's thinking, streamed; it ends when text, a tool call, or the end of the run arrives. */
+  | { type: "thinking"; workspace: string; delta: string }
+  /** The agent's whole plan (each update replaces it). */
+  | { type: "plan"; workspace: string; entries: PlanEntryView[] }
+  /** How full the agent's context window is (ACP usage_update). */
+  | { type: "context"; workspace: string; used: number; size: number; cost?: { amount: number; currency: string } }
+  /** The agent's own slash commands (ACP), offered on "/". */
+  | { type: "commands"; workspace: string; items: SkillView[] }
   | { type: "toolResult"; workspace: string; id: string; name: string; output: string; failed?: boolean }
   | { type: "approval"; card: ApprovalCard }
   | { type: "approvalClosed"; id: string }
@@ -171,7 +206,12 @@ export type PanelToHost =
   /** A new conversation with this one's history up to and including this message's reply. */
   | { type: "fork"; workspace: string; messageId: string }
   | { type: "stop"; workspace: string }
-  | { type: "answer"; id: string; approved: boolean }
+  /** `always`: the agent's "allow always" option (only offered when the card says so). */
+  | { type: "answer"; id: string; approved: boolean; always?: boolean }
+  /** A tool row's "View diff": open the edit in VS Code's diff editor. */
+  | { type: "showToolDiff"; workspace: string; id: string }
+  /** A tool row's location: open that file (at that line). */
+  | { type: "openLocation"; workspace: string; path: string; line?: number }
   | { type: "showDiff"; id: string }
   | { type: "setKey" }
   | { type: "openSettings" }
@@ -194,7 +234,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "menuPick"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "menuPick", "showToolDiff", "openLocation"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

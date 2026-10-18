@@ -225,6 +225,22 @@
             "default": true,
             "order": 7,
             "markdownDescription": "Give the kernl agent a built-in sequential-thinking tool for complex tasks: numbered thoughts it can revise or branch, shown in the conversation. (Built in, adapted from the Model Context Protocol reference server; no MCP server runs.)"
+          },
+          "kernl.thinkingDisplay": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "collapsed",
+              "expanded"
+            ],
+            "default": "auto",
+            "order": 20,
+            "enumDescriptions": [
+              "Open while the agent thinks, then collapse to one line (click to reopen)",
+              "Always collapsed to one line",
+              "Always open"
+            ],
+            "markdownDescription": "How the agent's thinking shows in the panel (any agent that shares it: Claude Code, Codex, OpenCode, and kernl's own agent with DeepSeek, or Claude with `#kernl.modelOptions#` `reasoningEffort` set)."
           }
         }
       },

@@ -606,6 +606,36 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
   await config.update("agentCommands", { "claude-code": fakeAgent }, vscode.ConfigurationTarget.Global);
   await testing.setHarness("main", "claude-code");
 
+  await check("panel: a full agent's work reaches the panel: thinking, tool rows by kind with an edit's size, the plan, context, commands, the title, and its own mode switch", async () => {
+    // Its own conversation: the agent titles it, and later checks find theirs by first message.
+    await vscode.commands.executeCommand("kernl.newChat");
+    await config.update("agentCommands", { "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_SCENARIO: "rich" } } }, vscode.ConfigurationTarget.Global);
+    await new Promise((r) => setTimeout(r, 300)); // the settings change rebuilds the runner
+    try {
+      const from = delivered.length;
+      await testing.receive({ type: "send", workspace: "main", text: "explain the hook" });
+      await waitFor("the run finishing", (m) => m.type === "finished" && m.workspace === "main", from);
+      const got = delivered.slice(from);
+      assert.equal(got.filter((m) => m.type === "thinking").map((m) => m.delta).join(""), "Look at the hook before answering.");
+      const read = got.filter((m) => m.type === "toolCall" && m.id === "r1");
+      assert.deepEqual(read.map((m) => m.status ?? "-"), ["pending", "running", "-"], "one call, updated in place");
+      assert.equal(read[0].kind, "read");
+      assert.deepEqual(read[0].locations, [{ path: "src/a.ts", line: 3 }], "shown relative to the workspace");
+      assert.ok(got.some((m) => m.type === "toolCall" && m.id === "e1" && m.diff?.added === 2 && m.diff?.removed === 1));
+      assert.ok(got.some((m) => m.type === "plan" && m.entries.length === 2));
+      assert.ok(got.some((m) => m.type === "context" && m.used === 150000 && m.size === 200000));
+      assert.ok(got.some((m) => m.type === "commands" && m.items[0]?.name === "review"));
+      assert.ok(got.some((m) => m.type === "notice" && /switched to Plan mode/.test(m.text)), "the mode chip follows the agent");
+      const view = got.filter((m) => m.type === "workspaces").at(-1).items.find((w: any) => w.id === "main");
+      assert.equal(view.mode, "plan");
+      await testing.receive({ type: "setMode", workspace: "main", mode: "ask" });
+    } finally {
+      await config.update("agentCommands", { "claude-code": fakeAgent }, vscode.ConfigurationTarget.Global);
+      await new Promise((r) => setTimeout(r, 300));
+      await vscode.commands.executeCommand("kernl.newChat");
+    }
+  });
+
   await check("panel: Send, then an approval card; clicking Approve lets the agent write, with the outcome streamed back", async () => {
     rmSync(join(root, "hello.txt"), { force: true });
     const from = delivered.length;

@@ -104,7 +104,7 @@ test("model options reach each provider's model in that provider's own form", ()
 
 test("anthropic reasoning effort becomes extended thinking, with room left for the answer", () => {
   const thinking = createChatModel({ ...base, modelOptions: { reasoningEffort: "medium" } }, "k-123456789") as any;
-  assert.deepEqual(thinking.thinking, { type: "enabled", budget_tokens: 8192 });
+  assert.deepEqual(thinking.thinking, { type: "enabled", budget_tokens: 8192, display: "summarized" }, "summarized, so the thinking text comes back (current models omit it by default)");
   assert.ok(thinking.maxTokens > 8192, `max tokens ${thinking.maxTokens} must exceed the thinking budget`);
   const plain = createChatModel({ ...base, modelOptions: { temperature: 0.3 } }, "k-123456789") as any;
   assert.equal(plain.temperature, 0.3);

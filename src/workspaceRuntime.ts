@@ -28,6 +28,7 @@ import type { Attachment, HostToPanel, SendMode, WorkspaceView } from "./ui/prot
 import type { Checkpoints } from "./checkpoints";
 import { cutHistory, type QueuedMessage, type SessionRecord, type SessionStore, type TranscriptEvent } from "./sessions";
 import { createHash, randomUUID } from "node:crypto";
+import { isAbsolute, relative, sep } from "node:path";
 import type { WorkspaceInfo } from "./workspaces/worktrees";
 import { MODE_INFO, PERMISSION_MODES, type PermissionMode, PLAN_NOTE, KERNL_MODES } from "./modes";
 
@@ -107,6 +108,8 @@ export class WorkspaceRuntime {
   private queuePaused = false;
   /** How much the agent may do without asking (see modes.ts); checked against the agent's supported modes. */
   private permissionMode: PermissionMode = "ask";
+  /** Edits the agent proposed or made, by tool call id, for a tool row's "View diff". */
+  private toolDiffs = new Map<string, { path: string; before: string | null; after: string }>();
   /** How the last run ended; decides whether the queue carries on. */
   private lastFinish: "done" | "stopped" | "error" | undefined;
 
@@ -194,6 +197,38 @@ export class WorkspaceRuntime {
       }
     } else this.permissionMode = mode;
     this.post({ type: "notice", workspace: this.id, text: `Permission mode: ${MODE_INFO[mode].label}.` });
+    this.host.workspacesChanged();
+  }
+
+  /** `path` relative to this workspace when it's inside it; otherwise as given. */
+  private workspacePath(path: string): string {
+    const inside = relative(this.root, path);
+    return isAbsolute(path) && inside && !inside.startsWith("..") && !isAbsolute(inside) ? inside.split(sep).join("/") : path;
+  }
+
+  /** A tool call's edit, for "View diff" (undefined once the conversation changed). */
+  toolDiff(id: string) {
+    return this.toolDiffs.get(id);
+  }
+
+  /**
+   * The agent changed its own options (e.g. Claude Code leaving plan mode once the plan is
+   * approved): the mode chip follows, so it never claims a mode the agent isn't in.
+   */
+  private agentChangedConfig(values: Record<string, string>) {
+    if (!isCliAgentId(this.harness)) return;
+    const modes = CLI_AGENTS[this.harness].modes;
+    const matches = (m: PermissionMode) => {
+      const session = modes[m]?.session;
+      if (!session) return false;
+      const wanted = session.kind === "configOption" ? [session] : session.kind === "configOptions" ? session.options : [];
+      return wanted.length > 0 && wanted.every((o) => values[o.optionId] === undefined || values[o.optionId] === o.value) && wanted.some((o) => values[o.optionId] !== undefined);
+    };
+    if (matches(this.permissionMode)) return;
+    const now = PERMISSION_MODES.find(matches);
+    if (!now) return;
+    this.permissionMode = now;
+    this.post({ type: "notice", workspace: this.id, text: `${CLI_AGENTS[this.harness].label} switched to ${MODE_INFO[now].label}.` });
     this.host.workspacesChanged();
   }
 
@@ -548,7 +583,28 @@ export class WorkspaceRuntime {
     const ws = this.id;
     return {
       text: (delta) => this.post({ type: "text", workspace: ws, delta }),
-      toolCall: (id, name, args) => this.post({ type: "toolCall", workspace: ws, id, name, args: JSON.stringify(args).slice(0, 2000) }),
+      toolCall: (id, name, args, info) =>
+        this.post({
+          type: "toolCall",
+          workspace: ws,
+          id,
+          name,
+          args: JSON.stringify(args).slice(0, 2000),
+          ...info,
+          // Paths inside the workspace are shown relative to it, like everything else in the panel.
+          ...(info?.locations ? { locations: info.locations.map((l) => ({ ...l, path: this.workspacePath(l.path) })) } : {}),
+          ...(info?.diff ? { diff: { ...info.diff, path: this.workspacePath(info.diff.path) } } : {}),
+        }),
+      toolDiff: (id, diff) => this.toolDiffs.set(id, diff),
+      thinking: (delta) => delta && this.post({ type: "thinking", workspace: ws, delta }),
+      plan: (entries) => this.post({ type: "plan", workspace: ws, entries }),
+      context: (usage) => this.post({ type: "context", workspace: ws, ...usage }),
+      commands: (items) => this.post({ type: "commands", workspace: ws, items }),
+      title: (title) => {
+        this.session.agentTitle = title;
+        this.host.workspacesChanged();
+      },
+      configChanged: (values) => this.agentChangedConfig(values),
       toolResult: (id, name, output, failed) => this.post({ type: "toolResult", workspace: ws, id, name, output: output.slice(0, 4000), ...(failed ? { failed: true } : {}) }),
       usage: (inputTokens, outputTokens) => this.post({ type: "usage", workspace: ws, inputTokens, outputTokens }),
       subagentText: (id, delta) => this.post({ type: "subagentText", workspace: ws, id, delta }),

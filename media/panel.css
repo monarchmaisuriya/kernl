@@ -104,7 +104,33 @@ button.link { color: var(--vscode-textLink-foreground); padding-left: 4px; paddi
 .tool-arg-key { flex: none; color: var(--muted); }
 .tool-arg-value { min-width: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--vscode-editor-font-family); color: var(--vscode-foreground); }
 .tool-output { max-height: 220px; overflow: auto; margin: 0; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--vscode-textCodeBlock-background, var(--surface)); color: var(--vscode-foreground); }
+.tool-waiting { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--muted); box-sizing: border-box; }
+.tool-kind { display: inline-flex; flex: none; color: var(--muted); }
+.tool-diff { display: inline-flex; gap: 4px; flex: none; font-size: 0.88em; font-variant-numeric: tabular-nums; }
+.tool-added { color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-testing-iconPassed, #3fb950)); }
+.tool-removed { color: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-errorForeground)); }
+.tool-files { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 0.88em; }
+.tool-location { padding: 0; font-family: var(--vscode-editor-font-family); text-align: left; overflow-wrap: anywhere; }
+.tool-view-diff { padding: 0; }
 @media (prefers-reduced-motion: reduce) { .tool-pulse { animation: none; } }
+body.vscode-reduce-motion .tool-pulse, body.vscode-reduce-motion .working-dots span { animation: none; }
+
+/* Thinking: streams open, then collapses to "Thought for Ns" and a preview */
+.thinking { color: var(--muted); }
+.thinking > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; min-width: 0; list-style: none; padding: 3px 6px; border-radius: var(--radius-sm); font-size: 0.92em; }
+.thinking > summary::-webkit-details-marker { display: none; }
+.thinking > summary:hover { background: var(--hover); }
+.thinking > summary > .icon:first-child { flex: none; color: var(--vscode-textLink-foreground); }
+.thinking[data-state="streaming"] > summary > .icon:first-child { animation: working-pulse 1.4s ease-in-out infinite; }
+.thinking-label { flex: none; font-weight: 600; }
+.thinking-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+.thinking[open] .thinking-preview { visibility: hidden; }
+.thinking > summary > .icon:last-child { flex: none; margin-left: auto; transform: rotate(-90deg); transition: transform 0.12s; }
+.thinking[open] > summary > .icon:last-child { transform: none; }
+.thinking-text { margin: 2px 0 6px 26px; padding-left: 8px; border-left: 2px solid var(--vscode-textLink-foreground); white-space: pre-wrap; word-break: break-word; font-size: 0.92em; font-style: italic; }
+.thinking[data-state="streaming"] .thinking-text { max-height: 240px; overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) { .thinking[data-state="streaming"] > summary > .icon:first-child { animation: none; } }
+body.vscode-reduce-motion .thinking[data-state="streaming"] > summary > .icon:first-child { animation: none; }
 pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
 .result { color: var(--muted); }
 .note { color: var(--muted); font-size: 0.92em; text-align: center; }
@@ -243,3 +269,37 @@ button.mode:disabled { opacity: 1; cursor: default; }
 
 /* High contrast: outline every control so nothing relies on a background tint. */
 body.vscode-high-contrast .chip, body.vscode-high-contrast .tool, body.vscode-high-contrast .user, body.vscode-high-contrast button { border-color: var(--vscode-contrastBorder); }
+
+/* The plan, pinned above the input */
+.plan-bar { border: 1px solid var(--vscode-input-border, var(--border)); border-radius: var(--radius); background: var(--surface); font-size: 0.92em; }
+.plan-bar > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; min-width: 0; list-style: none; padding: 5px 10px; }
+.plan-bar > summary::-webkit-details-marker { display: none; }
+.plan-bar > summary > .icon:first-child { flex: none; color: var(--vscode-textLink-foreground); }
+.plan-current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-count { margin-left: auto; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.plan-bar > summary > .icon:last-child { flex: none; color: var(--muted); transform: rotate(180deg); transition: transform 0.12s; }
+.plan-bar[open] > summary > .icon:last-child { transform: none; }
+.plan-list { list-style: none; margin: 0; padding: 0 10px 8px; max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.plan-entry { display: flex; align-items: baseline; gap: 8px; color: var(--muted); }
+.plan-entry[data-status="in_progress"] { color: var(--vscode-foreground); font-weight: 600; }
+.plan-entry[data-status="completed"] span:last-child { text-decoration: line-through; }
+.plan-mark { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--muted); box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; position: relative; top: 1px; }
+.plan-entry[data-status="in_progress"] .plan-mark { border-color: var(--vscode-progressBar-background, var(--vscode-focusBorder)); background: var(--vscode-progressBar-background, var(--vscode-focusBorder)); }
+.plan-entry[data-status="completed"] .plan-mark { border: none; color: var(--vscode-testing-iconPassed, var(--muted)); }
+
+/* How full the context window is */
+.context-ring { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 0.85em; font-variant-numeric: tabular-nums; }
+.context-track { stroke: var(--border); }
+.context-fill { stroke: var(--vscode-progressBar-background, var(--vscode-focusBorder)); }
+.context-ring[data-level="filling"] .context-fill { stroke: var(--vscode-editorWarning-foreground, #cca700); }
+.context-ring[data-level="high"] .context-fill { stroke: var(--vscode-notificationsWarningIcon-foreground, #e8912d); }
+.context-ring[data-level="full"] .context-fill { stroke: var(--vscode-errorForeground); }
+.context-ring[data-level="full"] { color: var(--vscode-errorForeground); }
+
+/* Screen-reader-only text (turn headings, announcements) */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* High contrast: the new surfaces get visible borders too */
+body.vscode-high-contrast .anchored-menu, body.vscode-high-contrast .mode-menu, body.vscode-high-contrast .plan-bar, body.vscode-high-contrast .card, body.vscode-high-contrast .tool-output { border: 1px solid var(--vscode-contrastBorder); }
+body.vscode-high-contrast .menu-item:focus-visible, body.vscode-high-contrast .mode-option:focus-visible { outline: 1px dashed var(--vscode-contrastActiveBorder, var(--vscode-focusBorder)); }
+body.vscode-reduce-motion .tool > summary > .icon:last-child, body.vscode-reduce-motion .thinking > summary > .icon:last-child, body.vscode-reduce-motion .plan-bar > summary > .icon:last-child { transition: none; }

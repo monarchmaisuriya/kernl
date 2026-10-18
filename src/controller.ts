@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import * as vscode from "vscode";
 import { CLI_AGENT_IDS, type CliAgentId, isCliAgentId } from "./acp/agents";
 import { resolveCommand } from "./acp/commands";
@@ -65,6 +65,7 @@ function readSettings() {
     mcpServers: c.get<unknown>("mcpServers", {}),
     agentCommands: c.get<unknown>("agentCommands", {}),
     harness: c.get<string>("harness", "deepagents"),
+    thinkingDisplay: c.get<string>("thinkingDisplay", "auto"),
   };
 }
 
@@ -561,6 +562,17 @@ export class Controller implements vscode.Disposable {
     if (r?.kind === "agent" && r.diff) await this.diffs.show(id, r.diff.path, r.diff.before, r.diff.after);
   }
 
+  /** A tool row's file: opened in the editor (at the line when the agent gave one); only files inside the workspace. */
+  private async openLocation(workspaceId: string, path: string, line?: number) {
+    const ws = this.workspace(workspaceId);
+    if (!ws) return;
+    const file = isAbsolute(path) ? path : join(ws.root, path);
+    const inside = relative(ws.root, file);
+    if (inside.startsWith("..") || isAbsolute(inside)) return void vscode.window.showWarningMessage(`kernl only opens files inside ${ws.label}: ${path}`);
+    const position = line !== undefined && line > 0 ? new vscode.Position(line - 1, 0) : undefined;
+    await vscode.window.showTextDocument(vscode.Uri.file(file), { selection: position && new vscode.Range(position, position), preview: true });
+  }
+
   private closeApproval(id: string) {
     this.requests.delete(id);
     this.diffs.forget(id);
@@ -633,11 +645,18 @@ export class Controller implements vscode.Disposable {
         return this.workspace(m.workspace)?.stop();
       case "answer": {
         const owner = this.requests.get(m.id)?.workspace;
-        if (owner?.approvals.answer(m.id, m.approved)) this.closeApproval(m.id);
+        if (owner?.approvals.answer(m.id, m.approved, m.always === true)) this.closeApproval(m.id);
         return;
       }
       case "showDiff":
         return this.openDiff(m.id);
+      case "showToolDiff": {
+        const diff = this.workspace(m.workspace)?.toolDiff(m.id);
+        if (diff) await this.diffs.show(`tool-${m.id}`, diff.path, diff.before, diff.after);
+        return;
+      }
+      case "openLocation":
+        return this.openLocation(m.workspace, m.path, m.line);
       case "setKey":
         return this.setApiKey();
       case "openSettings":
@@ -795,7 +814,8 @@ export class Controller implements vscode.Disposable {
     const problem = await this.deepAgentsProblem();
     const resolved = resolveProvider(s);
     const model = "error" in resolved ? s.model : resolved.model;
-    this.panel.post({ type: "status", ready: !problem, problem, provider: s.provider, model, restricted: scope.ok && !scope.trusted });
+    const thinkingDisplay = s.thinkingDisplay === "collapsed" || s.thinkingDisplay === "expanded" ? s.thinkingDisplay : "auto";
+    this.panel.post({ type: "status", ready: !problem, problem, provider: s.provider, model, restricted: scope.ok && !scope.trusted, thinkingDisplay });
   }
 
   /** Each workspace decides whether the change concerns it; running ones rebuild after their run. */

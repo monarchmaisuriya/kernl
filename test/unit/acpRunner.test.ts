@@ -32,7 +32,14 @@ function harness(scenario: string, answer: boolean | "never", askMode: AskMode |
     notice: (t) => events.push(`notice:${t}`),
     events: {
       text: (d) => events.push(`text:${d}`),
-      toolCall: (_id, name) => events.push(`call:${name}`),
+      toolCall: (id, name, _args, info) => events.push(info?.status ? `call:${name}:${info.status}${info.kind ? `:${info.kind}` : ""}${info.diff ? `:+${info.diff.added}-${info.diff.removed}` : ""}${info.locations?.length ? `:@${info.locations[0].line}` : ""}` : `call:${name}`),
+      toolDiff: (id, d) => events.push(`diff:${id}:${d.before === null ? "new" : "changed"}`),
+      thinking: (d) => events.push(`thinking:${d}`),
+      plan: (entries) => events.push(`plan:${entries.map((e) => `${e.status}=${e.content}`).join("|")}`),
+      context: (c) => events.push(`context:${c.used}/${c.size}:${c.cost?.amount}`),
+      commands: (items) => events.push(`commands:${items.map((c) => c.name).join(",")}`),
+      title: (t) => events.push(`title:${t}`),
+      configChanged: (v) => events.push(`config:mode=${v.mode}`),
       toolResult: (_id, _n, out) => events.push(`result:${out}`),
       usage: () => {},
       finished: (reason, msg) => events.push(`finished:${reason}${msg ? `:${msg}` : ""}`),
@@ -47,7 +54,7 @@ test("streams the agent's text and tool activity; an approved write happens with
   await h.runner.send("write it");
   h.runner.dispose();
   assert.ok(h.events.includes("text:hello from fake"), h.events.join(" | "));
-  assert.ok(h.events.includes("call:Write hello.txt"));
+  assert.ok(h.events.includes("call:Write hello.txt:pending:edit"), JSON.stringify(h.events));
   assert.ok(h.events.includes("result:wrote hello.txt"));
   assert.equal(h.events.at(-1), "finished:done");
   assert.equal(readFileSync(join(h.cwd, "hello.txt"), "utf8"), "hi\n");
@@ -212,4 +219,47 @@ test("an agent whose reply lags one mode behind (OpenCode leaving plan) is confi
   await h.runner.applyMode();
   assert.deepEqual(h.fakeLog().filter((l) => l.startsWith("setConfig")), ["setConfig mode=plan", "setConfig mode=plan", "setConfig mode=build", "setConfig mode=build"]);
   h.runner.dispose();
+});
+
+test("a full agent's updates all reach the panel: thinking, one tool call merged through its states, an edit's size, plan, usage, commands, title, and its own mode change", async () => {
+  const h = harness("rich", false);
+  await h.runner.send("explain the hook");
+  h.runner.dispose();
+  const e = h.events;
+  assert.deepEqual(e.filter((x) => x.startsWith("thinking:")), ["thinking:Look at the hook ", "thinking:before answering."]);
+  assert.deepEqual(e.filter((x) => x.startsWith("call:Read")), ["call:Read src/a.ts:pending:read:@3", "call:Read src/a.ts:running:read:@3", "call:Read src/a.ts"], JSON.stringify(e));
+  assert.ok(e.includes("result:export const a = 1;"), "its output ends it");
+  assert.ok(e.includes("call:Edit src/a.ts:running:edit") && e.includes("call:Edit src/a.ts"), JSON.stringify(e));
+  assert.ok(e.includes("diff:e1:changed"));
+  assert.ok(e.includes("plan:completed=Read the hook|in_progress=Explain it"));
+  assert.ok(e.includes("context:150000/200000:0.42"));
+  assert.ok(e.includes("commands:review"));
+  assert.ok(e.includes("title:Explain the rewards hook"));
+  assert.ok(e.includes("config:mode=plan"));
+  assert.equal(e.at(-1), "finished:done");
+});
+
+test("an edit's size counts added and removed lines; a new file is all added", async () => {
+  const { diffSize } = await import("../../src/acp/acpRunner");
+  assert.deepEqual(diffSize("a\nb\n", "a\nB\nc\n"), { added: 2, removed: 1 });
+  assert.deepEqual(diffSize(null, "x\ny"), { added: 2, removed: 0 });
+  assert.deepEqual(diffSize("same", "same"), { added: 0, removed: 0 });
+});
+
+test("'allow always' is sent only when the user chose the card's always button, and only if the agent offers it", () => {
+  const opts: any[] = [{ optionId: "once", kind: "allow_once" }, { optionId: "always", kind: "allow_always" }, { optionId: "no", kind: "reject_once" }];
+  assert.deepEqual(toPermissionResponse(opts, true, false), { outcome: { outcome: "selected", optionId: "once" } }, "a plain approve never widens");
+  assert.deepEqual(toPermissionResponse(opts, "always", false), { outcome: { outcome: "selected", optionId: "always" } });
+  assert.deepEqual(toPermissionResponse(opts.filter((o) => o.kind !== "allow_always"), "always", false), { outcome: { outcome: "selected", optionId: "no" } }, "not offered: rejected, not widened to once");
+});
+
+test("the approval queue passes 'always' through only with an approve", async () => {
+  const { PendingApprovals } = await import("../../src/gate/pendingApprovals");
+  const pending = new PendingApprovals(() => {}, () => {});
+  const a = pending.ask("a", { kind: "execute", command: "ls" });
+  const b = pending.ask("b", { kind: "execute", command: "ls" });
+  pending.answer("a", true, true);
+  pending.answer("b", false, true);
+  assert.equal(await a, "always");
+  assert.equal(await b, false);
 });
