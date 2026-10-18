@@ -36,6 +36,7 @@ button.link { color: var(--vscode-textLink-foreground); padding-left: 4px; paddi
 .empty .icon { opacity: 0.8; margin-bottom: 6px; }
 .empty-title { margin: 0; font-size: 1.15em; font-weight: 600; color: var(--vscode-foreground); }
 .empty-text { margin: 0; max-width: 280px; }
+.empty button { pointer-events: auto; margin-top: 8px; }
 
 .user .restore { position: absolute; top: 2px; left: -26px; width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); opacity: 0; }
 .user .fork { position: absolute; top: 26px; left: -26px; width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); opacity: 0; }

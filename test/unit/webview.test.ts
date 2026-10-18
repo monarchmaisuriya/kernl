@@ -532,3 +532,17 @@ test("a message put back after a failed send gets its attachments back: mentions
   input.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "Enter" }));
   assert.deepEqual(p.sent.at(-1), { type: "send", workspace: "main", text: "fix @src/app.ts please", attachments: [file, issue] });
 });
+
+test("with no folder to work in, the panel says why and offers Open Folder instead of staying blank", () => {
+  const p = loadPanel();
+  p.host({ type: "workspaces", items: [], harnesses: HARNESSES, problem: "Open a folder to use YourStack." });
+  const empty = p.doc.querySelector<HTMLElement>(".empty")!;
+  assert.equal(empty.hidden, false);
+  assert.match(empty.textContent!, /Open a folder to use YourStack\./);
+  assert.equal(p.doc.querySelector<HTMLTextAreaElement>(".input")!.disabled, true);
+  p.button("Open Folder")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "openFolder" });
+  p.host(workspaces([MAIN]));
+  assert.equal(p.button("Open Folder")!.hidden, true, "gone once a folder is open");
+  assert.match(empty.textContent!, /Deep Agents asks before every edit/);
+});

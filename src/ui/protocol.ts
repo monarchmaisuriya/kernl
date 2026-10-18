@@ -89,7 +89,7 @@ export type SendMode = "now" | "queue" | "fork";
 export type HostToPanel =
   | { type: "status"; ready: boolean; problem?: string; provider: string; model: string; restricted: boolean }
   /** The full workspace list and run state; sent on ready and whenever it changes. */
-  | { type: "workspaces"; items: WorkspaceView[]; harnesses: HarnessView[]; focus?: string }
+  | { type: "workspaces"; items: WorkspaceView[]; harnesses: HarnessView[]; focus?: string; problem?: string }
   /** Sent whenever a webview becomes ready: every open approval card. */
   | { type: "snapshot"; cards: ApprovalCard[] }
   /** `id` and `checkpoint` (a snapshot of the files before it) let the panel offer Restore; `turn` counts the user's messages. */
@@ -150,12 +150,14 @@ export type PanelToHost =
   | { type: "pickModel" }
   /** The composer's agent chip: pick the harness for the shown workspace. */
   | { type: "pickHarness" }
+  /** The empty panel's Open Folder button (shown when the window has no usable folder). */
+  | { type: "openFolder" }
   /** A link in a reply; the host opens it in the browser if httpUrl() accepts it. */
   | { type: "openLink"; url: string }
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "restore", "fork", "pickJob", "unqueue", "sendQueued"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

@@ -412,7 +412,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test:unit": "node scripts/build.mjs --tests && node scripts/run-unit.mjs",
-    "test:vscode": "node scripts/build.mjs --tests && node out/test/runVscode.cjs",
+    "test:vscode": "node scripts/build.mjs --tests && node out/test/runVscode.cjs && YOURSTACK_WORKSPACE=multi YOURSTACK_SUITE=multiRootSuite.cjs node out/test/runVscode.cjs",
     "test:live": "node scripts/build.mjs --tests && YOURSTACK_SUITE=liveSuite.cjs node out/test/runVscode.cjs",
     "check:upgrade": "node scripts/build.mjs --tests && node scripts/run-unit.mjs && node out/test/backendMethods.cjs",
     "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository --skip-license -o yourstack.vsix",

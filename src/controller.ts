@@ -87,6 +87,10 @@ export class Controller implements vscode.Disposable {
   private github: GitHubSource | undefined;
   /** The workspace the panel shows (reported by the panel); title-bar commands act on it. */
   private active = MAIN;
+  /** True when the window has several folders: each is a top-level workspace that remembers its own agent. */
+  private multiRoot = false;
+  /** Each worktree workspace's folder (the top-level workspace whose repository it belongs to). */
+  private worktreeFolder = new Map<string, string>();
   /** Named agents (from ~/.yourstack/agents and the main folder's .yourstack/agents) offered in the agent picker. */
   private namedHarnesses: { id: string; label: string }[] = [];
 
@@ -120,7 +124,7 @@ export class Controller implements vscode.Disposable {
       log: this.log,
       diffs: this.diffs,
       worktreeStorage: join(context.globalStorageUri.fsPath, "worktrees"),
-      mainRoot: () => this.workspace(MAIN)?.root,
+      mainRoot: () => this.activeFolder()?.root,
       prompts: () => this.prompts,
       harnesses: () => this.harnessList(),
     });
@@ -165,29 +169,64 @@ export class Controller implements vscode.Disposable {
     if (problems.length) void vscode.window.showWarningMessage(`YourStack skipped ${problems.length} approval rule(s): ${problems.join("; ")}`);
   }
 
-  /** Main folder plus any worktree workspaces created earlier for this repo. */
+  /**
+   * One top-level workspace per local folder ("Main" when there is only one), plus the worktree
+   * workspaces created earlier from each folder's repository. With no usable folder the panel is
+   * told why (postWorkspaces sends the reason).
+   */
   private async loadWorkspaces() {
     const scope = currentWorkspaceScope();
-    if (!scope.ok) return;
-    const harness = readSettings().harness;
-    this.workspaces.set(MAIN, new WorkspaceRuntime(MAIN, "Main", scope.root, isHarness(harness) ? harness : "deepagents", this.host));
-    try {
-      const repo = await repoRoot(scope.root);
-      for (const info of await listWorkspaces(repo, join(this.context.globalStorageUri.fsPath, "worktrees"))) this.addWorktree(info);
-    } catch (err) {
-      // Not a git repository: only the main workspace exists. Anything else is a real failure.
-      if (!isNotARepository(err)) this.fail("Could not load workspaces", err);
+    if (!scope.ok) return this.postWorkspaces();
+    this.multiRoot = scope.folders.length > 1;
+    const defaultHarness = readSettings().harness;
+    for (const folder of scope.folders) {
+      let id = this.multiRoot ? `folder:${folder.name}` : MAIN;
+      let label = this.multiRoot ? folder.name : "Main";
+      for (let n = 2; this.workspaces.has(id); n++) (id = `folder:${folder.name} #${n}`), (label = `${folder.name} #${n}`);
+      const harness = (this.multiRoot && this.context.workspaceState.get<string>(this.harnessKey(folder.root))) || defaultHarness;
+      this.workspaces.set(id, new WorkspaceRuntime(id, label, folder.root, isHarness(harness) ? harness : "deepagents", this.host, undefined, !this.multiRoot));
+      try {
+        const repo = await repoRoot(folder.root);
+        for (const info of await listWorkspaces(repo, join(this.context.globalStorageUri.fsPath, "worktrees"))) this.addWorktree(info, id);
+      } catch (err) {
+        // Not a git repository: only the folder itself is a workspace. Anything else is a real failure.
+        if (!isNotARepository(err)) this.fail(`Could not load workspaces for ${folder.name}`, err);
+      }
     }
+    // Start on the folder of the file being edited.
+    const editing = vscode.window.activeTextEditor?.document.uri;
+    const folderOfEditor = editing && vscode.workspace.getWorkspaceFolder(editing)?.uri.fsPath;
+    this.active = [...this.workspaces.values()].find((w) => !w.info && w.root === folderOfEditor)?.id ?? this.workspaces.keys().next().value ?? MAIN;
     await this.refreshNamedAgents();
-    this.postWorkspaces();
+    this.postWorkspaces(this.active);
+    void this.postSkills();
     void this.refreshReadiness();
   }
 
-  /** Worktree ids are prefixed so no workspace name can collide with the main workspace's id. */
-  private addWorktree(info: WorkspaceInfo) {
-    const runtime = new WorkspaceRuntime(`wt:${info.name}`, info.name, info.path, isHarness(info.harness) ? info.harness : "deepagents", this.host, info);
+  /** Worktree ids are prefixed so no workspace name can collide with a folder's id; in multi-root they also name their folder. */
+  private addWorktree(info: WorkspaceInfo, folderId: string) {
+    const folder = this.workspace(folderId)!;
+    const id = this.multiRoot ? `wt:${folder.label}/${info.name}` : `wt:${info.name}`;
+    const label = this.multiRoot ? `${folder.label}/${info.name}` : info.name;
+    const runtime = new WorkspaceRuntime(id, label, info.path, isHarness(info.harness) ? info.harness : "deepagents", this.host, info);
     this.workspaces.set(runtime.id, runtime);
+    this.worktreeFolder.set(runtime.id, folderId);
     return runtime;
+  }
+
+  /** The folder (top-level workspace) a workspace belongs to: itself, or a worktree's folder. */
+  private folderIdOf(id: string): string {
+    return this.worktreeFolder.get(id) ?? id;
+  }
+
+  /** The shown workspace's folder: whose repository new worktrees come from, and whose skills and agents are offered. */
+  private activeFolder(): WorkspaceRuntime | undefined {
+    return this.workspace(this.folderIdOf(this.active));
+  }
+
+  /** Where a folder's agent choice is kept in a multi-root window. */
+  private harnessKey(root: string) {
+    return `yourstack.harness:${root}`;
   }
 
   private harnessList(): HarnessView[] {
@@ -219,7 +258,8 @@ export class Controller implements vscode.Disposable {
   private async pickHarness() {
     await this.refreshReadiness();
     const ws = this.workspace(this.active);
-    if (!ws || ws.running) return;
+    if (!ws) return void vscode.window.showWarningMessage(this.noWorkspaceReason() ?? "YourStack is still loading this window's folders.");
+    if (ws.running) return void vscode.window.showWarningMessage("Stop the agent before changing it.");
     const list = this.harnessList();
     const item = (h: HarnessView) => ({
       label: `${h.id === ws.harness ? "$(check) " : ""}${h.label}`,
@@ -401,7 +441,7 @@ export class Controller implements vscode.Disposable {
   }
 
   private async postSkills() {
-    const root = this.workspace(MAIN)?.root ?? "";
+    const root = this.activeFolder()?.root ?? "";
     this.panel.post({ type: "skills", items: await listSkills({ userDir: userCustomisationDir(), claudeDir: claudeConfigDir(), projectRoot: root, trusted: vscode.workspace.isTrusted && !!root }) });
   }
 
@@ -417,8 +457,11 @@ export class Controller implements vscode.Disposable {
 
   async agentLogins() {
     const overrides = readSettings().agentCommands as Record<string, unknown>;
-    const changed = await agentLogins(this.keyTargets(), (id) =>
-      cliReadiness(id, { find: (c) => resolveCommand(c), run: runQuiet, hasStoredKey: async (a) => !!(await this.agentCredentials.get(a)), hasLaunchOverride: (a) => overrides?.[a] !== undefined }),
+    const shown = this.workspace(this.active);
+    const changed = await agentLogins(
+      this.keyTargets(),
+      (id) => cliReadiness(id, { find: (c) => resolveCommand(c), run: runQuiet, hasStoredKey: async (a) => !!(await this.agentCredentials.get(a)), hasLaunchOverride: (a) => overrides?.[a] !== undefined }),
+      shown ? (id) => this.setHarness(shown.id, id) : undefined,
     );
     if (changed) this.inputsChanged({ kind: "keys", harnesses: changed });
   }
@@ -440,13 +483,20 @@ export class Controller implements vscode.Disposable {
   }
 
   private async refreshNamedAgents() {
-    const root = this.workspace(MAIN)?.root;
+    const root = this.activeFolder()?.root;
     const { agents } = await loadNamedAgents({ userDir: userCustomisationDir(), claudeDir: claudeConfigDir(), projectRoot: root ?? "", trusted: vscode.workspace.isTrusted && !!root });
     this.namedHarnesses = agents.map((a) => ({ id: NAMED_AGENT_PREFIX + a.name, label: `YourStack: ${a.name}` }));
   }
 
   private postWorkspaces(focus?: string) {
-    this.panel.post({ type: "workspaces", items: [...this.workspaces.values()].map((w) => w.view()), harnesses: this.harnessList(), focus });
+    const problem = this.workspaces.size ? undefined : this.noWorkspaceReason();
+    this.panel.post({ type: "workspaces", items: [...this.workspaces.values()].map((w) => w.view()), harnesses: this.harnessList(), focus, problem });
+  }
+
+  /** Why there is no workspace to work in (no folder, or only remote ones); undefined when folders are usable. */
+  private noWorkspaceReason(): string | undefined {
+    const scope = currentWorkspaceScope();
+    return scope.ok ? undefined : scope.reason;
   }
 
   private async showApproval(workspace: WorkspaceRuntime, id: string, request: GateRequest) {
@@ -532,10 +582,20 @@ export class Controller implements vscode.Disposable {
         return this.setApiKey();
       case "openSettings":
         return this.openSettings();
-      case "focus":
+      case "focus": {
+        const folderBefore = this.folderIdOf(this.active);
         if (this.workspace(m.workspace)) this.active = m.workspace;
         this.postActiveFile();
+        // Skills and named agents come from the shown folder.
+        if (this.folderIdOf(this.active) !== folderBefore) {
+          await this.refreshNamedAgents();
+          this.postWorkspaces();
+          void this.postSkills();
+        }
         return;
+      }
+      case "openFolder":
+        return void vscode.commands.executeCommand("workbench.action.files.openFolder");
       case "pickWorkspace":
         return this.pickWorkspace();
       case "openLink": {
@@ -557,18 +617,22 @@ export class Controller implements vscode.Disposable {
 
   private async setHarness(id: string, harness: string) {
     const ws = this.workspace(id);
-    if (!ws || !this.harnessList().some((h) => h.id === harness) || ws.running) return;
+    if (!ws || !this.harnessList().some((h) => h.id === harness)) return;
+    if (ws.running) return void vscode.window.showWarningMessage("Stop the agent before changing it.");
     ws.setHarness(harness);
     if (ws.info) await this.commands.rememberHarness(ws.info, harness);
-    // Main's choice lives in settings; the resulting change event finds Main already on this harness.
+    // In a multi-root window each folder keeps its own choice (yourstack.harness is only the default).
+    else if (this.multiRoot) await this.context.workspaceState.update(this.harnessKey(ws.root), harness);
+    // A single folder's choice lives in settings; the resulting change event finds it already on this harness.
     else await vscode.workspace.getConfiguration("yourstack").update("harness", harness, vscode.ConfigurationTarget.Workspace);
     this.postWorkspaces();
   }
 
   async newWorkspace() {
     const info = await this.commands.create();
-    if (!info) return;
-    this.postWorkspaces(this.addWorktree(info).id);
+    const folder = this.folderIdOf(this.active);
+    if (!info || !this.workspace(folder)) return;
+    this.postWorkspaces(this.addWorktree(info, folder).id);
   }
 
   private async review(id: string) {
@@ -587,10 +651,12 @@ export class Controller implements vscode.Disposable {
     const ws = this.workspace(id);
     if (!ws?.info) return;
     if (await this.commands.discard(ws.info, () => ws.dispose())) {
+      const folder = this.folderIdOf(id);
       this.workspaces.delete(id);
+      this.worktreeFolder.delete(id);
       // Its queued messages go with it (a later worktree at the same path starts empty).
       void this.host.sessions.saveQueue(ws.sessionKey, []).catch((err) => this.log.error("could not remove a discarded workspace's queue", err));
-      this.postWorkspaces(MAIN);
+      this.postWorkspaces(folder);
     }
   }
 
@@ -680,6 +746,7 @@ export class Controller implements vscode.Disposable {
   private async reloadWorkspaces() {
     for (const ws of this.workspaces.values()) ws.dispose();
     this.workspaces.clear();
+    this.worktreeFolder.clear();
     await this.loadWorkspaces();
     void this.postStatus();
   }

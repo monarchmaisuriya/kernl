@@ -72,7 +72,10 @@ const banner = el("div", "banner");
 const logs = el("div", "logs");
 const empty = el("div", "empty");
 const emptyText = el("p", "empty-text");
-empty.append(icon("sparkle", 40), el("h2", "empty-title", "Build with YourStack"), emptyText);
+// Shown instead of a transcript when the window has no folder YourStack can work in.
+const openFolder = el("button", "primary", "Open Folder");
+openFolder.addEventListener("click", () => send({ type: "openFolder" }));
+empty.append(icon("sparkle", 40), el("h2", "empty-title", "Build with YourStack"), emptyText, openFolder);
 logs.append(empty);
 
 const composer = el("div", "composer");
@@ -113,6 +116,8 @@ const panes = new Map<string, Pane>();
 const cards = new Map<string, HTMLElement>();
 let harnesses: HarnessView[] = [];
 let active = "main";
+/** Why there is no workspace (no folder open, or only remote ones), from the host. */
+let noWorkspace: string | undefined;
 let status: Status | undefined;
 
 const pane = (id: string) => panes.get(id);
@@ -128,8 +133,9 @@ function render() {
   const running = p?.view.running ?? false;
   const deepAgents = p?.view.harness === "deepagents";
   for (const [id, q] of panes) q.log.hidden = id !== active;
-  empty.hidden = !p || p.log.childElementCount > 0;
-  emptyText.textContent = p?.view.disclosure ?? "";
+  empty.hidden = p ? p.log.childElementCount > 0 : !noWorkspace;
+  emptyText.textContent = p ? p.view.disclosure : (noWorkspace ?? "");
+  openFolder.hidden = !!p || !noWorkspace;
 
   sendButton.replaceChildren(icon(running ? "stop" : "send"));
   sendButton.classList.toggle("stop", running);
@@ -308,6 +314,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       return;
     case "workspaces":
       harnesses = m.harnesses;
+      noWorkspace = m.problem;
       setWorkspaces(m.items, m.focus);
       return;
     case "snapshot":

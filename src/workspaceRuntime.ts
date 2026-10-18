@@ -113,6 +113,8 @@ export class WorkspaceRuntime {
     public harness: string,
     private host: RuntimeHost,
     readonly info?: WorkspaceInfo,
+    /** Whether a change to yourstack.harness switches this workspace's agent (a single folder's does; worktrees and multi-root folders keep their own). */
+    private followsHarnessSetting = info === undefined,
   ) {
     this.approvals = new PendingApprovals(
       (approvalId, request) => host.showApproval(this, approvalId, request),
@@ -249,7 +251,7 @@ export class WorkspaceRuntime {
   }
 
   get isMain() {
-    return this.info === undefined;
+    return this.followsHarnessSetting;
   }
 
   /**

@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { CLI_AGENT_IDS, CLI_AGENTS, type CliAgentId } from "./acp/agents";
 import { CREDENTIAL_ENV, DEEPSEEK_ANTHROPIC_URL } from "./acp/credentials";
 import type { Readiness } from "./harnesses";
-import { addCustomProvider, type KeyTargets } from "./keyCommands";
+import { addCustomProvider, type KeyTargets, keyStored, useProvider } from "./keyCommands";
 import { BUILT_IN_PROVIDERS, customProviders, type ProviderId, resolveProvider } from "./providers/registry";
 
 /**
@@ -40,18 +40,13 @@ async function providers(t: KeyTargets): Promise<ProviderEntry[]> {
 
 const keyStatus = (p: ProviderEntry) => (p.hasKey ? "key stored" : p.keyRequired ? "no key yet" : "no key needed");
 
-async function askKey(t: KeyTargets, p: ProviderEntry): Promise<boolean> {
+/** `offerUse`: after storing, offer to switch YourStack to this provider (when the flow doesn't do that itself). */
+async function askKey(t: KeyTargets, p: ProviderEntry, offerUse = false): Promise<boolean> {
   const key = await t.prompts.input({ title: `API key for ${p.label}`, password: true, ignoreFocusOut: true });
   if (!key) return false;
   await t.keys.store(p.id, key);
+  keyStored(p.label, offerUse ? p.id : undefined);
   return true;
-}
-
-/** Writes yourstack.provider and yourstack.model where yourstack.provider is already set (workspace, else user). */
-async function useProvider(provider: ProviderId, model: string) {
-  const target = config().inspect("provider")?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
-  await config().update("provider", provider, target);
-  await config().update("model", model.trim(), target);
 }
 
 /** Asks for a model id, suggesting the current one or the provider's default. */
@@ -105,7 +100,7 @@ export async function manageProviders(t: KeyTargets, test: (provider: ProviderId
   if (!action) return undefined;
   switch (action.action) {
     case "set":
-      return (await askKey(t, p)) ? ["deepagents"] : undefined;
+      return (await askKey(t, p, true)) ? ["deepagents"] : undefined;
     case "remove":
       await t.keys.remove(p.id);
       return ["deepagents"];
@@ -127,21 +122,26 @@ export async function manageProviders(t: KeyTargets, test: (provider: ProviderId
 
 const LOGIN_COMMAND: Record<CliAgentId, string> = { "claude-code": "claude", codex: "codex login", opencode: "opencode auth login" };
 
-/** "Agent logins": each CLI agent's status; log in in a terminal, or use a key stored in YourStack. */
-export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => Promise<Readiness>): Promise<string[] | undefined> {
+/**
+ * "Agent logins": each CLI agent's status. A ready agent can be used in the shown workspace right
+ * away (`use`, absent when there is no workspace); any agent can log in in a terminal or use a key
+ * stored in YourStack.
+ */
+export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => Promise<Readiness>, use?: (id: CliAgentId) => Promise<void>): Promise<string[] | undefined> {
   const rows = await Promise.all(
     CLI_AGENT_IDS.map(async (id) => {
       const r = await readiness(id);
       const stored = await t.agents.get(id);
       const status = stored ? (stored.baseUrl === DEEPSEEK_ANTHROPIC_URL ? "using DeepSeek" : "using a stored API key") : r.ready ? "ready" : "not ready";
-      return { label: CLI_AGENTS[id].label, description: status, detail: r.problem, id, stored: !!stored };
+      return { label: CLI_AGENTS[id].label, description: status, detail: r.problem, id, stored: !!stored, ready: r.ready };
     }),
   );
   const picked = await t.prompts.pick(rows, { title: "YourStack: agent logins" });
   if (!picked) return undefined;
-  type Action = "login" | "key" | "deepseek" | "remove";
+  type Action = "use" | "login" | "key" | "deepseek" | "remove";
   const actions: (vscode.QuickPickItem & { action: Action })[] = [
-    { label: "Log in in a terminal", description: LOGIN_COMMAND[picked.id], action: "login" },
+    ...(use && picked.ready ? [{ label: `Use ${picked.label} in this workspace`, description: "switch the agent now", action: "use" as const }] : []),
+    { label: "Log in in a terminal", description: picked.ready ? `already logged in; runs ${LOGIN_COMMAND[picked.id]}` : LOGIN_COMMAND[picked.id], action: "login" },
     ...(CREDENTIAL_ENV[picked.id] ? [{ label: "Use an API key instead...", description: CREDENTIAL_ENV[picked.id]!.apiKey, action: "key" as const }] : []),
     ...(picked.id === "claude-code" ? [{ label: "Use DeepSeek...", description: "Claude Code on a DeepSeek key", action: "deepseek" as const }] : []),
     ...(picked.stored ? [{ label: "Remove the stored key", description: "back to the agent's own login", action: "remove" as const }] : []),
@@ -149,6 +149,9 @@ export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => 
   const action = await t.prompts.pick(actions, { title: picked.label });
   if (!action) return undefined;
   switch (action.action) {
+    case "use":
+      await use!(picked.id);
+      return undefined;
     case "login": {
       const terminal = vscode.window.createTerminal({ name: `${picked.label} login` });
       terminal.show();
@@ -160,12 +163,14 @@ export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => 
       const key = await t.prompts.input({ title: `API key for ${picked.label}`, password: true, ignoreFocusOut: true });
       if (!key) return undefined;
       await t.agents.store(picked.id, { apiKey: key });
+      keyStored(picked.label);
       return [picked.id];
     }
     case "deepseek": {
       const key = await t.prompts.input({ title: "DeepSeek API key for Claude Code", prompt: `Claude Code will use ${DEEPSEEK_ANTHROPIC_URL}`, password: true, ignoreFocusOut: true });
       if (!key) return undefined;
       await t.agents.store("claude-code", { apiKey: key, baseUrl: DEEPSEEK_ANTHROPIC_URL });
+      keyStored("Claude Code (DeepSeek)");
       return ["claude-code"];
     }
     case "remove":

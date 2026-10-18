@@ -16,6 +16,24 @@ export interface KeyTargets {
 
 type Target = { provider: ProviderId } | { agent: CliAgentId };
 
+/** Writes yourstack.provider and yourstack.model where yourstack.provider is already set (workspace, else user). */
+export async function useProvider(provider: ProviderId, model: string) {
+  const target = settings().inspect("provider")?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+  await settings().update("provider", provider, target);
+  await settings().update("model", model.trim(), target);
+}
+
+/**
+ * Confirms a stored key. For a model provider YourStack doesn't use yet, it offers to switch to it
+ * (with that provider's default model): a stored key alone doesn't change which provider is used.
+ */
+export function keyStored(label: string, provider?: ProviderId) {
+  const offer = provider && provider !== settings().get<string>("provider") ? `Use ${label} for YourStack` : undefined;
+  void vscode.window.showInformationMessage(`Key stored for ${label}.`, ...(offer ? [offer] : [])).then(async (choice) => {
+    if (offer && choice === offer) await useProvider(provider!, "");
+  });
+}
+
 /** "YourStack: Set API key": pick a Deep Agents provider (built-in or custom) or a CLI agent, paste a key, store it. */
 export async function promptForApiKey(t: KeyTargets, currentProvider: string): Promise<string[] | undefined> {
   const custom = customProviders(settings().get("customProviders"));
@@ -39,9 +57,11 @@ export async function promptForApiKey(t: KeyTargets, currentProvider: string): P
   if (!key) return undefined;
   if ("provider" in target) {
     await t.keys.store(target.provider, key);
+    keyStored(name, target.provider);
     return ["deepagents"];
   }
   await t.agents.store(target.agent, { apiKey: key });
+  keyStored(name);
   return [target.agent];
 }
 
@@ -50,6 +70,7 @@ export async function useDeepSeekForClaudeCode(t: KeyTargets): Promise<string[] 
   const key = await t.prompts.input({ title: "DeepSeek API key for Claude Code", prompt: `Claude Code will use ${DEEPSEEK_ANTHROPIC_URL}`, password: true, ignoreFocusOut: true });
   if (!key) return undefined;
   await t.agents.store("claude-code", { apiKey: key, baseUrl: DEEPSEEK_ANTHROPIC_URL });
+  keyStored("Claude Code (DeepSeek)");
   return ["claude-code"];
 }
 

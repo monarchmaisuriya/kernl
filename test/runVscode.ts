@@ -24,13 +24,32 @@ writeFileSync(join(workspace, "README.md"), "test workspace\n");
 git("add", "-A");
 git("commit", "-q", "-m", "init");
 
+// YOURSTACK_WORKSPACE=multi: a multi-root window with two git repos (alpha and beta) instead of one folder.
+function multiRootWorkspace(): string {
+  const parent = mkdtempSync(join(tmpdir(), "yourstack-vscode-multi-"));
+  for (const name of ["alpha", "beta"]) {
+    const dir = join(parent, name);
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    const g = (...args: string[]) => execFileSync("git", args, { cwd: dir, stdio: "ignore" });
+    g("config", "user.email", "test@example.com");
+    g("config", "user.name", "YourStack Test");
+    writeFileSync(join(dir, "README.md"), `${name}\n`);
+    g("add", "-A");
+    g("commit", "-q", "-m", "init");
+  }
+  const file = join(parent, "Test.code-workspace");
+  writeFileSync(file, JSON.stringify({ folders: [{ path: "alpha" }, { path: "beta" }] }));
+  return file;
+}
+
 async function launch() {
+  const opened = process.env.YOURSTACK_WORKSPACE === "multi" ? multiRootWorkspace() : workspace;
   await runTests({
     vscodeExecutablePath: process.env.VSCODE_PATH ?? "/Applications/Visual Studio Code.app/Contents/MacOS/Code",
     extensionDevelopmentPath: resolve(__dirname, "../.."),
     extensionTestsPath: resolve(__dirname, process.env.YOURSTACK_SUITE ?? "suite.cjs"),
     // Empty extensions dir keeps built-ins (js-debug provides editor-browser) but no user extensions.
-    launchArgs: [workspace, "--extensions-dir", extensionsDir, "--user-data-dir", profile, "--disable-workspace-trust"],
+    launchArgs: [opened, "--extensions-dir", extensionsDir, "--user-data-dir", profile, "--disable-workspace-trust"],
   });
 }
 

@@ -39,7 +39,7 @@ export class WorkspaceCommands {
   /** Asks for a name and an agent, then creates the worktree. Returns undefined if cancelled or impossible. */
   async create(): Promise<WorkspaceInfo | undefined> {
     const root = this.host.mainRoot();
-    if (!root) return void vscode.window.showErrorMessage("Open a single folder to use workspaces.");
+    if (!root) return void vscode.window.showErrorMessage("Open a folder to use workspaces.");
     if (!vscode.workspace.isTrusted) return void vscode.window.showErrorMessage("Workspaces need a trusted folder. Trust this workspace first.");
     const repo = await repoRoot(root).catch(() => undefined);
     if (!repo) return void vscode.window.showErrorMessage("Workspaces need a git repository. Run git init and commit once first.");

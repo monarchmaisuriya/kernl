@@ -14,7 +14,7 @@ Then open the **YourStack** icon in the activity bar (or **Help > Welcome > Get 
 Pick an agent with the agent chip in the message box:
 
 - **YourStack:** its own agent, with your model keys. **Manage providers** in the panel's `...` menu stores a key and tests it; the model chip picks the provider and model.
-- **Claude Code, Codex, OpenCode:** your installed CLIs. **Agent logins** in the `...` menu shows whether each is ready and logs it in. For Ollama or another OpenAI-compatible server,
+- **Claude Code, Codex, OpenCode:** your installed CLIs. **Agent logins** in the `...` menu shows whether each is ready; a ready agent can be used in the shown workspace right away, and any agent can log in in a terminal or use a stored key. For Ollama or another OpenAI-compatible server,
 use provider `openai-compatible` and `yourstack.baseUrl` (e.g. `http://localhost:11434/v1`).
 
 ### The panel
@@ -192,6 +192,16 @@ storing or clearing it restarts only workspaces running that agent. OpenCode kee
   In this mode your personal `~/.claude` settings (user MCP servers, hooks, permissions, personal CLAUDE.md) don't load.
   `npm run test:live` checks against a localhost server that only the stored key is sent.
 - **Codex keys are unverified:** Codex with its own login was checked against adapter 2.2.2 (Read-only confirmed, a reply received); a stored `CODEX_API_KEY` wasn't tested, and Codex may prefer its own login over it.
+
+## Folders and multi-root windows
+
+A window with one folder has one workspace, "Main". In a multi-root window (a `.code-workspace` with several folders), each local folder is its own workspace in the footer's workspace chip, named after the folder:
+- the panel starts on the folder of the file you're editing;
+- each folder remembers its own agent (`yourstack.harness` is only the default);
+- skills and project agents come from the folder you're looking at;
+- new worktree workspaces come from that folder's repository (shown as `folder/name`).
+
+With no folder open (or only remote folders), the panel says so and offers **Open Folder**.
 
 ## Workspaces (Conductor-style)
 
