@@ -4,7 +4,7 @@
 - Status: done (live Claude Code login scenarios pending M's own run)
 - Repos: yourstack   Folders: src/providers, src/acp, src/ui, test   Files: listed per part
 - Subagents: none
-- Research: `docs/2026-10-18-1122_deepseek-custom-keys-live-tests_research.md` (A + B recommended)
+- Research: `docs/research/2026-10-18-1122_deepseek-custom-keys-live-tests_research.md` (A + B recommended)
 
 ## Context and problem
 

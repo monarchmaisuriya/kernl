@@ -7,7 +7,7 @@
   - New: `src/gate/rules.ts`, `src/agent/instructions.ts`, `src/agent/namedAgents.ts`, `test/unit/rules.test.ts`, `test/unit/instructions.test.ts`, `test/unit/namedAgents.test.ts`
   - Changed: `package.json`, `src/gate/approvalGate.ts`, `src/agent/createAgent.ts`, `src/workspaceRuntime.ts`, `src/controller.ts`, `src/providers/registry.ts`, `src/agent/rebuildPolicy.ts`, `README.md`, `test/vscode/suite.ts`
 - Subagents: none
-- Research: `docs/2026-10-18-1830_customisation-advanced-settings_research.md`
+- Research: `docs/research/2026-10-18-1830_customisation-advanced-settings_research.md`
 
 ## Context and problem
 

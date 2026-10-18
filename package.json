@@ -11,6 +11,10 @@
   "publisher": "local",
   "private": true,
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pushowl/kernl"
+  },
   "engines": {
     "vscode": "^1.140.0"
   },
@@ -421,7 +425,7 @@
     "test:vscode": "node scripts/build.mjs --tests && node out/test/runVscode.cjs && KERNL_WORKSPACE=multi KERNL_SUITE=multiRootSuite.cjs node out/test/runVscode.cjs",
     "test:live": "node scripts/build.mjs --tests && KERNL_SUITE=liveSuite.cjs node out/test/runVscode.cjs",
     "check:upgrade": "node scripts/build.mjs --tests && node scripts/run-unit.mjs && node out/test/backendMethods.cjs",
-    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository --skip-license -o kernl.vsix",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --skip-license -o kernl.vsix",
     "smoke": "node scripts/build.mjs --tests && node out/test/smoke.cjs",
     "probe:agents": "node scripts/build.mjs --tests && node out/test/probeAgents.cjs"
   },

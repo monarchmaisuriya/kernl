@@ -4,7 +4,7 @@
 - Status: done (M accepted all 5 defaults)
 - Repos: yourstack   Folders: src/webview, src/ui, src/agent, src/acp, src/workspaces, media, package.json, test
 - Subagents: none
-- Research: `docs/2026-10-18-2100_harness-picker-attachments-checkpoints_research.md`
+- Research: `docs/research/2026-10-18-2100_harness-picker-attachments-checkpoints_research.md`
 
 ## Context and problem
 

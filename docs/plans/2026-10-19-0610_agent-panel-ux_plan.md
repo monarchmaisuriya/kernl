@@ -6,7 +6,7 @@
 - Files:
   - Changed: `src/acp/acpRunner.ts`, `src/agent/session.ts`, `src/agent/runner.ts`, `src/providers/registry.ts`, `src/workspaceRuntime.ts`, `src/ui/protocol.ts`, `src/webview/main.ts`, `src/webview/toolRow.ts`, `media/panel.css`, `package.json`, tests, `README.md`
   - New: `src/webview/thinking.ts`, `src/webview/planBar.ts`, `src/webview/contextRing.ts`
-- Research: `docs/2026-10-19-0600_agent-panel-ux_research.md`
+- Research: `docs/research/2026-10-19-0600_agent-panel-ux_research.md`
 - Subagents: none
 
 ## Context and problem
