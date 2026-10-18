@@ -67,7 +67,7 @@ const opencodeMode = (mode: string, config: string, disclosure: string): AgentMo
 
 function npxLaunch(pkg: string, extraEnv: Record<string, string>): Launch | { error: string } {
   const npx = resolveCommand("npx");
-  if (!npx) return { error: "npx was not found. Install Node.js (it provides npx), or set a command in yourstack.agentCommands." };
+  if (!npx) return { error: "npx was not found. Install Node.js (it provides npx), or set a command in kernl.agentCommands." };
   // The adapter runs under the same Node that provides npx, even when VS Code's PATH lacks it.
   return { command: npx, args: ["-y", pkg], env: { PATH: `${dirname(npx)}:${process.env.PATH ?? ""}`, ...extraEnv } };
 }
@@ -86,7 +86,7 @@ export const CLI_AGENTS: Record<CliAgentId, CliAgentSpec> = {
     },
     launch() {
       const claude = resolveCommand("claude");
-      if (!claude) return { error: "Claude Code (claude) was not found. Install it and sign in, or set a command in yourstack.agentCommands." };
+      if (!claude) return { error: "Claude Code (claude) was not found. Install it and sign in, or set a command in kernl.agentCommands." };
       return npxLaunch(CLAUDE_ADAPTER, { CLAUDE_CODE_EXECUTABLE: claude });
     },
   },
@@ -117,7 +117,7 @@ export const CLI_AGENTS: Record<CliAgentId, CliAgentSpec> = {
     },
     launch() {
       const opencode = resolveCommand("opencode");
-      if (!opencode) return { error: "OpenCode (opencode) was not found. Install it, or set a command in yourstack.agentCommands." };
+      if (!opencode) return { error: "OpenCode (opencode) was not found. Install it, or set a command in kernl.agentCommands." };
       return { command: opencode, args: ["acp"], env: {} };
     },
   },
@@ -128,7 +128,7 @@ export function isCliAgentId(value: unknown): value is CliAgentId {
 }
 
 /**
- * The launch for an agent: the user's override from yourstack.agentCommands, else the default.
+ * The launch for an agent: the user's override from kernl.agentCommands, else the default.
  * `credentialEnv` (a stored API key) is layered on top of either; nothing overrides the
  * permission mode's environment (OpenCode's ask-forcing config).
  */
@@ -139,7 +139,7 @@ export function resolveLaunch(id: CliAgentId, overrides: unknown, credentialEnv:
   let base: Launch | { error: string };
   if (override === undefined) base = spec.launch();
   else if (typeof override?.command !== "string" || (override.args !== undefined && !Array.isArray(override.args))) {
-    return { error: `Expected yourstack.agentCommands.${id} to be { "command": string, "args"?: string[] }, got ${JSON.stringify(override)}` };
+    return { error: `Expected kernl.agentCommands.${id} to be { "command": string, "args"?: string[] }, got ${JSON.stringify(override)}` };
   } else base = { command: override.command, args: override.args ?? [], env: override.env ?? {} };
   if ("error" in base) return base;
   return { ...base, env: { ...base.env, ...credentialEnv, ...forced } };

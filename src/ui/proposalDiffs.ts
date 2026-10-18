@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-const SCHEME = "yourstack-proposal";
+const SCHEME = "kernl-proposal";
 
 /** Serves the before/after text of pending edits so they can be opened in VS Code's diff editor. */
 export class ProposalDiffs implements vscode.TextDocumentContentProvider, vscode.Disposable {
@@ -17,7 +17,7 @@ export class ProposalDiffs implements vscode.TextDocumentContentProvider, vscode
     const right = vscode.Uri.from({ scheme: SCHEME, path: `/${id}/proposed/${name}` });
     this.texts.set(left.toString(), before ?? "");
     this.texts.set(right.toString(), after);
-    await vscode.commands.executeCommand("vscode.diff", left, right, `${path}: current ↔ proposed (approve in YourStack)`, { preview: true, preserveFocus: true });
+    await vscode.commands.executeCommand("vscode.diff", left, right, `${path}: current ↔ proposed (approve in kernl)`, { preview: true, preserveFocus: true });
   }
 
   /** Base text (virtual) against a real file, e.g. a workspace file under review. */

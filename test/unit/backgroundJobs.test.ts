@@ -16,7 +16,7 @@ const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function jobs() {
   const shown: string[] = [];
   const display = (): JobDisplay => ({ write: (t) => shown.push(t), exited: (c) => shown.push(`[exit ${c}]`), dispose() {} });
-  return { jobs: new BackgroundJobs(mkdtempSync(join(tmpdir(), "yourstack-jobs-")), display), shown };
+  return { jobs: new BackgroundJobs(mkdtempSync(join(tmpdir(), "kernl-jobs-")), display), shown };
 }
 
 test("a job runs in the background, keeps its output for checking, and shows it in its terminal", async () => {

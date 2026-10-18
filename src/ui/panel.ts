@@ -4,7 +4,7 @@ import type { Redactor } from "../log";
 import { PanelChannel } from "./panelChannel";
 import { type HostToPanel, isPanelToHost, type PanelToHost } from "./protocol";
 
-export const PANEL_VIEW_ID = "yourstack.panel";
+export const PANEL_VIEW_ID = "kernl.panel";
 
 /**
  * The chat panel. Every outgoing message is scrubbed of API keys; incoming messages are
@@ -61,7 +61,7 @@ function panelHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
 <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy(webview.cspSource, nonce)}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${style}">
-<title>YourStack</title>
+<title>kernl</title>
 </head>
 <body>
 <div id="app"></div>

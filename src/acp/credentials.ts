@@ -11,7 +11,7 @@ export interface AgentCredential {
 
 /**
  * The environment variables each key-capable agent reads. OpenCode keeps providers in its own config.
- * `configDir` points the agent at a folder YourStack owns: a logged-in Claude Code sends its login
+ * `configDir` points the agent at a folder kernl owns: a logged-in Claude Code sends its login
  * credential instead of ANTHROPIC_API_KEY (seen with Claude Code 2.1.299), so with a stored key it
  * must not see the user's login at all.
  */
@@ -23,8 +23,8 @@ export const CREDENTIAL_ENV: Partial<Record<CliAgentId, { apiKey: string; baseUr
 /** DeepSeek's Anthropic-compatible endpoint, for running Claude Code on a DeepSeek key. */
 export const DEEPSEEK_ANTHROPIC_URL = "https://api.deepseek.com/anthropic";
 
-const keyName = (id: CliAgentId) => `yourstack.agentKey.${id}`;
-const baseUrlName = (id: CliAgentId) => `yourstack.agentBaseUrl.${id}`;
+const keyName = (id: CliAgentId) => `kernl.agentKey.${id}`;
+const baseUrlName = (id: CliAgentId) => `kernl.agentBaseUrl.${id}`;
 
 /**
  * The launch environment for a stored credential; empty without one, so the agent keeps its own login.
@@ -53,7 +53,7 @@ export class AgentCredentials {
 
   /** Stores the key and endpoint together; no baseUrl means the agent's default endpoint. */
   async store(id: CliAgentId, credential: AgentCredential): Promise<void> {
-    if (!CREDENTIAL_ENV[id]) throw new Error(`${id} does not take an API key from YourStack; configure it in its own settings.`);
+    if (!CREDENTIAL_ENV[id]) throw new Error(`${id} does not take an API key from kernl; configure it in its own settings.`);
     const apiKey = credential.apiKey.trim();
     if (!apiKey) throw new Error(`Expected a non-empty API key for ${id}`);
     const baseUrl = credential.baseUrl?.trim();

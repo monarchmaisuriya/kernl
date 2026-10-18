@@ -52,8 +52,8 @@ export function attachmentNote(attachments: readonly Attachment[]): string {
 export interface HarnessView {
   id: string;
   label: string;
-  /** "yourstack": our own harness and its named agents; "agents": Claude Code, Codex, OpenCode. */
-  group: "yourstack" | "agents";
+  /** "kernl": our own harness and its named agents; "agents": Claude Code, Codex, OpenCode. */
+  group: "kernl" | "agents";
   /** False only when the harness definitely can't start (not installed, logged out, no key). */
   ready: boolean;
   /** Why it isn't ready, with the fix. */
@@ -64,7 +64,7 @@ export interface WorkspaceView {
   id: string;
   label: string;
   harness: string;
-  /** yourstack/<name> for worktree workspaces; absent for the main folder. */
+  /** kernl/<name> for worktree workspaces; absent for the main folder. */
   branch?: string;
   running: boolean;
   /** Approval cards waiting in this workspace. */
@@ -112,7 +112,7 @@ export type HostToPanel =
   | { type: "addAttachments"; items: Attachment[] }
   /** Answer to searchFiles: workspace paths matching the "@" query. */
   | { type: "fileMatches"; query: string; items: Attachment[] }
-  /** Skills for "/" in the composer (YourStack agent only). */
+  /** Skills for "/" in the composer (kernl agent only). */
   | { type: "skills"; items: SkillView[] }
   /** Text a delegated subagent writes, shown in its task row. */
   | { type: "subagentText"; workspace: string; id: string; delta: string }

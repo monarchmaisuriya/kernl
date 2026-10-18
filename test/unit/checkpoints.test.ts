@@ -10,7 +10,7 @@ import { test } from "node:test";
 import { Checkpoints } from "../../src/checkpoints";
 
 function repo() {
-  const root = mkdtempSync(join(tmpdir(), "yourstack-ckpt-"));
+  const root = mkdtempSync(join(tmpdir(), "kernl-ckpt-"));
   const git = (...a: string[]) => execFileSync("git", a, { cwd: root, encoding: "utf8" });
   git("init", "-q", "-b", "main");
   git("config", "user.email", "t@example.com");
@@ -20,7 +20,7 @@ function repo() {
   writeFileSync(join(root, "b.txt"), "original b\n");
   git("add", "-A");
   git("commit", "-q", "-m", "init");
-  return { root, git, store: new Checkpoints(mkdtempSync(join(tmpdir(), "yourstack-ckpt-store-"))) };
+  return { root, git, store: new Checkpoints(mkdtempSync(join(tmpdir(), "kernl-ckpt-store-"))) };
 }
 
 test("restore puts changed files back, deletes files created since, and re-creates deleted ones", async () => {
@@ -74,7 +74,7 @@ test("snapshots on one workspace run one at a time (no git lock clashes)", async
 });
 
 test("a folder holding git repositories (like ~/Develop): files inside each nested repository are snapshotted, listed, and restored", async () => {
-  const root = mkdtempSync(join(tmpdir(), "yourstack-ckpt-folder-"));
+  const root = mkdtempSync(join(tmpdir(), "kernl-ckpt-folder-"));
   writeFileSync(join(root, "notes.txt"), "top\n");
   const nestedRepo = (name: string) => {
     const dir = join(root, name);
@@ -90,7 +90,7 @@ test("a folder holding git repositories (like ~/Develop): files inside each nest
   };
   const api = nestedRepo("api");
   nestedRepo("web");
-  const store = new Checkpoints(mkdtempSync(join(tmpdir(), "yourstack-ckpt-store-")));
+  const store = new Checkpoints(mkdtempSync(join(tmpdir(), "kernl-ckpt-store-")));
   const before = await store.snapshot(root, "before message");
   writeFileSync(join(api.dir, "app.ts"), "agent changed\n");
   writeFileSync(join(api.dir, "new.ts"), "agent created\n");

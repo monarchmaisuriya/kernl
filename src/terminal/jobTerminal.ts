@@ -7,7 +7,7 @@ export function jobTerminal(job: JobView, onClose: () => void): JobDisplay & { t
   const pending: string[] = [];
   let open = false;
   const terminal = vscode.window.createTerminal({
-    name: `YourStack job: ${job.name}`,
+    name: `kernl job: ${job.name}`,
     pty: {
       onDidWrite: write.event,
       // Output that arrives before the terminal opens is held, not lost.

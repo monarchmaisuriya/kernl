@@ -6,7 +6,7 @@ import { parse as parseYaml } from "yaml";
  * Instructions Deep Agents gets on top of its built-in prompt:
  * - the user's own `<userDir>/AGENTS.md`, always (it's theirs, so also in Restricted Mode);
  * - (the project's `/AGENTS.md` is loaded as Deep Agents memory by buildAgent, trusted workspaces only);
- * - project rules `.yourstack/rules/*.md`, in trusted workspaces only. A rule with
+ * - project rules `.kernl/rules/*.md`, in trusted workspaces only. A rule with
  *   `alwaysApply: true` is put in the prompt; any other rule is listed with its description and
  *   globs, and the agent reads the file when it is relevant (reading doesn't ask).
  * Files only add knowledge: nothing here can change what is allowed (that is the gate's rules).
@@ -24,7 +24,7 @@ export interface Instructions {
   problems: string[];
 }
 
-export const RULES_DIR = ".yourstack/rules";
+export const RULES_DIR = ".kernl/rules";
 
 interface Rule {
   file: string;
@@ -71,7 +71,7 @@ export async function assembleInstructions(src: InstructionSources): Promise<Ins
   const sections: string[] = [];
   const problems: string[] = [];
   const user = (await readIfPresent(join(src.userDir, "AGENTS.md")))?.trim();
-  if (user) sections.push(`## The user's own instructions (~/.yourstack/AGENTS.md)\n\n${user}`);
+  if (user) sections.push(`## The user's own instructions (~/.kernl/AGENTS.md)\n\n${user}`);
   if (!src.trusted) return { prompt: sections.join("\n\n"), problems };
 
   let names: string[] = [];

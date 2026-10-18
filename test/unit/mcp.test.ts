@@ -10,7 +10,7 @@ import { loadMcpTools, toMcpConnections } from "../../src/mcp/servers";
 const serverScript = resolve(__dirname, "mcpShoutServer.mjs");
 
 async function withShoutTool(approve: boolean, fn: (shout: any, callLog: string, asked: unknown[]) => Promise<void>) {
-  const callLog = join(mkdtempSync(join(tmpdir(), "yourstack-mcp-")), "calls.txt");
+  const callLog = join(mkdtempSync(join(tmpdir(), "kernl-mcp-")), "calls.txt");
   const asked: unknown[] = [];
   const gate = new ApprovalGate({ ask: async (_id, r) => (asked.push(r), approve) }, { rules: () => [] });
   const { tools, close } = await loadMcpTools({ shout: { command: process.execPath, args: [serverScript], env: { SHOUT_CALL_LOG: callLog } } }, gate);
@@ -41,7 +41,7 @@ test("an approved MCP tool call runs on the server and returns its result", asyn
 });
 
 test("a malformed server setting names the server", () => {
-  assert.throws(() => toMcpConnections({ broken: { cmd: "x" } }), /yourstack.mcpServers.broken to have a "command" or a "url"/);
-  assert.throws(() => toMcpConnections([]), /Expected yourstack.mcpServers to be an object/);
+  assert.throws(() => toMcpConnections({ broken: { cmd: "x" } }), /kernl.mcpServers.broken to have a "command" or a "url"/);
+  assert.throws(() => toMcpConnections([]), /Expected kernl.mcpServers to be an object/);
   assert.deepEqual(toMcpConnections({}), {});
 });

@@ -55,13 +55,13 @@ export function parseRules(lists: RuleLists, legacyAllowList: unknown = []): { r
   for (const verdict of ["deny", "ask", "allow"] as const) {
     const list = lists[verdict] ?? [];
     if (!Array.isArray(list)) {
-      problems.push(`Expected yourstack.approvals.${verdict} to be a list of rules, got ${JSON.stringify(list)}`);
+      problems.push(`Expected kernl.approvals.${verdict} to be a list of rules, got ${JSON.stringify(list)}`);
       continue;
     }
     for (const entry of list) {
       const m = typeof entry === "string" ? RULE.exec(entry.trim()) : null;
       if (!m || !m[2].trim()) {
-        problems.push(`Expected a rule like run(npm test *) or edit(src/**) in yourstack.approvals.${verdict}, got ${JSON.stringify(entry)}`);
+        problems.push(`Expected a rule like run(npm test *) or edit(src/**) in kernl.approvals.${verdict}, got ${JSON.stringify(entry)}`);
         continue;
       }
       const kind = m[1] as RuleKind;
@@ -73,7 +73,7 @@ export function parseRules(lists: RuleLists, legacyAllowList: unknown = []): { r
   for (const command of Array.isArray(legacyAllowList) ? legacyAllowList : []) {
     if (typeof command !== "string" || !command.trim()) continue;
     const exact = command.trim();
-    rules.push({ verdict: "allow", kind: "run", text: `run(${exact}) from yourstack.commandAllowList`, matches: (s) => s === exact });
+    rules.push({ verdict: "allow", kind: "run", text: `run(${exact}) from kernl.commandAllowList`, matches: (s) => s === exact });
   }
   return { rules, problems };
 }

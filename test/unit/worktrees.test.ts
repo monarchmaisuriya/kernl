@@ -7,8 +7,8 @@ import { git, isNotARepository } from "../../src/workspaces/git";
 import { baseContent, changedFiles, rememberHarness, repoRoot, createWorkspace, discardWorkspace, listWorkspaces, mergeWorkspace, sanitizeName } from "../../src/workspaces/worktrees";
 
 async function repo() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "yourstack-repo-")));
-  const storage = realpathSync(mkdtempSync(join(tmpdir(), "yourstack-storage-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "kernl-repo-")));
+  const storage = realpathSync(mkdtempSync(join(tmpdir(), "kernl-storage-")));
   await git(root, ["init", "-q", "-b", "main"]);
   await git(root, ["config", "user.email", "test@example.com"]);
   await git(root, ["config", "user.name", "Test"]);
@@ -23,10 +23,10 @@ test("workspace names are sanitized and must contain letters or digits", () => {
   assert.throws(() => sanitizeName("!!!"), /letters or digits/);
 });
 
-test("create puts a worktree on yourstack/<name> outside the repo, remembers base and harness, and lists it", async () => {
+test("create puts a worktree on kernl/<name> outside the repo, remembers base and harness, and lists it", async () => {
   const { root, storage } = await repo();
   const ws = await createWorkspace(root, storage, "Feature A", "claude-code");
-  assert.equal(ws.branch, "yourstack/feature-a");
+  assert.equal(ws.branch, "kernl/feature-a");
   assert.equal(ws.base, "main");
   assert.ok(ws.path.startsWith(storage + sep), ws.path);
   assert.ok(!ws.path.startsWith(root + sep));
@@ -84,7 +84,7 @@ test("discard removes the worktree, branch, and settings", async () => {
   const ws = await createWorkspace(root, storage, "a", "opencode");
   await discardWorkspace(root, ws);
   assert.equal(existsSync(ws.path), false);
-  assert.equal((await git(root, ["branch", "--list", "yourstack/a"])).trim(), "");
+  assert.equal((await git(root, ["branch", "--list", "kernl/a"])).trim(), "");
   assert.deepEqual(await listWorkspaces(root, storage), []);
 });
 
@@ -104,7 +104,7 @@ test("review compares against where the workspace branched, even after the base 
 });
 
 test("only 'not a git repository' counts as no repository; other git failures are real errors", async () => {
-  const plain = realpathSync(mkdtempSync(join(tmpdir(), "yourstack-plain-")));
+  const plain = realpathSync(mkdtempSync(join(tmpdir(), "kernl-plain-")));
   const notRepo = await repoRoot(plain).catch((e) => e);
   assert.equal(isNotARepository(notRepo), true, String(notRepo));
   const missingDir = await repoRoot(join(plain, "does-not-exist")).catch((e) => e);

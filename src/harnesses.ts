@@ -19,9 +19,9 @@ export interface ReadinessDeps {
   find(command: string): string | undefined;
   /** Runs a command; resolves with its output (stdout and stderr), or undefined when it fails or times out. */
   run(command: string, args: string[]): Promise<string | undefined>;
-  /** A key stored for the agent in YourStack (then its own login doesn't matter). */
+  /** A key stored for the agent in kernl (then its own login doesn't matter). */
   hasStoredKey(id: CliAgentId): Promise<boolean>;
-  /** The user overrode how the agent launches (yourstack.agentCommands): their command, their setup. */
+  /** The user overrode how the agent launches (kernl.agentCommands): their command, their setup. */
   hasLaunchOverride(id: CliAgentId): boolean;
 }
 

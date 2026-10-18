@@ -6,7 +6,7 @@ import type { Attachment, HostToPanel } from "./ui/protocol";
 /**
  * Conversations per workspace, kept across window reloads (VS Code's workspace storage).
  * A session holds what the panel showed (so it can be shown again) and what the agent needs to
- * continue: for the YourStack agent its message history, for a CLI agent its session id.
+ * continue: for the kernl agent its message history, for a CLI agent its session id.
  * Everything stored here already went through the redactor (it is what the panel received).
  */
 export type TranscriptEvent = Extract<HostToPanel, { workspace: string }>;
@@ -18,7 +18,7 @@ export interface SessionRecord {
   createdAt: number;
   updatedAt: number;
   events: TranscriptEvent[];
-  /** YourStack agent: LangChain messages (StoredMessage[]); CLI agent: { sessionId }. */
+  /** kernl agent: LangChain messages (StoredMessage[]); CLI agent: { sessionId }. */
   history?: unknown;
   /** Set on a conversation forked from another; its title says so. */
   forkOf?: string;
@@ -116,7 +116,7 @@ export class SessionStore {
 }
 
 /**
- * The YourStack agent's stored history up to (not including) the user's `turn`-th message
+ * The kernl agent's stored history up to (not including) the user's `turn`-th message
  * (0-based), so a cut-back conversation continues from there. Other harnesses' history (a CLI
  * session id) can't be cut and is dropped: the agent starts a new session.
  */

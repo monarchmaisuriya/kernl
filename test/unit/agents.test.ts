@@ -19,7 +19,7 @@ test("an override replaces the command but never drops OpenCode's ask configurat
 
 test("a malformed override is explained", () => {
   const out = resolveLaunch("claude-code", { "claude-code": { cmd: "x" } });
-  assert.match((out as any).error, /yourstack.agentCommands.claude-code to be \{ "command": string/);
+  assert.match((out as any).error, /kernl.agentCommands.claude-code to be \{ "command": string/);
 });
 
 const installed = Boolean(resolveCommand("claude") && resolveCommand("opencode") && resolveCommand("npx"));
@@ -54,15 +54,15 @@ test("agent credentials live in their own secrets, are redacted once read, and C
   const redactor = new Redactor();
   const store = new AgentCredentials(secrets, redactor);
   await store.store("claude-code", { apiKey: " sk-agent-secret-2 ", baseUrl: DEEPSEEK_ANTHROPIC_URL });
-  assert.deepEqual([...map.keys()].sort(), ["yourstack.agentBaseUrl.claude-code", "yourstack.agentKey.claude-code"]);
+  assert.deepEqual([...map.keys()].sort(), ["kernl.agentBaseUrl.claude-code", "kernl.agentKey.claude-code"]);
   assert.equal(redactor.scrub("x sk-agent-secret-2 y"), "x [redacted] y");
   await store.store("claude-code", { apiKey: "sk-agent-secret-3" });
   assert.deepEqual(await store.get("claude-code"), { apiKey: "sk-agent-secret-3" }, "a plain key drops the old endpoint");
   await assert.rejects(store.store("opencode", { apiKey: "k-123456789" }), /opencode does not take an API key/);
   await assert.rejects(store.store("claude-code", { apiKey: "k-123456789", baseUrl: "api.deepseek.com" }), /http\(s\) base URL/);
-  map.set("yourstack.apiKey.anthropic", "provider-key-kept");
+  map.set("kernl.apiKey.anthropic", "provider-key-kept");
   await store.clearAll();
-  assert.deepEqual([...map.keys()], ["yourstack.apiKey.anthropic"]);
+  assert.deepEqual([...map.keys()], ["kernl.apiKey.anthropic"]);
   assert.equal(await store.get("claude-code"), undefined);
 });
 

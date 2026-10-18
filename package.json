@@ -1,6 +1,6 @@
 {
-  "name": "yourstack",
-  "displayName": "YourStack",
+  "name": "kernl",
+  "displayName": "kernl",
   "description": "Coding agents in VS Code: Deep Agents with your own model key, or Claude Code, Codex, and OpenCode, in parallel worktree workspaces. Every edit, command, and browser action waits for your approval.",
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -19,16 +19,16 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In Restricted Mode the agent can only read files: no edits, commands, browser, or MCP tools. The project's AGENTS.md, .yourstack rules, and .yourstack agents are not loaded, and settings that run programs, skip approvals, or choose endpoints come only from your user settings.",
+      "description": "In Restricted Mode the agent can only read files: no edits, commands, browser, or MCP tools. The project's AGENTS.md, .kernl rules, and .kernl agents are not loaded, and settings that run programs, skip approvals, or choose endpoints come only from your user settings.",
       "restrictedConfigurations": [
-        "yourstack.customProviders",
-        "yourstack.baseUrl",
-        "yourstack.commandAllowList",
-        "yourstack.mcpServers",
-        "yourstack.agentCommands",
-        "yourstack.approvals.allow",
-        "yourstack.approvals.ask",
-        "yourstack.approvals.deny"
+        "kernl.customProviders",
+        "kernl.baseUrl",
+        "kernl.commandAllowList",
+        "kernl.mcpServers",
+        "kernl.agentCommands",
+        "kernl.approvals.allow",
+        "kernl.approvals.ask",
+        "kernl.approvals.deny"
       ]
     }
   },
@@ -36,16 +36,16 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "yourstack",
-          "title": "YourStack",
+          "id": "kernl",
+          "title": "kernl",
           "icon": "media/activity.svg"
         }
       ]
     },
     "views": {
-      "yourstack": [
+      "kernl": [
         {
-          "id": "yourstack.panel",
+          "id": "kernl.panel",
           "name": "Agent",
           "type": "webview"
         }
@@ -53,81 +53,81 @@
     },
     "commands": [
       {
-        "command": "yourstack.setApiKey",
+        "command": "kernl.setApiKey",
         "title": "Set API key",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.addCustomProvider",
+        "command": "kernl.addCustomProvider",
         "title": "Add custom provider",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.useDeepSeekForClaudeCode",
+        "command": "kernl.useDeepSeekForClaudeCode",
         "title": "Use DeepSeek for Claude Code",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.clearKeys",
+        "command": "kernl.clearKeys",
         "title": "Clear stored keys",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.newChat",
+        "command": "kernl.newChat",
         "title": "New chat",
         "icon": "$(add)",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.newWorkspace",
+        "command": "kernl.newWorkspace",
         "title": "New workspace (git worktree)",
         "icon": "$(git-branch)",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.openSettings",
+        "command": "kernl.openSettings",
         "title": "Open settings",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.pickHarness",
+        "command": "kernl.pickHarness",
         "title": "Choose agent",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.manageProviders",
+        "command": "kernl.manageProviders",
         "title": "Manage providers",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.agentLogins",
+        "command": "kernl.agentLogins",
         "title": "Agent logins",
-        "category": "YourStack"
+        "category": "kernl"
       },
       {
-        "command": "yourstack.attachToChat",
-        "title": "Add to YourStack chat",
-        "category": "YourStack"
+        "command": "kernl.attachToChat",
+        "title": "Add to kernl chat",
+        "category": "kernl"
       },
       {
-        "command": "yourstack.sessions",
+        "command": "kernl.sessions",
         "title": "Conversations",
-        "category": "YourStack",
+        "category": "kernl",
         "icon": "$(history)"
       },
       {
-        "command": "yourstack.clearHistory",
+        "command": "kernl.clearHistory",
         "title": "Delete conversations and checkpoints",
-        "category": "YourStack"
+        "category": "kernl"
       }
     ],
     "configuration": [
       {
-        "id": "yourstack.agent",
-        "title": "YourStack agent",
+        "id": "kernl.agent",
+        "title": "kernl agent",
         "order": 1,
         "properties": {
-          "yourstack.provider": {
+          "kernl.provider": {
             "type": "string",
             "default": "anthropic",
             "examples": [
@@ -138,15 +138,15 @@
               "openai-compatible"
             ],
             "order": 1,
-            "markdownDescription": "Model provider for the YourStack agent: `anthropic`, `openai`, `google`, `deepseek`, `openai-compatible`, or `custom:<id>` for an entry in `#yourstack.customProviders#`. Easiest: the model chip in the panel, or **YourStack: Manage providers**."
+            "markdownDescription": "Model provider for the kernl agent: `anthropic`, `openai`, `google`, `deepseek`, `openai-compatible`, or `custom:<id>` for an entry in `#kernl.customProviders#`. Easiest: the model chip in the panel, or **kernl: Manage providers**."
           },
-          "yourstack.model": {
+          "kernl.model": {
             "type": "string",
             "default": "",
             "order": 2,
             "markdownDescription": "Model id, e.g. `claude-sonnet-5-5`, `gpt-5.6`, `gemini-3.1-pro`, `deepseek-flash`, or a local model name. Empty uses `deepseek-flash` for `deepseek` and the entry's model for a custom provider."
           },
-          "yourstack.modelOptions": {
+          "kernl.modelOptions": {
             "type": "object",
             "default": {},
             "order": 3,
@@ -175,7 +175,7 @@
             },
             "markdownDescription": "Optional model parameters for Deep Agents:\n\n- `temperature`: 0 to 2 (0 to 1 for anthropic)\n- `maxOutputTokens`: the longest reply\n- `reasoningEffort`: `low`, `medium`, or `high`. OpenAI-style providers get reasoning effort, anthropic gets extended thinking (2048 / 8192 / 24576 tokens; not with `temperature`), google gets a thinking level. Not supported for deepseek.\n\nA value a provider can't take is named in the panel instead of being dropped."
           },
-          "yourstack.customProviders": {
+          "kernl.customProviders": {
             "type": "array",
             "default": [],
             "items": {
@@ -204,36 +204,36 @@
             },
             "order": 4,
             "scope": "application",
-            "markdownDescription": "OpenAI-compatible services, each selectable as `yourstack.provider` `custom:<id>`. Keys are stored with **YourStack: Set API key**, never here.\n\nUser settings only: a workspace can't point your keys at another server."
+            "markdownDescription": "OpenAI-compatible services, each selectable as `kernl.provider` `custom:<id>`. Keys are stored with **kernl: Set API key**, never here.\n\nUser settings only: a workspace can't point your keys at another server."
           },
-          "yourstack.baseUrl": {
+          "kernl.baseUrl": {
             "type": "string",
             "default": "",
             "order": 5,
             "scope": "application",
             "markdownDescription": "Base URL for the `openai-compatible` provider, e.g. `http://localhost:11434/v1` for Ollama.\n\nUser settings only."
           },
-          "yourstack.mcpServers": {
+          "kernl.mcpServers": {
             "type": "object",
             "default": {},
             "order": 6,
             "scope": "machine",
             "markdownDescription": "MCP servers: `{ name: { command, args?, env? } | { url } }`. Every MCP tool call asks first.\n\nUser settings only: a workspace can't start programs through this setting."
           },
-          "yourstack.sequentialThinking": {
+          "kernl.sequentialThinking": {
             "type": "boolean",
             "default": true,
             "order": 7,
-            "markdownDescription": "Give the YourStack agent a built-in sequential-thinking tool for complex tasks: numbered thoughts it can revise or branch, shown in the conversation. (Built in, adapted from the Model Context Protocol reference server; no MCP server runs.)"
+            "markdownDescription": "Give the kernl agent a built-in sequential-thinking tool for complex tasks: numbered thoughts it can revise or branch, shown in the conversation. (Built in, adapted from the Model Context Protocol reference server; no MCP server runs.)"
           }
         }
       },
       {
-        "id": "yourstack.approvals",
+        "id": "kernl.approvals",
         "title": "Approvals",
         "order": 2,
         "properties": {
-          "yourstack.approvals.allow": {
+          "kernl.approvals.allow": {
             "type": "array",
             "items": {
               "type": "string"
@@ -243,7 +243,7 @@
             "scope": "application",
             "markdownDescription": "Actions that run **without a card**. An allow never matches a command with shell operators (`;`, `&&`, `|`, `>`, `$(`...), so `npm test && rm x` still asks.\n\nRules: `run(command *)`, `edit(glob)` (edits and new files), `delete(glob)`, `read(glob)` (only sensitive files like `.env` ask to be read), `tool(name *)` for browser and MCP tools. Globs are relative to the workspace: `**` spans folders, `*` stays in one. A trailing ` *` in `run(...)` also matches the bare command.\n\nDeny beats ask beats allow; no match asks. Applies to Deep Agents; CLI agents use their own settings. User settings only."
           },
-          "yourstack.approvals.ask": {
+          "kernl.approvals.ask": {
             "type": "array",
             "items": {
               "type": "string"
@@ -253,7 +253,7 @@
             "scope": "application",
             "markdownDescription": "Actions that always ask, even when an allow rule also matches. Example: `edit(src/migrations/**)`.\n\nRules: `run(command *)`, `edit(glob)` (edits and new files), `delete(glob)`, `read(glob)` (only sensitive files like `.env` ask to be read), `tool(name *)` for browser and MCP tools. Globs are relative to the workspace: `**` spans folders, `*` stays in one. A trailing ` *` in `run(...)` also matches the bare command.\n\nDeny beats ask beats allow; no match asks. Applies to Deep Agents; CLI agents use their own settings. User settings only."
           },
-          "yourstack.approvals.deny": {
+          "kernl.approvals.deny": {
             "type": "array",
             "items": {
               "type": "string"
@@ -263,7 +263,7 @@
             "scope": "application",
             "markdownDescription": "Actions refused **without a card**; the transcript names the rule. Deny matches the command as written, so it isn't a security boundary: `rm` behind another command or script still reaches a card, never runs on its own.\n\nRules: `run(command *)`, `edit(glob)` (edits and new files), `delete(glob)`, `read(glob)` (only sensitive files like `.env` ask to be read), `tool(name *)` for browser and MCP tools. Globs are relative to the workspace: `**` spans folders, `*` stays in one. A trailing ` *` in `run(...)` also matches the bare command.\n\nDeny beats ask beats allow; no match asks. Applies to Deep Agents; CLI agents use their own settings. User settings only."
           },
-          "yourstack.commandAllowList": {
+          "kernl.commandAllowList": {
             "type": "array",
             "items": {
               "type": "string"
@@ -275,23 +275,23 @@
             "tags": [
               "advanced"
             ],
-            "markdownDeprecationMessage": "Use `#yourstack.approvals.allow#` with `run(...)` rules. Entries here still work as exact matches."
+            "markdownDeprecationMessage": "Use `#kernl.approvals.allow#` with `run(...)` rules. Entries here still work as exact matches."
           }
         }
       },
       {
-        "id": "yourstack.agents",
+        "id": "kernl.agents",
         "title": "Claude Code, Codex, OpenCode",
         "order": 3,
         "properties": {
-          "yourstack.harness": {
+          "kernl.harness": {
             "type": "string",
             "default": "deepagents",
             "order": 1,
-            "markdownDescription": "Agent for the main workspace (the panel's agent picker sets this). Worktree workspaces pick their own.\n\n- `deepagents`: the YourStack agent with your own model keys\n- `deepagents:<name>`: a named agent from `.yourstack/agents/` or `.claude/agents/` (project or your home folder)\n- `claude-code`: Claude Code (your installed CLI and login), Manual mode\n- `codex`: Codex (experimental), Read-only mode\n- `opencode`: OpenCode (your installed CLI); every edit, command, and fetch asks",
+            "markdownDescription": "Agent for the main workspace (the panel's agent picker sets this). Worktree workspaces pick their own.\n\n- `deepagents`: the kernl agent with your own model keys\n- `deepagents:<name>`: a named agent from `.kernl/agents/` or `.claude/agents/` (project or your home folder)\n- `claude-code`: Claude Code (your installed CLI and login), Manual mode\n- `codex`: Codex (experimental), Read-only mode\n- `opencode`: OpenCode (your installed CLI); every edit, command, and fetch asks",
             "pattern": "^(deepagents(:[a-z0-9-]+)?|claude-code|codex|opencode)$"
           },
-          "yourstack.agentCommands": {
+          "kernl.agentCommands": {
             "type": "object",
             "default": {},
             "order": 2,
@@ -307,102 +307,102 @@
     "menus": {
       "view/title": [
         {
-          "command": "yourstack.newChat",
-          "when": "view == yourstack.panel",
+          "command": "kernl.newChat",
+          "when": "view == kernl.panel",
           "group": "navigation@1"
         },
         {
-          "command": "yourstack.newWorkspace",
-          "when": "view == yourstack.panel",
+          "command": "kernl.newWorkspace",
+          "when": "view == kernl.panel",
           "group": "navigation@2"
         },
         {
-          "command": "yourstack.sessions",
-          "when": "view == yourstack.panel",
+          "command": "kernl.sessions",
+          "when": "view == kernl.panel",
           "group": "navigation@3"
         },
         {
-          "command": "yourstack.pickHarness",
-          "when": "view == yourstack.panel",
+          "command": "kernl.pickHarness",
+          "when": "view == kernl.panel",
           "group": "1_agent@1"
         },
         {
-          "command": "yourstack.manageProviders",
-          "when": "view == yourstack.panel",
+          "command": "kernl.manageProviders",
+          "when": "view == kernl.panel",
           "group": "1_agent@2"
         },
         {
-          "command": "yourstack.agentLogins",
-          "when": "view == yourstack.panel",
+          "command": "kernl.agentLogins",
+          "when": "view == kernl.panel",
           "group": "1_agent@3"
         },
         {
-          "command": "yourstack.clearKeys",
-          "when": "view == yourstack.panel",
+          "command": "kernl.clearKeys",
+          "when": "view == kernl.panel",
           "group": "2_keys@1"
         },
         {
-          "command": "yourstack.openSettings",
-          "when": "view == yourstack.panel",
+          "command": "kernl.openSettings",
+          "when": "view == kernl.panel",
           "group": "3_settings@1"
         },
         {
-          "command": "yourstack.clearHistory",
-          "when": "view == yourstack.panel",
+          "command": "kernl.clearHistory",
+          "when": "view == kernl.panel",
           "group": "2_keys@2"
         }
       ],
       "explorer/context": [
         {
-          "command": "yourstack.attachToChat",
-          "group": "yourstack@1"
+          "command": "kernl.attachToChat",
+          "group": "kernl@1"
         }
       ],
       "commandPalette": [
         {
-          "command": "yourstack.attachToChat",
+          "command": "kernl.attachToChat",
           "when": "false"
         }
       ]
     },
     "walkthroughs": [
       {
-        "id": "yourstack.start",
-        "title": "Get started with YourStack",
+        "id": "kernl.start",
+        "title": "Get started with kernl",
         "description": "Pick an agent, connect it, and start building.",
         "steps": [
           {
             "id": "pickAgent",
             "title": "Pick an agent",
-            "description": "Use YourStack's own agent with your model keys, or Claude Code, Codex, or OpenCode.\n[Choose agent](command:yourstack.pickHarness)",
+            "description": "Use kernl's own agent with your model keys, or Claude Code, Codex, or OpenCode.\n[Choose agent](command:kernl.pickHarness)",
             "media": {
               "markdown": "media/walkthrough/agents.md"
             },
             "completionEvents": [
-              "onCommand:yourstack.pickHarness"
+              "onCommand:kernl.pickHarness"
             ]
           },
           {
             "id": "connect",
             "title": "Connect it",
-            "description": "Add a provider key for the YourStack agent, or log in to a CLI agent.\n[Manage providers](command:yourstack.manageProviders)\n[Agent logins](command:yourstack.agentLogins)",
+            "description": "Add a provider key for the kernl agent, or log in to a CLI agent.\n[Manage providers](command:kernl.manageProviders)\n[Agent logins](command:kernl.agentLogins)",
             "media": {
               "markdown": "media/walkthrough/connect.md"
             },
             "completionEvents": [
-              "onCommand:yourstack.manageProviders",
-              "onCommand:yourstack.agentLogins"
+              "onCommand:kernl.manageProviders",
+              "onCommand:kernl.agentLogins"
             ]
           },
           {
             "id": "chat",
             "title": "Start a conversation",
-            "description": "Open the panel and describe what to build.\n[Open YourStack](command:yourstack.panel.focus)",
+            "description": "Open the panel and describe what to build.\n[Open kernl](command:kernl.panel.focus)",
             "media": {
               "markdown": "media/walkthrough/chat.md"
             },
             "completionEvents": [
-              "onView:yourstack.panel"
+              "onView:kernl.panel"
             ]
           }
         ]
@@ -412,10 +412,10 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test:unit": "node scripts/build.mjs --tests && node scripts/run-unit.mjs",
-    "test:vscode": "node scripts/build.mjs --tests && node out/test/runVscode.cjs && YOURSTACK_WORKSPACE=multi YOURSTACK_SUITE=multiRootSuite.cjs node out/test/runVscode.cjs",
-    "test:live": "node scripts/build.mjs --tests && YOURSTACK_SUITE=liveSuite.cjs node out/test/runVscode.cjs",
+    "test:vscode": "node scripts/build.mjs --tests && node out/test/runVscode.cjs && KERNL_WORKSPACE=multi KERNL_SUITE=multiRootSuite.cjs node out/test/runVscode.cjs",
+    "test:live": "node scripts/build.mjs --tests && KERNL_SUITE=liveSuite.cjs node out/test/runVscode.cjs",
     "check:upgrade": "node scripts/build.mjs --tests && node scripts/run-unit.mjs && node out/test/backendMethods.cjs",
-    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository --skip-license -o yourstack.vsix",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository --skip-license -o kernl.vsix",
     "smoke": "node scripts/build.mjs --tests && node out/test/smoke.cjs",
     "probe:agents": "node scripts/build.mjs --tests && node out/test/probeAgents.cjs"
   },

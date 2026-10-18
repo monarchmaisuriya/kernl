@@ -1,5 +1,5 @@
 // Stored conversations: saved per workspace, listed newest first, empty ones not kept; a stored
-// YourStack conversation continues with its history; cutting history stops before a given turn.
+// kernl conversation continues with its history; cutting history stops before a given turn.
 import { strict as assert } from "node:assert";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +13,7 @@ import { workspace } from "../support/harness";
 import { ScriptedChatModel } from "../support/scriptedModel";
 
 test("sessions are saved per workspace with a title from the first message, newest first; empty ones aren't kept", async () => {
-  const store = new SessionStore(mkdtempSync(join(tmpdir(), "yourstack-sessions-")));
+  const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-")));
   const empty = store.create("deepagents");
   await store.save("ws1", empty);
   assert.deepEqual(await store.list("ws1"), []);
@@ -43,7 +43,7 @@ async function runAgent(script: AIMessage[], history?: unknown) {
   return { session, seen: () => seen };
 }
 
-test("a stored YourStack conversation continues: the next message sees the earlier turns", async () => {
+test("a stored kernl conversation continues: the next message sees the earlier turns", async () => {
   const first = await runAgent([new AIMessage("answer one MARK-A")]);
   await first.session.send("question one MARK-Q");
   const history = await first.session.exportHistory();
@@ -61,7 +61,7 @@ test("cutting history stops right before the chosen user turn", () => {
 });
 
 test("a stored conversation becomes readable text to attach elsewhere", () => {
-  const s = new SessionStore(mkdtempSync(join(tmpdir(), "yourstack-sessions-"))).create("deepagents");
+  const s = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))).create("deepagents");
   s.title = "Fix login";
   s.events.push(
     { type: "userMessage", workspace: "main", text: "Why does login loop?", attachments: [{ path: "src/session.ts", kind: "file" }] },
@@ -74,7 +74,7 @@ test("a stored conversation becomes readable text to attach elsewhere", () => {
 });
 
 test("queued messages are kept per workspace with their attachments, don't show up as conversations, and an empty queue removes them", async () => {
-  const store = new SessionStore(mkdtempSync(join(tmpdir(), "yourstack-queue-")));
+  const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-queue-")));
   assert.deepEqual(await store.loadQueue("ws1"), []);
   const items = [{ id: "q1", text: "then run the tests", attachments: [{ path: "src/a.ts", kind: "file" as const }] }];
   await store.saveQueue("ws1", items);

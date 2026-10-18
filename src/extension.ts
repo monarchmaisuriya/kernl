@@ -5,19 +5,19 @@ export function activate(context: vscode.ExtensionContext) {
   const controller = new Controller(context);
   context.subscriptions.push(
     controller,
-    vscode.commands.registerCommand("yourstack.setApiKey", () => controller.setApiKey()),
-    vscode.commands.registerCommand("yourstack.addCustomProvider", () => controller.addCustomProvider()),
-    vscode.commands.registerCommand("yourstack.useDeepSeekForClaudeCode", () => controller.useDeepSeekForClaudeCode()),
-    vscode.commands.registerCommand("yourstack.clearKeys", () => controller.clearKeys()),
-    vscode.commands.registerCommand("yourstack.newChat", () => controller.newChat()),
-    vscode.commands.registerCommand("yourstack.newWorkspace", () => controller.newWorkspace()),
-    vscode.commands.registerCommand("yourstack.openSettings", () => controller.openSettings()),
-    vscode.commands.registerCommand("yourstack.manageProviders", () => controller.manageProviders()),
-    vscode.commands.registerCommand("yourstack.agentLogins", () => controller.agentLogins()),
-    vscode.commands.registerCommand("yourstack.pickHarness", () => controller.pickHarnessCommand()),
-    vscode.commands.registerCommand("yourstack.sessions", () => controller.showSessions()),
-    vscode.commands.registerCommand("yourstack.clearHistory", () => controller.clearHistory()),
-    vscode.commands.registerCommand("yourstack.attachToChat", (uri?: vscode.Uri, uris?: vscode.Uri[]) =>
+    vscode.commands.registerCommand("kernl.setApiKey", () => controller.setApiKey()),
+    vscode.commands.registerCommand("kernl.addCustomProvider", () => controller.addCustomProvider()),
+    vscode.commands.registerCommand("kernl.useDeepSeekForClaudeCode", () => controller.useDeepSeekForClaudeCode()),
+    vscode.commands.registerCommand("kernl.clearKeys", () => controller.clearKeys()),
+    vscode.commands.registerCommand("kernl.newChat", () => controller.newChat()),
+    vscode.commands.registerCommand("kernl.newWorkspace", () => controller.newWorkspace()),
+    vscode.commands.registerCommand("kernl.openSettings", () => controller.openSettings()),
+    vscode.commands.registerCommand("kernl.manageProviders", () => controller.manageProviders()),
+    vscode.commands.registerCommand("kernl.agentLogins", () => controller.agentLogins()),
+    vscode.commands.registerCommand("kernl.pickHarness", () => controller.pickHarnessCommand()),
+    vscode.commands.registerCommand("kernl.sessions", () => controller.showSessions()),
+    vscode.commands.registerCommand("kernl.clearHistory", () => controller.clearHistory()),
+    vscode.commands.registerCommand("kernl.attachToChat", (uri?: vscode.Uri, uris?: vscode.Uri[]) =>
       controller.attachUris((uris?.length ? uris : uri ? [uri] : []).map((u) => u.toString())),
     ),
   );

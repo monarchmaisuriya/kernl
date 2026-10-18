@@ -6,14 +6,14 @@ import { ChatOpenAI } from "@langchain/openai";
 
 export const BUILT_IN_PROVIDERS = ["anthropic", "openai", "google", "deepseek", "openai-compatible"] as const;
 type BuiltInProvider = (typeof BUILT_IN_PROVIDERS)[number];
-/** A built-in provider, or `custom:<id>` for an entry in yourstack.customProviders. */
+/** A built-in provider, or `custom:<id>` for an entry in kernl.customProviders. */
 export type ProviderId = BuiltInProvider | `custom:${string}`;
 
-/** Used when yourstack.model is empty. */
-// Only ids verified to exist; other providers need yourstack.model.
+/** Used when kernl.model is empty. */
+// Only ids verified to exist; other providers need kernl.model.
 const DEFAULT_MODELS: Partial<Record<BuiltInProvider, string>> = { anthropic: "claude-sonnet-5-5", deepseek: "deepseek-flash" };
 
-/** An OpenAI-compatible service the user named in yourstack.customProviders. Its key lives in SecretStorage. */
+/** An OpenAI-compatible service the user named in kernl.customProviders. Its key lives in SecretStorage. */
 export interface CustomProvider {
   id: string;
   label: string;
@@ -26,9 +26,9 @@ export interface ProviderSettings {
   model: string;
   /** Required for openai-compatible (e.g. http://localhost:11434/v1 for Ollama); ignored otherwise. */
   baseUrl: string;
-  /** Raw yourstack.customProviders; validated by customProviders(). */
+  /** Raw kernl.customProviders; validated by customProviders(). */
   customProviders?: unknown;
-  /** Raw yourstack.modelOptions; validated by modelOptions(). */
+  /** Raw kernl.modelOptions; validated by modelOptions(). */
   modelOptions?: unknown;
 }
 
@@ -42,30 +42,30 @@ const EFFORTS = ["low", "medium", "high"] as const;
 /** Anthropic thinking budgets per effort; the API needs at least 1024 and less than max_tokens. */
 const THINKING_BUDGET = { low: 2048, medium: 8192, high: 24576 } as const;
 
-/** Parses yourstack.modelOptions for a provider, naming the field and the reason when it can't be used. */
+/** Parses kernl.modelOptions for a provider, naming the field and the reason when it can't be used. */
 export function modelOptions(raw: unknown, provider: ProviderId): ModelOptions | { error: string } {
   if (raw === undefined || raw === null) return {};
-  if (typeof raw !== "object" || Array.isArray(raw)) return { error: `Expected yourstack.modelOptions to be an object, got ${JSON.stringify(raw)}.` };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { error: `Expected kernl.modelOptions to be an object, got ${JSON.stringify(raw)}.` };
   const o = raw as Record<string, unknown>;
   for (const key of Object.keys(o)) {
-    if (!["temperature", "maxOutputTokens", "reasoningEffort"].includes(key)) return { error: `yourstack.modelOptions has an unknown field '${key}'; expected temperature, maxOutputTokens, or reasoningEffort.` };
+    if (!["temperature", "maxOutputTokens", "reasoningEffort"].includes(key)) return { error: `kernl.modelOptions has an unknown field '${key}'; expected temperature, maxOutputTokens, or reasoningEffort.` };
   }
   const maxTemperature = provider === "anthropic" ? 1 : 2;
   if (o.temperature !== undefined && (typeof o.temperature !== "number" || o.temperature < 0 || o.temperature > maxTemperature)) {
-    return { error: `Expected yourstack.modelOptions.temperature to be a number from 0 to ${maxTemperature} for ${provider}, got ${JSON.stringify(o.temperature)}.` };
+    return { error: `Expected kernl.modelOptions.temperature to be a number from 0 to ${maxTemperature} for ${provider}, got ${JSON.stringify(o.temperature)}.` };
   }
   if (o.maxOutputTokens !== undefined && (!Number.isInteger(o.maxOutputTokens) || (o.maxOutputTokens as number) < 1)) {
-    return { error: `Expected yourstack.modelOptions.maxOutputTokens to be a whole number above 0, got ${JSON.stringify(o.maxOutputTokens)}.` };
+    return { error: `Expected kernl.modelOptions.maxOutputTokens to be a whole number above 0, got ${JSON.stringify(o.maxOutputTokens)}.` };
   }
   const effort = o.reasoningEffort;
   if (effort !== undefined) {
-    if (!(EFFORTS as readonly unknown[]).includes(effort)) return { error: `Expected yourstack.modelOptions.reasoningEffort to be low, medium, or high, got ${JSON.stringify(effort)}.` };
-    if (provider === "deepseek") return { error: "yourstack.modelOptions.reasoningEffort isn't supported for deepseek (its thinking mode is on by default); remove it." };
+    if (!(EFFORTS as readonly unknown[]).includes(effort)) return { error: `Expected kernl.modelOptions.reasoningEffort to be low, medium, or high, got ${JSON.stringify(effort)}.` };
+    if (provider === "deepseek") return { error: "kernl.modelOptions.reasoningEffort isn't supported for deepseek (its thinking mode is on by default); remove it." };
     if (provider === "anthropic") {
-      if (o.temperature !== undefined) return { error: "For anthropic, yourstack.modelOptions can't set both reasoningEffort and temperature (extended thinking requires the default temperature)." };
+      if (o.temperature !== undefined) return { error: "For anthropic, kernl.modelOptions can't set both reasoningEffort and temperature (extended thinking requires the default temperature)." };
       const budget = THINKING_BUDGET[effort as keyof typeof THINKING_BUDGET];
       if (o.maxOutputTokens !== undefined && (o.maxOutputTokens as number) <= budget) {
-        return { error: `For anthropic, reasoningEffort ${effort} thinks with ${budget} tokens, so yourstack.modelOptions.maxOutputTokens must be above ${budget}.` };
+        return { error: `For anthropic, reasoningEffort ${effort} thinks with ${budget} tokens, so kernl.modelOptions.maxOutputTokens must be above ${budget}.` };
       }
     }
   }
@@ -81,14 +81,14 @@ export function isProviderId(value: unknown): value is ProviderId {
   return value.startsWith("custom:") && CUSTOM_ID.test(value.slice("custom:".length));
 }
 
-/** Parses yourstack.customProviders, naming the first bad entry and field. */
+/** Parses kernl.customProviders, naming the first bad entry and field. */
 export function customProviders(raw: unknown): CustomProvider[] | { error: string } {
   if (raw === undefined) return [];
-  if (!Array.isArray(raw)) return { error: `Expected yourstack.customProviders to be a list, got ${JSON.stringify(raw)}.` };
+  if (!Array.isArray(raw)) return { error: `Expected kernl.customProviders to be a list, got ${JSON.stringify(raw)}.` };
   const seen = new Set<string>();
   const out: CustomProvider[] = [];
   for (const [i, e] of raw.entries()) {
-    const where = `yourstack.customProviders[${i}]`;
+    const where = `kernl.customProviders[${i}]`;
     if (typeof e?.id !== "string" || !CUSTOM_ID.test(e.id)) return { error: `Expected ${where}.id to be lowercase letters, digits, or dashes, got ${JSON.stringify(e?.id)}.` };
     if (seen.has(e.id)) return { error: `Expected ${where}.id to be unique, got a second '${e.id}'.` };
     if (!isHttpUrl(e.baseUrl)) return { error: `Expected ${where}.baseUrl to be an http(s) URL, got ${JSON.stringify(e.baseUrl)}.` };
@@ -113,18 +113,18 @@ export function resolveProvider(s: ProviderSettings): ResolvedProvider | { error
   if ("error" in custom) return custom;
   if (s.provider.startsWith("custom:")) {
     const entry = custom.find((c) => `custom:${c.id}` === s.provider);
-    if (!entry) return { error: `yourstack.provider is '${s.provider}', but yourstack.customProviders has no entry with id '${s.provider.slice("custom:".length)}'.` };
+    if (!entry) return { error: `kernl.provider is '${s.provider}', but kernl.customProviders has no entry with id '${s.provider.slice("custom:".length)}'.` };
     return { provider: `custom:${entry.id}`, model: s.model.trim() || entry.model, baseUrl: entry.baseUrl, keyRequired: true };
   }
   if (!isProviderId(s.provider)) {
     const choices = [...BUILT_IN_PROVIDERS, ...custom.map((c) => `custom:${c.id}`)];
-    return { error: `Expected yourstack.provider to be one of ${choices.join(", ")}, got '${s.provider}'.` };
+    return { error: `Expected kernl.provider to be one of ${choices.join(", ")}, got '${s.provider}'.` };
   }
   const provider = s.provider as BuiltInProvider;
   const model = s.model.trim() || DEFAULT_MODELS[provider] || "";
-  if (!model) return { error: `Choose a model for ${provider}: use the model chip, or set yourstack.model.` };
+  if (!model) return { error: `Choose a model for ${provider}: use the model chip, or set kernl.model.` };
   if (provider === "openai-compatible" && !isHttpUrl(s.baseUrl)) {
-    return { error: `Expected yourstack.baseUrl to be an http(s) URL for the openai-compatible provider, got '${s.baseUrl}'.` };
+    return { error: `Expected kernl.baseUrl to be an http(s) URL for the openai-compatible provider, got '${s.baseUrl}'.` };
   }
   return { provider, model, baseUrl: s.baseUrl, keyRequired: provider !== "openai-compatible" };
 }

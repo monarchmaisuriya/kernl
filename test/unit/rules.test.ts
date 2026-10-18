@@ -60,7 +60,7 @@ test("malformed rules are skipped and named; skipping never lets anything run", 
   const { rules, problems } = parseRules({ allow: ["npm test", "run()", 42, "shell(ls)"], deny: "run(rm *)" as any });
   assert.equal(rules.length, 0);
   assert.equal(problems.length, 5);
-  assert.match(problems[0], /yourstack.approvals.deny to be a list/);
+  assert.match(problems[0], /kernl.approvals.deny to be a list/);
   assert.match(problems[1], /got "npm test"/);
 });
 

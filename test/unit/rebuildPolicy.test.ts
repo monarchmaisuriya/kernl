@@ -4,25 +4,25 @@ import { type InputChange, needsRebuild } from "../../src/agent/rebuildPolicy";
 
 const settings = (keys: string[], mainHarness = "deepagents"): InputChange => ({
   kind: "settings",
-  affects: (section) => keys.some((k) => k === section || k.startsWith(`${section}.`) || section === "yourstack"),
+  affects: (section) => keys.some((k) => k === section || k.startsWith(`${section}.`) || section === "kernl"),
   mainHarness,
 });
 const main = (harness: string) => ({ harness, isMain: true });
 const worktree = (harness: string) => ({ harness, isMain: false });
 
 test("switching Main's agent rebuilds only Main, never the worktree workspaces", () => {
-  const change = settings(["yourstack.harness"], "opencode");
+  const change = settings(["kernl.harness"], "opencode");
   assert.equal(needsRebuild(main("deepagents"), change), true);
   assert.equal(needsRebuild(worktree("deepagents"), change), false);
   assert.equal(needsRebuild(worktree("claude-code"), change), false);
 });
 
 test("Main's harness setting that already matches (set from the panel) is not a rebuild", () => {
-  assert.equal(needsRebuild(main("opencode"), settings(["yourstack.harness"], "opencode")), false);
+  assert.equal(needsRebuild(main("opencode"), settings(["kernl.harness"], "opencode")), false);
 });
 
 test("model settings and API keys affect Deep Agents workspaces only", () => {
-  for (const key of ["yourstack.provider", "yourstack.model", "yourstack.baseUrl", "yourstack.customProviders", "yourstack.modelOptions", "yourstack.mcpServers"]) {
+  for (const key of ["kernl.provider", "kernl.model", "kernl.baseUrl", "kernl.customProviders", "kernl.modelOptions", "kernl.mcpServers"]) {
     assert.equal(needsRebuild(worktree("deepagents"), settings([key])), true, key);
     assert.equal(needsRebuild(worktree("claude-code"), settings([key])), false, key);
   }
@@ -38,9 +38,9 @@ test("an agent's stored credential rebuilds only workspaces running that agent",
 });
 
 test("agent launch overrides affect CLI workspaces only; the allow-list affects nobody", () => {
-  assert.equal(needsRebuild(worktree("claude-code"), settings(["yourstack.agentCommands"])), true);
-  assert.equal(needsRebuild(worktree("deepagents"), settings(["yourstack.agentCommands"])), false);
-  for (const ws of [main("deepagents"), worktree("codex")]) assert.equal(needsRebuild(ws, settings(["yourstack.commandAllowList"])), false);
+  assert.equal(needsRebuild(worktree("claude-code"), settings(["kernl.agentCommands"])), true);
+  assert.equal(needsRebuild(worktree("deepagents"), settings(["kernl.agentCommands"])), false);
+  for (const ws of [main("deepagents"), worktree("codex")]) assert.equal(needsRebuild(ws, settings(["kernl.commandAllowList"])), false);
 });
 
 test("becoming trusted rebuilds everyone (Restricted Mode agents were read-only)", () => {

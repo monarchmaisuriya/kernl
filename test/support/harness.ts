@@ -16,7 +16,7 @@ export function toolCall(name: string, args: Record<string, unknown>, id = `c${M
 
 /** A temp workspace with app.txt and .env, a gate that answers `approve`, and a recording command runner. */
 export function workspace(approve: boolean | ((r: GateRequest) => boolean), allowList: string[] = []) {
-  const root = mkdtempSync(join(tmpdir(), "yourstack-test-"));
+  const root = mkdtempSync(join(tmpdir(), "kernl-test-"));
   writeFileSync(join(root, "app.txt"), "hello world\n");
   writeFileSync(join(root, ".env"), "SECRET_TOKEN=abc123\n");
   const asked: GateRequest[] = [];

@@ -16,7 +16,7 @@ async function probe(id: CliAgentId): Promise<boolean> {
     console.log(`SKIP  ${spec.label}: ${launch.error}`);
     return true;
   }
-  const cwd = mkdtempSync(join(tmpdir(), `yourstack-probe-${id}-`));
+  const cwd = mkdtempSync(join(tmpdir(), `kernl-probe-${id}-`));
   let asked = 0;
   let outcome = "";
   const gate = new ApprovalGate({ ask: async () => (asked++, false) }, { rules: () => [] });

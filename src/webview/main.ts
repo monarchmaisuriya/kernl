@@ -73,10 +73,10 @@ const banner = el("div", "banner");
 const logs = el("div", "logs");
 const empty = el("div", "empty");
 const emptyText = el("p", "empty-text");
-// Shown instead of a transcript when the window has no folder YourStack can work in.
+// Shown instead of a transcript when the window has no folder kernl can work in.
 const openFolder = el("button", "primary", "Open Folder");
 openFolder.addEventListener("click", () => send({ type: "openFolder" }));
-empty.append(icon("sparkle", 40), el("h2", "empty-title", "Build with YourStack"), emptyText, openFolder);
+empty.append(icon("sparkle", 40), el("h2", "empty-title", "Build with kernl"), emptyText, openFolder);
 logs.append(empty);
 
 const composer = el("div", "composer");
@@ -84,7 +84,7 @@ const input = el("textarea", "input");
 input.placeholder = "Describe what to build";
 input.rows = 2;
 input.setAttribute("aria-label", "Message");
-// Opens the host's agent menu (YourStack and its agents first, then Claude Code, Codex, OpenCode).
+// Opens the host's agent menu (kernl and its agents first, then Claude Code, Codex, OpenCode).
 const agentChip = el("button", "chip harness");
 const modelChip = el("button", "chip model");
 const sendButton = iconButton("send", "Send", icon("send"));

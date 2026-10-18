@@ -13,8 +13,8 @@ export type WorkspaceScope =
 /** The agent works on the window's local folders, one agent per folder. Trust decides whether it may change anything. */
 export function currentWorkspaceScope(): WorkspaceScope {
   const folders = vscode.workspace.workspaceFolders ?? [];
-  if (folders.length === 0) return { ok: false, reason: "Open a folder to use YourStack." };
+  if (folders.length === 0) return { ok: false, reason: "Open a folder to use kernl." };
   const local = folders.filter((f) => f.uri.scheme === "file");
-  if (!local.length) return { ok: false, reason: `YourStack needs a local folder; this window's folders are '${folders[0].uri.scheme}' folders.` };
+  if (!local.length) return { ok: false, reason: `kernl needs a local folder; this window's folders are '${folders[0].uri.scheme}' folders.` };
   return { ok: true, folders: local.map((f) => ({ root: f.uri.fsPath, name: f.name })), trusted: vscode.workspace.isTrusted };
 }

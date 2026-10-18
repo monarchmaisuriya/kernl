@@ -30,10 +30,10 @@ function loadPanel() {
 }
 
 const MAIN: WorkspaceView = { id: "main", label: "Main", harness: "deepagents", running: false, waiting: 0, disclosure: "Deep Agents asks before every edit.", queue: [], queuePaused: false, mode: "ask", modes: [] };
-const WT: WorkspaceView = { id: "wt:fix", label: "fix", harness: "claude-code", branch: "yourstack/fix", running: false, waiting: 0, disclosure: "Claude Code runs approved actions itself.", queue: [], queuePaused: false, mode: "ask", modes: [] };
+const WT: WorkspaceView = { id: "wt:fix", label: "fix", harness: "claude-code", branch: "kernl/fix", running: false, waiting: 0, disclosure: "Claude Code runs approved actions itself.", queue: [], queuePaused: false, mode: "ask", modes: [] };
 const STATUS: HostToPanel = { type: "status", ready: true, provider: "deepseek", model: "deepseek-flash", restricted: false };
 const HARNESSES: HarnessView[] = [
-  { id: "deepagents", label: "YourStack", group: "yourstack", ready: true },
+  { id: "deepagents", label: "kernl", group: "kernl", ready: true },
   { id: "claude-code", label: "Claude Code", group: "agents", ready: true },
   { id: "codex", label: "Codex (experimental)", group: "agents", ready: false, problem: "Codex isn't logged in: run `codex login` in a terminal, or add an API key." },
   { id: "opencode", label: "OpenCode", group: "agents", ready: true },
@@ -52,7 +52,7 @@ test("an empty workspace shows the empty state with its agent's disclosure, unti
   p.host(workspaces([MAIN, WT], "wt:fix"));
   const empty = p.doc.querySelector<HTMLElement>(".empty")!;
   assert.equal(empty.hidden, false);
-  assert.match(empty.textContent!, /Build with YourStack/);
+  assert.match(empty.textContent!, /Build with kernl/);
   assert.match(empty.textContent!, /Claude Code runs approved actions itself/, "the safety disclosure stays visible");
   p.host({ type: "userMessage", workspace: "wt:fix", text: "hi" });
   assert.equal(empty.hidden, true);
@@ -356,7 +356,7 @@ test("@ searches workspace paths through the host; arrow keys and Enter insert t
   assert.equal(p.doc.querySelector<HTMLElement>(".popover")!.hidden, true, "answers to old queries are ignored");
 });
 
-test("/ lists skills for the YourStack agent and completes the name; Escape closes the list", () => {
+test("/ lists skills for the kernl agent and completes the name; Escape closes the list", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN, WT]));
   p.host({ type: "skills", items: [{ name: "deploy", description: "Deploy the service" }, { name: "db-migrate", description: "Run migrations" }] });
@@ -535,10 +535,10 @@ test("a message put back after a failed send gets its attachments back: mentions
 
 test("with no folder to work in, the panel says why and offers Open Folder instead of staying blank", () => {
   const p = loadPanel();
-  p.host({ type: "workspaces", items: [], harnesses: HARNESSES, problem: "Open a folder to use YourStack." });
+  p.host({ type: "workspaces", items: [], harnesses: HARNESSES, problem: "Open a folder to use kernl." });
   const empty = p.doc.querySelector<HTMLElement>(".empty")!;
   assert.equal(empty.hidden, false);
-  assert.match(empty.textContent!, /Open a folder to use YourStack\./);
+  assert.match(empty.textContent!, /Open a folder to use kernl\./);
   assert.equal(p.doc.querySelector<HTMLTextAreaElement>(".input")!.disabled, true);
   p.button("Open Folder")!.click();
   assert.deepEqual(p.sent.at(-1), { type: "openFolder" });

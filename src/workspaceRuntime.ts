@@ -29,16 +29,16 @@ import type { Checkpoints } from "./checkpoints";
 import { cutHistory, type QueuedMessage, type SessionRecord, type SessionStore, type TranscriptEvent } from "./sessions";
 import { createHash, randomUUID } from "node:crypto";
 import type { WorkspaceInfo } from "./workspaces/worktrees";
-import { MODE_INFO, PERMISSION_MODES, type PermissionMode, PLAN_NOTE, YOURSTACK_MODES } from "./modes";
+import { MODE_INFO, PERMISSION_MODES, type PermissionMode, PLAN_NOTE, KERNL_MODES } from "./modes";
 
 
-/** Our own harness (Deep Agents with the user's keys) is shown as "YourStack"; its settings value stays `deepagents`. */
+/** Our own harness (Deep Agents with the user's keys) is shown as "kernl"; its settings value stays `deepagents`. */
 export const HARNESSES = [
-  { id: "deepagents", label: "YourStack" },
+  { id: "deepagents", label: "kernl" },
   ...Object.values(CLI_AGENTS).map((a) => ({ id: a.id, label: a.label })),
 ];
 
-/** A named agent from .yourstack/agents runs in the Deep Agents harness as `deepagents:<name>`. */
+/** A named agent from .kernl/agents runs in the Deep Agents harness as `deepagents:<name>`. */
 export const NAMED_AGENT_PREFIX = "deepagents:";
 
 /** Built-ins, or any well-formed named agent id; whether that agent's file exists is checked when the agent is built. */
@@ -57,7 +57,7 @@ export interface RuntimeHost {
   providerSettings(): ProviderSettings & { mcpServers: unknown; agentCommands: unknown; sequentialThinking?: boolean };
   sessions: SessionStore;
   checkpoints: Checkpoints;
-  /** Where the user's own customisation lives (~/.yourstack): AGENTS.md, agents/, skills/. */
+  /** Where the user's own customisation lives (~/.kernl): AGENTS.md, agents/, skills/. */
   userDir: string;
   /** Claude Code's config folder (CLAUDE_CONFIG_DIR or ~/.claude): agents/ and skills/ are read from it. */
   claudeDir: string;
@@ -86,9 +86,9 @@ export class WorkspaceRuntime {
   private pendingHistory: unknown;
   /** Set while the pre-message snapshot is taken; counts as running. */
   private starting = false;
-  /** Sequential thinking for the current conversation (YourStack agent). */
+  /** Sequential thinking for the current conversation (kernl agent). */
   private thinking = new ThinkingLog();
-  /** Long-running commands the YourStack agent started; each has its own terminal. */
+  /** Long-running commands the kernl agent started; each has its own terminal. */
   private jobs: BackgroundJobs | undefined;
   private jobTerminals = new Map<string, vscode.Terminal>();
   /** Set while a runner is being built (it reads SecretStorage); counts as running. */
@@ -115,7 +115,7 @@ export class WorkspaceRuntime {
     public harness: string,
     private host: RuntimeHost,
     readonly info?: WorkspaceInfo,
-    /** Whether a change to yourstack.harness switches this workspace's agent (a single folder's does; worktrees and multi-root folders keep their own). */
+    /** Whether a change to kernl.harness switches this workspace's agent (a single folder's does; worktrees and multi-root folders keep their own). */
     private followsHarnessSetting = info === undefined,
   ) {
     this.approvals = new PendingApprovals(
@@ -149,7 +149,7 @@ export class WorkspaceRuntime {
 
   /** The current agent's supported modes, each with what it means for this agent. */
   private modeDisclosures(harness = this.harness): Partial<Record<PermissionMode, string>> {
-    if (!isCliAgentId(harness)) return YOURSTACK_MODES;
+    if (!isCliAgentId(harness)) return KERNL_MODES;
     return Object.fromEntries(Object.entries(CLI_AGENTS[harness].modes).map(([m, spec]) => [m, spec!.disclosure]));
   }
 
@@ -163,7 +163,7 @@ export class WorkspaceRuntime {
   }
 
   /**
-   * Switches the permission mode. YourStack applies it at its gate at once; a CLI agent's live
+   * Switches the permission mode. kernl applies it at its gate at once; a CLI agent's live
    * session is switched and confirmed (refused: the previous mode stays). A mode that needs a
    * different launch environment (OpenCode's edit permissions) relaunches the agent and reloads
    * the conversation.
@@ -298,7 +298,7 @@ export class WorkspaceRuntime {
       return;
     }
     this.lastFinish = undefined;
-    // The YourStack agent is told it's in plan mode (its gate refuses changes either way).
+    // The kernl agent is told it's in plan mode (its gate refuses changes either way).
     const forAgent = !isCliAgentId(this.harness) && this.permissionMode === "plan" ? PLAN_NOTE + trimmed : trimmed;
     const sending = runner.send(forAgent, attachments);
     this.host.workspacesChanged();
@@ -321,7 +321,7 @@ export class WorkspaceRuntime {
    */
   inputsChanged(change: InputChange) {
     if (!needsRebuild({ harness: this.harness, isMain: this.isMain }, change)) return;
-    const harness = change.kind === "settings" && this.isMain && change.affects("yourstack.harness") ? change.mainHarness : this.harness;
+    const harness = change.kind === "settings" && this.isMain && change.affects("kernl.harness") ? change.mainHarness : this.harness;
     if (this.running) this.staleHarness = harness;
     else this.rebuild(harness);
   }
@@ -405,7 +405,7 @@ export class WorkspaceRuntime {
 
   /**
    * A new conversation with this one's history up to and including `messageId`'s reply; files
-   * are not touched. The YourStack agent can fork from any message; a CLI agent that supports
+   * are not touched. The kernl agent can fork from any message; a CLI agent that supports
    * ACP session/fork copies its whole session, so only from the last message.
    */
   async fork(messageId: string): Promise<void> {
@@ -431,7 +431,7 @@ export class WorkspaceRuntime {
     this.session = forked;
     this.thinking.reset();
     if (!isCliAgentId(this.harness)) {
-      // The CLI runner already continues in its forked session; the YourStack agent starts from the cut history.
+      // The CLI runner already continues in its forked session; the kernl agent starts from the cut history.
       this.pendingHistory = history;
       if (this.runner) {
         this.runner.newThread(history);
@@ -585,7 +585,7 @@ export class WorkspaceRuntime {
     for (const p of [...instructions.problems, ...named.problems]) this.post({ type: "notice", workspace: this.id, text: `Skipped a customisation file: ${p}` });
     const selected = this.harness.startsWith(NAMED_AGENT_PREFIX) ? named.agents.find((a) => NAMED_AGENT_PREFIX + a.name === this.harness) : undefined;
     if (this.harness.startsWith(NAMED_AGENT_PREFIX) && !selected) {
-      this.post({ type: "notice", workspace: this.id, text: `The ${this.harness.slice(NAMED_AGENT_PREFIX.length)} agent's file is gone; using the plain YourStack agent.` });
+      this.post({ type: "notice", workspace: this.id, text: `The ${this.harness.slice(NAMED_AGENT_PREFIX.length)} agent's file is gone; using the plain kernl agent.` });
     }
     const modelFor = (a: NamedAgent) => (a.model ? createChatModel({ ...s, model: a.model }, apiKey) : model);
     // Restricted Mode: read-only backend, no browser or MCP tools, only the user's own agents.
@@ -612,7 +612,7 @@ export class WorkspaceRuntime {
     }
     this.terminal ??= new TerminalRunner({
       cwd: this.root,
-      name: this.info ? `YourStack: ${this.label}` : "YourStack",
+      name: this.info ? `kernl: ${this.label}` : "kernl",
       currentSignal: () => (this.runner as AgentSession | undefined)?.signal,
       onShellIntegrationMissing: (message) => void vscode.window.showWarningMessage(message),
     });

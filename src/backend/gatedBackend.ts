@@ -58,7 +58,7 @@ export class WorkspaceReadBackend extends FilesystemBackend {
  * FilesystemBackend's own disk writes. Having `execute` and `id` makes Deep Agents offer its shell tool.
  */
 export class GatedBackend extends WorkspaceReadBackend {
-  readonly id = "yourstack-agent-workspace";
+  readonly id = "kernl-agent-workspace";
 
   constructor(root: string, gate: ApprovalGate, private files: WorkspaceFiles, private runCommand: CommandRunner) {
     super(root, gate);

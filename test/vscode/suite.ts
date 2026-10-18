@@ -54,12 +54,12 @@ const unusedRunner = async () => ({ output: "", exitCode: 0, truncated: false })
 
 export async function run() {
   const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
-  const ext = vscode.extensions.getExtension("local.yourstack")!;
+  const ext = vscode.extensions.getExtension("local.kernl")!;
 
   await check("extension activates and registers its commands", async () => {
     await ext.activate();
     const commands = await vscode.commands.getCommands(true);
-    for (const c of ["yourstack.setApiKey", "yourstack.addCustomProvider", "yourstack.useDeepSeekForClaudeCode", "yourstack.clearKeys", "yourstack.newChat", "yourstack.newWorkspace", "yourstack.openSettings"]) assert.ok(commands.includes(c), c);
+    for (const c of ["kernl.setApiKey", "kernl.addCustomProvider", "kernl.useDeepSeekForClaudeCode", "kernl.clearKeys", "kernl.newChat", "kernl.newWorkspace", "kernl.openSettings"]) assert.ok(commands.includes(c), c);
   });
 
   await check("API keys go to VS Code SecretStorage and Clear removes them", async () => {
@@ -72,11 +72,11 @@ export async function run() {
 
   await check("Add custom provider writes the settings entry, stores its key in SecretStorage, and selects it", async () => {
     const { keys, testing } = await ext.activate();
-    const config = () => vscode.workspace.getConfiguration("yourstack");
+    const config = () => vscode.workspace.getConfiguration("kernl");
     const answers = ["openrouter-test", "OpenRouter", "https://openrouter.ai/api/v1", "some/model", "sk-test-custom-key-456"];
     testing.usePrompts({ input: async () => answers.shift(), pick: async () => undefined, confirm: async () => true });
     try {
-      await vscode.commands.executeCommand("yourstack.addCustomProvider");
+      await vscode.commands.executeCommand("kernl.addCustomProvider");
       assert.deepEqual(config().get("customProviders"), [{ id: "openrouter-test", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "some/model" }]);
       assert.equal(config().get("provider"), "custom:openrouter-test");
       assert.equal(await keys.get("custom:openrouter-test"), "sk-test-custom-key-456");
@@ -91,14 +91,14 @@ export async function run() {
   await check("a workspace's .vscode/settings.json can't set user-only settings (it can still set ordinary ones)", async () => {
     const dir = join(root, ".vscode");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "settings.json"), JSON.stringify({ "yourstack.model": "from-workspace", "yourstack.commandAllowList": ["rm -rf /"], "yourstack.agentCommands": { opencode: { command: "/tmp/evil" } } }));
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ "kernl.model": "from-workspace", "kernl.commandAllowList": ["rm -rf /"], "kernl.agentCommands": { opencode: { command: "/tmp/evil" } } }));
     try {
       const deadline = Date.now() + 10_000;
-      while (vscode.workspace.getConfiguration("yourstack").get("model") !== "from-workspace") {
+      while (vscode.workspace.getConfiguration("kernl").get("model") !== "from-workspace") {
         if (Date.now() > deadline) throw new Error("VS Code never read the workspace settings file");
         await new Promise((r) => setTimeout(r, 100));
       }
-      const config = vscode.workspace.getConfiguration("yourstack");
+      const config = vscode.workspace.getConfiguration("kernl");
       assert.deepEqual(config.get("commandAllowList"), []);
       assert.deepEqual(config.get("agentCommands"), {});
     } finally {
@@ -155,13 +155,13 @@ export async function run() {
 
   // Terminal
   let session: AgentSession | undefined;
-  const terminal = new TerminalRunner({ cwd: root, name: "YourStack", currentSignal: () => session?.signal, onShellIntegrationMissing: () => {} });
+  const terminal = new TerminalRunner({ cwd: root, name: "kernl", currentSignal: () => session?.signal, onShellIntegrationMissing: () => {} });
 
-  await check("approved command runs in the visible YourStack terminal; model gets clean output and exit code", async () => {
+  await check("approved command runs in the visible kernl terminal; model gets clean output and exit code", async () => {
     const msgs = await runAgent(new GatedBackend(root, gateAnswering(true).gate, files, terminal.run), [
       toolCall("execute", { command: "echo agent-ok && touch ran.txt && f() { return 3; }; f" }),
     ]);
-    assert.ok(vscode.window.terminals.some((t) => t.name === "YourStack"));
+    assert.ok(vscode.window.terminals.some((t) => t.name === "kernl"));
     assert.ok(existsSync(join(root, "ran.txt")));
     assert.match(msgs[0], /agent-ok/);
     assert.ok(!/\r|^%$/m.test(msgs[0]), `output not clean: ${JSON.stringify(msgs[0])}`);
@@ -171,7 +171,7 @@ export async function run() {
 
   await check("approval rules from user settings: an allowed command runs in the terminal without a card; a denied one never asks", async () => {
     const { testing } = await ext.activate();
-    const config = vscode.workspace.getConfiguration("yourstack");
+    const config = vscode.workspace.getConfiguration("kernl");
     await config.update("approvals.allow", ["run(echo rule-allowed *)"], vscode.ConfigurationTarget.Global);
     await config.update("approvals.deny", ["run(echo rule-denied *)"], vscode.ConfigurationTarget.Global);
     try {
@@ -206,7 +206,7 @@ export async function run() {
       }
     };
     await until("the job's first output", () => /job-started/.test(jobs.check(job.id)!.output));
-    assert.ok(vscode.window.terminals.some((t) => t.name === "YourStack job: watcher"));
+    assert.ok(vscode.window.terminals.some((t) => t.name === "kernl job: watcher"));
     terminals[0].dispose();
     await until("the job to stop after its terminal closed", () => jobs.check(job.id)!.status === "stopped");
     jobs.dispose();
@@ -297,7 +297,7 @@ export async function run() {
   server.close();
 
   // CLI agents (ACP) and worktree workspaces. The fake ACP agent stands in for Claude Code via
-  // yourstack.agentCommands, so the real launch path, ask-mode forcing, and gate are exercised.
+  // kernl.agentCommands, so the real launch path, ask-mode forcing, and gate are exercised.
   const fakeAgent = { command: process.execPath, args: [join(__dirname, "fakeAcpAgent.cjs")], env: { FAKE_SCENARIO: "write", FAKE_FORK: "1", FAKE_LOAD: "1" } };
   function runtimeHost(trusted: boolean, decide: (ws: WorkspaceRuntime, r: GateRequest) => boolean, posted: any[]): RuntimeHost {
     return {
@@ -308,10 +308,10 @@ export async function run() {
       deepAgentsProblem: async () => "not used",
       providerSettings: () => ({ provider: "anthropic", model: "x", baseUrl: "", mcpServers: {}, agentCommands: { "claude-code": fakeAgent } }),
       approvalRules: () => [],
-      userDir: join(tmpdir(), "yourstack-no-user-dir"),
-      claudeDir: join(tmpdir(), "yourstack-no-claude-dir"),
-      sessions: new SessionStore(mkdtempSync(join(tmpdir(), "yourstack-sessions-"))),
-      checkpoints: new Checkpoints(mkdtempSync(join(tmpdir(), "yourstack-checkpoints-"))),
+      userDir: join(tmpdir(), "kernl-no-user-dir"),
+      claudeDir: join(tmpdir(), "kernl-no-claude-dir"),
+      sessions: new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))),
+      checkpoints: new Checkpoints(mkdtempSync(join(tmpdir(), "kernl-checkpoints-"))),
       apiKey: async () => undefined,
       agentEnv: async () => ({}),
       trusted: () => trusted,
@@ -355,14 +355,14 @@ export async function run() {
   });
 
   await check("two worktree workspaces run CLI agents in parallel: approved writes only in its worktree, rejected writes nothing, merge brings it to main", async () => {
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), "yourstack-ws-repo-")));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "kernl-ws-repo-")));
     await git(repo, ["init", "-q", "-b", "main"]);
     await git(repo, ["config", "user.email", "t@example.com"]);
     await git(repo, ["config", "user.name", "T"]);
     writeFileSync(join(repo, "README.md"), "repo\n");
     await git(repo, ["add", "-A"]);
     await git(repo, ["commit", "-q", "-m", "init"]);
-    const storage = realpathSync(mkdtempSync(join(tmpdir(), "yourstack-ws-storage-")));
+    const storage = realpathSync(mkdtempSync(join(tmpdir(), "kernl-ws-storage-")));
     const a = await createWorkspace(repo, storage, "approve-me", "claude-code");
     const b = await createWorkspace(repo, storage, "reject-me", "claude-code");
     const posted: any[] = [];
@@ -384,14 +384,14 @@ export async function run() {
   });
 
   await check("a settings change waits for a running workspace and leaves unrelated workspaces alone", async () => {
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), "yourstack-ws-repo-")));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "kernl-ws-repo-")));
     await git(repo, ["init", "-q", "-b", "main"]);
     await git(repo, ["config", "user.email", "t@example.com"]);
     await git(repo, ["config", "user.name", "T"]);
     writeFileSync(join(repo, "README.md"), "repo\n");
     await git(repo, ["add", "-A"]);
     await git(repo, ["commit", "-q", "-m", "init"]);
-    const storage = realpathSync(mkdtempSync(join(tmpdir(), "yourstack-ws-storage-")));
+    const storage = realpathSync(mkdtempSync(join(tmpdir(), "kernl-ws-storage-")));
     const info = await createWorkspace(repo, storage, "busy", "claude-code");
     const posted: any[] = [];
     const host = runtimeHost(true, () => true, posted);
@@ -400,7 +400,7 @@ export async function run() {
     const run = busy.send("write hello.txt");
     assert.equal(busy.running, true);
     // The CLI agents' launch settings changed while busy is mid-run; Main (Deep Agents) is unaffected.
-    const change = { kind: "settings" as const, affects: (s: string) => s === "yourstack" || s === "yourstack.agentCommands", mainHarness: "deepagents" };
+    const change = { kind: "settings" as const, affects: (s: string) => s === "kernl" || s === "kernl.agentCommands", mainHarness: "deepagents" };
     busy.inputsChanged(change);
     idleDeep.inputsChanged(change);
     await run;
@@ -443,7 +443,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       await new Promise((r) => setTimeout(r, 50));
     }
   };
-  const config = vscode.workspace.getConfiguration("yourstack");
+  const config = vscode.workspace.getConfiguration("kernl");
   // `menu` picks a QuickPick item by label (the workspace and model menus); otherwise, or when nothing
   // matches (such as Review's file list after the menu), the harness or the first item.
   // `inputs`, when set, answers input boxes in order; otherwise every input box gets `name`.
@@ -460,15 +460,15 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
   testing.usePrompts(scriptedPrompts);
 
   await check("panel: the real webview loads under its CSP and shakes hands with the host", async () => {
-    await vscode.commands.executeCommand("yourstack.panel.focus");
+    await vscode.commands.executeCommand("kernl.panel.focus");
     const ws = await waitFor("its workspace list", (m) => m.type === "workspaces");
     assert.deepEqual(ws.items.map((w: any) => w.id), ["main"]);
     await waitFor("its status", (m) => m.type === "status");
   });
 
   await check("customisation files: a project rule change and a change in the user's own folder each rebuild idle Deep Agents", async () => {
-    const userDir = process.env.YOURSTACK_USER_DIR!;
-    const projectRules = join(root, ".yourstack", "rules");
+    const userDir = process.env.KERNL_USER_DIR!;
+    const projectRules = join(root, ".kernl", "rules");
     mkdirSync(projectRules, { recursive: true });
     try {
       let from = delivered.length;
@@ -476,21 +476,21 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       await waitFor("a rebuild after the project rule changed", (m) => m.type === "notice" && m.workspace === "main", from, 10_000);
       from = delivered.length;
       writeFileSync(join(userDir, "AGENTS.md"), "Reply tersely.\n");
-      await waitFor("a rebuild after ~/.yourstack/AGENTS.md changed (outside the workspace)", (m) => m.type === "notice" && m.workspace === "main", from, 10_000);
+      await waitFor("a rebuild after ~/.kernl/AGENTS.md changed (outside the workspace)", (m) => m.type === "notice" && m.workspace === "main", from, 10_000);
     } finally {
-      rmSync(join(root, ".yourstack"), { recursive: true, force: true });
+      rmSync(join(root, ".kernl"), { recursive: true, force: true });
       rmSync(join(userDir, "AGENTS.md"), { force: true });
     }
   });
 
-  await check("named agents: a .yourstack/agents file appears in the agent picker, can be picked, and disappears when deleted", async () => {
-    const agents = join(root, ".yourstack", "agents");
+  await check("named agents: a .kernl/agents file appears in the agent picker, can be picked, and disappears when deleted", async () => {
+    const agents = join(root, ".kernl", "agents");
     mkdirSync(agents, { recursive: true });
     try {
       let from = delivered.length;
       writeFileSync(join(agents, "reviewer.md"), "---\ndescription: Reviews changes\ntools: [run]\n---\nReview the diff.\n");
       const listed = await waitFor("the picker listing the reviewer", (m) => m.type === "workspaces" && m.harnesses.some((h: any) => h.id === "deepagents:reviewer"), from, 10_000);
-      assert.equal(listed.harnesses.find((h: any) => h.id === "deepagents:reviewer").label, "YourStack: reviewer");
+      assert.equal(listed.harnesses.find((h: any) => h.id === "deepagents:reviewer").label, "kernl: reviewer");
       from = delivered.length;
       await testing.setHarness("main", "deepagents:reviewer");
       await waitFor("Main on the reviewer", (m) => m.type === "workspaces" && m.items[0].harness === "deepagents:reviewer", from);
@@ -499,7 +499,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       rmSync(join(agents, "reviewer.md"));
       await waitFor("the picker dropping the reviewer", (m) => m.type === "workspaces" && !m.harnesses.some((h: any) => h.id === "deepagents:reviewer"), from, 10_000);
     } finally {
-      rmSync(join(root, ".yourstack"), { recursive: true, force: true });
+      rmSync(join(root, ".kernl"), { recursive: true, force: true });
     }
   });
 
@@ -515,13 +515,13 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     }
   });
 
-  await check("agent chip: the agent menu groups YourStack and the CLI agents with their status, and picking one switches Main and saves it", async () => {
+  await check("agent chip: the agent menu groups kernl and the CLI agents with their status, and picking one switches Main and saves it", async () => {
     const from = delivered.length;
     scripted = { ...scripted, menu: /^(\$\(check\) )?OpenCode$/ };
     await testing.receive({ type: "pickHarness" });
     const menu = menusShown.at(-1)!;
-    assert.deepEqual(menu.filter((i) => i.kind === -1).map((i) => i.label), ["YourStack", "Agents"]);
-    assert.ok(menu.some((i) => /YourStack$/.test(i.label)) && menu.some((i) => /Claude Code$/.test(i.label)) && menu.some((i) => /Codex/.test(i.label)));
+    assert.deepEqual(menu.filter((i) => i.kind === -1).map((i) => i.label), ["kernl", "Agents"]);
+    assert.ok(menu.some((i) => /kernl$/.test(i.label)) && menu.some((i) => /Claude Code$/.test(i.label)) && menu.some((i) => /Codex/.test(i.label)));
     assert.equal(config.inspect("harness")?.workspaceValue, "opencode");
     await waitFor("Main on OpenCode", (m) => m.type === "workspaces" && m.items[0].harness === "opencode" && /OpenCode/.test(m.items[0].disclosure ?? ""), from);
     scripted = { ...scripted, menu: undefined };
@@ -543,11 +543,11 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     const { keys } = await ext.activate();
     scripted = { ...scripted, menu: /^DeepSeek$|^Set key/, name: "sk-test-manage-providers-1" };
     try {
-      await vscode.commands.executeCommand("yourstack.manageProviders");
+      await vscode.commands.executeCommand("kernl.manageProviders");
       assert.equal(await keys.get("deepseek"), "sk-test-manage-providers-1");
       assert.ok(menusShown.at(-2)!.some((i: any) => i.label === "DeepSeek" && /no key yet/.test(i.description)), "status shown before");
       scripted = { ...scripted, menu: /^DeepSeek$|^Remove key/ };
-      await vscode.commands.executeCommand("yourstack.manageProviders");
+      await vscode.commands.executeCommand("kernl.manageProviders");
       assert.ok(menusShown.at(-2)!.some((i: any) => i.label === "DeepSeek" && /key stored/.test(i.description)), "status shown after storing");
       assert.equal(await keys.get("deepseek"), undefined);
     } finally {
@@ -558,7 +558,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
   await check("Agent logins: lists Claude Code, Codex, and OpenCode with their status", async () => {
     scripted = { ...scripted, pickFirst: false };
     try {
-      await vscode.commands.executeCommand("yourstack.agentLogins");
+      await vscode.commands.executeCommand("kernl.agentLogins");
       const rows = menusShown.at(-1)!;
       assert.deepEqual(rows.map((r: any) => r.label), ["Claude Code", "Codex (experimental)", "OpenCode"]);
       assert.ok(rows.every((r: any) => /ready|not ready|using/.test(r.description)));
@@ -625,7 +625,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     let from = delivered.length;
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(join(root, "README.md")));
     await waitFor("the open workspace file", (m) => m.type === "activeFile" && m.path === "README.md", from, 10_000);
-    const outside = join(mkdtempSync(join(tmpdir(), "yourstack-outside-")), "notes.txt");
+    const outside = join(mkdtempSync(join(tmpdir(), "kernl-outside-")), "notes.txt");
     writeFileSync(outside, "x\n");
     from = delivered.length;
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(outside));
@@ -647,7 +647,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       const folders = await waitFor("folder results", (m) => m.type === "fileMatches" && m.query === "attach-sr", from);
       assert.ok(folders.items.some((a: any) => a.path === "attach-src" && a.kind === "folder"), JSON.stringify(folders.items));
       from = delivered.length;
-      await vscode.commands.executeCommand("yourstack.attachToChat", vscode.Uri.file(join(root, "attach-src", "nested")), [vscode.Uri.file(join(root, "attach-src", "nested")), vscode.Uri.file(join(root, "attach-src", "widget.ts")), vscode.Uri.file(tmpdir())]);
+      await vscode.commands.executeCommand("kernl.attachToChat", vscode.Uri.file(join(root, "attach-src", "nested")), [vscode.Uri.file(join(root, "attach-src", "nested")), vscode.Uri.file(join(root, "attach-src", "widget.ts")), vscode.Uri.file(tmpdir())]);
       const added = await waitFor("attachments added", (m) => m.type === "addAttachments", from);
       assert.deepEqual(added.items, [{ path: "attach-src/nested", kind: "folder" }, { path: "attach-src/widget.ts", kind: "file" }], "outside the workspace is skipped");
       from = delivered.length;
@@ -682,7 +682,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     scripted = { ...scripted, name: agentKey };
     let from = delivered.length;
     try {
-      await vscode.commands.executeCommand("yourstack.useDeepSeekForClaudeCode");
+      await vscode.commands.executeCommand("kernl.useDeepSeekForClaudeCode");
       assert.deepEqual(await agentCredentials.get("claude-code"), { apiKey: agentKey, baseUrl: "https://api.deepseek.com/anthropic" });
       await waitFor("the restart notice", (m) => m.type === "notice" && m.workspace === "main", from);
       const sending = testing.receive({ type: "send", workspace: "main", text: "write hello.txt" });
@@ -698,7 +698,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     } finally {
       scripted = { ...scripted, name: "ui-ws" };
       from = delivered.length;
-      await vscode.commands.executeCommand("yourstack.clearKeys");
+      await vscode.commands.executeCommand("kernl.clearKeys");
     }
     assert.equal(await agentCredentials.get("claude-code"), undefined);
     await waitFor("the restart notice after Clear", (m) => m.type === "notice" && m.workspace === "main", from);
@@ -722,11 +722,11 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
   });
 
   await check("conversations: New chat keeps the conversation in history; opening it shows it again", async () => {
-    await vscode.commands.executeCommand("yourstack.newChat");
+    await vscode.commands.executeCommand("kernl.newChat");
     let from = delivered.length;
     // Every earlier panel message was one conversation, titled by its first message.
     scripted = { ...scripted, menu: /^write hello\.txt$/ };
-    await vscode.commands.executeCommand("yourstack.sessions");
+    await vscode.commands.executeCommand("kernl.sessions");
     const shown = menusShown.at(-1)!;
     assert.match(shown[0].label, /New conversation/);
     assert.ok(shown.some((i: any) => i.label === "write hello.txt" && /Claude Code/.test(i.description)), JSON.stringify(shown.map((i: any) => [i.label, i.description])));
@@ -735,7 +735,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     assert.ok(delivered.slice(from).some((m) => m.type === "text" && /hello from fake/.test(m.delta)));
     scripted = { ...scripted, menu: undefined };
     from = delivered.length;
-    await vscode.commands.executeCommand("yourstack.newChat");
+    await vscode.commands.executeCommand("kernl.newChat");
     await waitFor("a fresh view", (m) => m.type === "cleared" && m.workspace === "main", from);
   });
 
@@ -759,13 +759,13 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await waitFor("the forked conversation", (m) => m.type === "notice" && /Forked: this is a new conversation/.test(m.text), from);
     assert.ok(delivered.slice(from).some((m) => m.type === "userMessage" && m.text === "second message"), "the fork shows the history");
     scripted = { ...scripted, pickFirst: false };
-    await vscode.commands.executeCommand("yourstack.sessions");
+    await vscode.commands.executeCommand("kernl.sessions");
     scripted = { ...scripted, pickFirst: true };
     assert.ok(menusShown.at(-1)!.some((i: any) => /\(fork\)$/.test(i.label)), JSON.stringify(menusShown.at(-1)!.map((i: any) => i.label)));
   });
 
   await check("send options: while the agent runs a message is queued and sends after a normal finish; after Stop the queue pauses until Send now; Remove drops one", async () => {
-    await vscode.commands.executeCommand("yourstack.newChat");
+    await vscode.commands.executeCommand("kernl.newChat");
     const mainQueue = (from: number) => delivered.slice(from).filter((m) => m.type === "workspaces").at(-1)?.items.find((w: any) => w.id === "main");
     const answered = new Set<string>();
     const reject = async (from: number) => {
@@ -823,7 +823,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
   });
 
   await check("attach menu: a conversation and a GitHub issue are attached as untrusted text", async () => {
-    await vscode.commands.executeCommand("yourstack.newChat");
+    await vscode.commands.executeCommand("kernl.newChat");
     let from = delivered.length;
     scripted = { ...scripted, menu: /Conversations\.\.\.|^write hello\.txt$/ };
     await testing.receive({ type: "pickAttachments" });
@@ -852,21 +852,21 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
   // Earlier checks wrote files into the main checkout; commit them so it is clean for the workspace flows.
   await git(root, ["add", "-A"]);
   await git(root, ["commit", "-q", "-m", "test files"]);
-  const worktreePath = async () => /worktree (.+)\nHEAD [0-9a-f]+\nbranch refs\/heads\/yourstack\/ui-ws/.exec(await git(root, ["worktree", "list", "--porcelain"]))?.[1];
+  const worktreePath = async () => /worktree (.+)\nHEAD [0-9a-f]+\nbranch refs\/heads\/kernl\/ui-ws/.exec(await git(root, ["worktree", "list", "--porcelain"]))?.[1];
 
   await check("title bar: New workspace creates a worktree workspace with the chosen agent and shows it; cancelling creates nothing", async () => {
     const menus = (ext.packageJSON.contributes.menus["view/title"] as any[]).map((m) => `${m.command}@${m.group}`);
-    assert.deepEqual(menus.slice(0, 2), ["yourstack.newChat@navigation@1", "yourstack.newWorkspace@navigation@2"]);
+    assert.deepEqual(menus.slice(0, 2), ["kernl.newChat@navigation@1", "kernl.newWorkspace@navigation@2"]);
     scripted = { ...scripted, pickFirst: false };
-    await vscode.commands.executeCommand("yourstack.newWorkspace");
+    await vscode.commands.executeCommand("kernl.newWorkspace");
     assert.equal(await worktreePath(), undefined);
     scripted = { ...scripted, pickFirst: true };
     const from = delivered.length;
-    await vscode.commands.executeCommand("yourstack.newWorkspace");
+    await vscode.commands.executeCommand("kernl.newWorkspace");
     const ws = await waitFor("the new tab", (m) => m.type === "workspaces" && m.items.some((w: any) => w.id === "wt:ui-ws"), from);
     assert.equal(ws.focus, "wt:ui-ws");
     const item = ws.items.find((w: any) => w.id === "wt:ui-ws");
-    assert.deepEqual([item.branch, item.harness], ["yourstack/ui-ws", "claude-code"]);
+    assert.deepEqual([item.branch, item.harness], ["kernl/ui-ws", "claude-code"]);
     assert.ok(await worktreePath(), "worktree exists");
   });
 
@@ -885,7 +885,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     scripted = { ...scripted, menu: /Review changes/ };
     await testing.receive({ type: "pickWorkspace" });
     const labels = vscode.window.tabGroups.all.flatMap((g) => g.tabs.map((t) => t.label));
-    assert.ok(labels.some((l) => /hello\.txt: branch point ↔ yourstack\/ui-ws/.test(l)), `editor tabs: ${labels.join(" | ")}`);
+    assert.ok(labels.some((l) => /hello\.txt: branch point ↔ kernl\/ui-ws/.test(l)), `editor tabs: ${labels.join(" | ")}`);
   });
 
   await check("workspace menu: Merge asks first; declining changes nothing, confirming brings the work into main", async () => {
@@ -899,7 +899,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
 
   await check("title bar: New chat clears only the workspace the panel shows", async () => {
     const from = delivered.length;
-    await vscode.commands.executeCommand("yourstack.newChat");
+    await vscode.commands.executeCommand("kernl.newChat");
     await waitFor("the shown workspace clearing", (m) => m.type === "cleared" && m.workspace === "wt:ui-ws", from);
     assert.ok(!delivered.slice(from).some((m) => m.type === "cleared" && m.workspace === "main"), "Main untouched");
   });
@@ -925,7 +925,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     try {
       await testing.receive({ type: "pickModel" });
       assert.equal(await keys.get("deepseek"), "sk-test-model-chip-key-1");
-      const fresh = vscode.workspace.getConfiguration("yourstack");
+      const fresh = vscode.workspace.getConfiguration("kernl");
       assert.equal(fresh.get("provider"), "deepseek");
       assert.equal(fresh.get("model"), "deepseek-v4-pro");
     } finally {
@@ -946,7 +946,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     const ws = await waitFor("the tab disappearing", (m) => m.type === "workspaces" && !m.items.some((w: any) => w.id === "wt:ui-ws"), from);
     assert.equal(ws.focus, "main");
     assert.equal(await worktreePath(), undefined);
-    assert.equal((await git(root, ["branch", "--list", "yourstack/ui-ws"])).trim(), "");
+    assert.equal((await git(root, ["branch", "--list", "kernl/ui-ws"])).trim(), "");
   });
 }
 

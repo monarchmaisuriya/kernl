@@ -1,4 +1,4 @@
-// Attachments reach the agent: the YourStack agent gets them listed in the message.
+// Attachments reach the agent: the kernl agent gets them listed in the message.
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { buildAgent } from "../../src/agent/createAgent";
@@ -12,7 +12,7 @@ test("the attachment note lists files and folders as workspace paths", () => {
   assert.equal(attachmentNote([{ path: "src/app.ts", kind: "file" }, { path: "docs/", kind: "folder" }]), "\n\nAttached by the user (workspace paths; read them as needed):\n- /src/app.ts\n- /docs/ (folder)");
 });
 
-test("the YourStack agent receives the attachments with the message", async () => {
+test("the kernl agent receives the attachments with the message", async () => {
   const w = workspace(true);
   const model = new ScriptedChatModel([]);
   let seen = "";

@@ -32,7 +32,7 @@ export class GitHubApi implements GitHubSource {
 
   private async get(path: string): Promise<any> {
     const res = await fetch(`${this.base}${path}`, {
-      headers: { Authorization: `Bearer ${await this.token()}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "YourStack" },
+      headers: { Authorization: `Bearer ${await this.token()}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "kernl" },
     });
     if (!res.ok) throw new Error(`GitHub answered ${res.status} for ${path}: ${(await res.text()).slice(0, 200)}`);
     return res.json();

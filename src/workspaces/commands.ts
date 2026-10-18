@@ -43,7 +43,7 @@ export class WorkspaceCommands {
     if (!vscode.workspace.isTrusted) return void vscode.window.showErrorMessage("Workspaces need a trusted folder. Trust this workspace first.");
     const repo = await repoRoot(root).catch(() => undefined);
     if (!repo) return void vscode.window.showErrorMessage("Workspaces need a git repository. Run git init and commit once first.");
-    const name = await this.host.prompts().input({ title: "New workspace: name", prompt: "Becomes the branch yourstack/<name>", placeHolder: "fix-login-redirect", ignoreFocusOut: true });
+    const name = await this.host.prompts().input({ title: "New workspace: name", prompt: "Becomes the branch kernl/<name>", placeHolder: "fix-login-redirect", ignoreFocusOut: true });
     if (!name) return undefined;
     const pick = await this.host.prompts().pick(
       this.host.harnesses().map((h) => ({ label: h.label, id: h.id })),

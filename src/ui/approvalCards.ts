@@ -16,7 +16,7 @@ export function toApprovalCard(id: string, ws: { id: string; label: string }, r:
     case "read":
       return card({ title: "Read a credential-like file (its contents go to your model provider)", detail: r.path, hasDiff: false });
     case "execute":
-      return card({ title: "Run command in the YourStack terminal", detail: r.command, hasDiff: false });
+      return card({ title: "Run command in the kernl terminal", detail: r.command, hasDiff: false });
     case "tool":
       return card({ title: `Use tool ${r.tool}`, detail: clip(JSON.stringify(r.args, null, 2)), hasDiff: false });
     case "agent":

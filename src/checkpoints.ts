@@ -57,8 +57,8 @@ export class Checkpoints {
     await mkdir(dir, { recursive: true });
     await this.git(root, ["init", "-q"]);
     await writeFile(join(dir, "info", "exclude"), ALWAYS_SKIP);
-    await this.git(root, ["config", "user.name", "YourStack checkpoints"]);
-    await this.git(root, ["config", "user.email", "checkpoints@yourstack.local"]);
+    await this.git(root, ["config", "user.name", "kernl checkpoints"]);
+    await this.git(root, ["config", "user.email", "checkpoints@kernl.local"]);
   }
 
   /** Records the workspace's current files; returns the checkpoint id (a commit in the shadow repository). */

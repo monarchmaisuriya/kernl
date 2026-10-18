@@ -11,11 +11,11 @@ import { workspace } from "../support/harness";
 import { ScriptedChatModel } from "../support/scriptedModel";
 
 function dirs(rules: Record<string, string> = {}, userAgentsMd?: string) {
-  const userDir = mkdtempSync(join(tmpdir(), "yourstack-user-"));
-  const projectRoot = mkdtempSync(join(tmpdir(), "yourstack-project-"));
+  const userDir = mkdtempSync(join(tmpdir(), "kernl-user-"));
+  const projectRoot = mkdtempSync(join(tmpdir(), "kernl-project-"));
   if (userAgentsMd !== undefined) writeFileSync(join(userDir, "AGENTS.md"), userAgentsMd);
-  if (Object.keys(rules).length) mkdirSync(join(projectRoot, ".yourstack/rules"), { recursive: true });
-  for (const [name, text] of Object.entries(rules)) writeFileSync(join(projectRoot, ".yourstack/rules", name), text);
+  if (Object.keys(rules).length) mkdirSync(join(projectRoot, ".kernl/rules"), { recursive: true });
+  for (const [name, text] of Object.entries(rules)) writeFileSync(join(projectRoot, ".kernl/rules", name), text);
   return { userDir, projectRoot };
 }
 
@@ -32,9 +32,9 @@ test("an alwaysApply rule is in the prompt; other rules are listed with their de
   assert.deepEqual(problems, []);
   assert.match(prompt, /Use tabs\. ALWAYS-MARKER/);
   assert.doesNotMatch(prompt, /LISTED-MARKER/, "listed rules are read on demand, not inlined");
-  assert.match(prompt, /- \/\.yourstack\/rules\/db\.md: How we write migrations; applies to files matching db\/\*\*, migrations\/\*\.sql/);
-  assert.match(prompt, /- \/\.yourstack\/rules\/api\.md: applies to files matching src\/api\/\*\*, src\/routes\/\*\*/);
-  assert.match(prompt, /- \/\.yourstack\/rules\/manual\.md: read when the user mentions it/);
+  assert.match(prompt, /- \/\.kernl\/rules\/db\.md: How we write migrations; applies to files matching db\/\*\*, migrations\/\*\.sql/);
+  assert.match(prompt, /- \/\.kernl\/rules\/api\.md: applies to files matching src\/api\/\*\*, src\/routes\/\*\*/);
+  assert.match(prompt, /- \/\.kernl\/rules\/manual\.md: read when the user mentions it/);
   assert.doesNotMatch(prompt, /notes\.txt/);
 });
 

@@ -23,7 +23,7 @@ const candidates: Array<{ settings: ProviderSettings; key?: string }> = [
 ];
 
 async function smoke({ settings, key }: (typeof candidates)[number]) {
-  const root = mkdtempSync(join(tmpdir(), "yourstack-smoke-"));
+  const root = mkdtempSync(join(tmpdir(), "kernl-smoke-"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "smoke-target-4471" }));
   const gate = new ApprovalGate({ ask: async (_id, r) => (console.log(`    gate asked: ${r.kind} (rejected)`), false) }, { rules: () => [] });
   const backend = new GatedBackend(root, gate, new NodeWorkspaceFiles(), async () => ({ output: "", exitCode: 0, truncated: false }));

@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import { cleanTerminalOutput } from "./output";
 
 export const SHELL_INTEGRATION_MISSING =
-  "Shell integration is not active in the YourStack terminal, so the command did not run. " +
+  "Shell integration is not active in the kernl terminal, so the command did not run. " +
   "Enable the setting terminal.integrated.shellIntegration.enabled and use bash, zsh, fish, or PowerShell.";
 
 function waitForShellIntegration(terminal: vscode.Terminal, timeoutMs: number): Promise<vscode.TerminalShellIntegration> {
@@ -24,7 +24,7 @@ function waitForShellIntegration(terminal: vscode.Terminal, timeoutMs: number): 
 
 export interface TerminalRunnerOptions {
   cwd: string;
-  /** Terminal tab name, e.g. "YourStack" or "YourStack: fix-login". */
+  /** Terminal tab name, e.g. "kernl" or "kernl: fix-login". */
   name: string;
   /** Signal of the agent run currently in progress; aborting it interrupts the command. */
   currentSignal: () => AbortSignal | undefined;

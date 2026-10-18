@@ -32,9 +32,9 @@ export async function run() {
 
 async function liveChecks() {
   const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
-  const ext = vscode.extensions.getExtension("local.yourstack")!;
+  const ext = vscode.extensions.getExtension("local.kernl")!;
   const { keys, agentCredentials, testing } = await ext.activate();
-  const config = () => vscode.workspace.getConfiguration("yourstack");
+  const config = () => vscode.workspace.getConfiguration("kernl");
   const delivered: any[] = [];
   testing.onDidDeliver((m: any) => delivered.push(m));
   const waitFor = async (what: string, pred: (m: any) => boolean, from: number, timeoutMs = RUN_TIMEOUT_MS) => {
@@ -46,7 +46,7 @@ async function liveChecks() {
     }
     throw new Error(`timed out after ${timeoutMs / 1000}s waiting for ${what}; last messages: ${JSON.stringify(delivered.slice(-4)).slice(0, 600)}`);
   };
-  await vscode.commands.executeCommand("yourstack.panel.focus");
+  await vscode.commands.executeCommand("kernl.panel.focus");
   await waitFor("the panel handshake", (m) => m.type === "workspaces", 0, 20_000);
 
   /** Sends one prompt on Main and answers every card with `approve` until the run ends. */
@@ -74,15 +74,15 @@ async function liveChecks() {
     const from = delivered.length;
     await testing.setHarness("main", harness);
     await waitFor(`Main on ${harness}`, (m) => m.type === "workspaces" && m.items[0].harness === harness, from, 20_000);
-    await vscode.commands.executeCommand("yourstack.newChat");
+    await vscode.commands.executeCommand("kernl.newChat");
   }
 
   // Through the commands, so the controller restarts the agents that read the key, as for a user.
   async function useDeepSeekForClaudeCode(key: string) {
     testing.usePrompts({ input: async () => key, pick: async () => undefined, confirm: async () => false });
-    await vscode.commands.executeCommand("yourstack.useDeepSeekForClaudeCode");
+    await vscode.commands.executeCommand("kernl.useDeepSeekForClaudeCode");
   }
-  const clearKeys = () => vscode.commands.executeCommand("yourstack.clearKeys");
+  const clearKeys = () => vscode.commands.executeCommand("kernl.clearKeys");
 
   const writePrompt = (file: string) => `Create a file named ${file} in the current directory containing exactly the word hi. Use your file write tool. Do nothing else.`;
 
@@ -101,7 +101,7 @@ async function liveChecks() {
       rmSync(join(root, file), { force: true });
     });
     await check(`${label}: reject writes nothing`, async () => {
-      await vscode.commands.executeCommand("yourstack.newChat");
+      await vscode.commands.executeCommand("kernl.newChat");
       const file = `live-${harness}-rejected.txt`;
       rmSync(join(root, file), { force: true });
       const result = await turn(writePrompt(file), false);
@@ -113,7 +113,7 @@ async function liveChecks() {
 
   async function stopWhileWaiting(label: string, harness: string) {
     await check(`${label}: Stop ends a run that is waiting on a card`, async () => {
-      await vscode.commands.executeCommand("yourstack.newChat");
+      await vscode.commands.executeCommand("kernl.newChat");
       const file = `live-${harness}-stopped.txt`;
       const from = delivered.length;
       const sending = testing.receive({ type: "send", workspace: "main", text: writePrompt(file) });
@@ -145,7 +145,7 @@ async function liveChecks() {
   // isolated, so this asserts our key, and only our key, is sent. Nothing reaches a third party.
   await check("Claude Code with a stored key sends exactly that key to the endpoint, never your login", async () => {
     if ("error" in resolveLaunch("claude-code", undefined)) return "Claude Code is not installed";
-    const testKey = "sk-yourstack-live-capture-0000";
+    const testKey = "sk-kernl-live-capture-0000";
     const seen: { apiKey?: string; authorization?: string }[] = [];
     const server = createServer((req, res) => {
       if (req.url?.startsWith("/v1/messages")) seen.push({ apiKey: req.headers["x-api-key"] as string | undefined, authorization: req.headers.authorization });

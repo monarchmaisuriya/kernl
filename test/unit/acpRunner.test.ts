@@ -13,7 +13,7 @@ const fake = resolve(__dirname, "fakeAcpAgent.cjs");
 const MANUAL: AskMode = { kind: "configOption", optionId: "mode", value: "default" };
 
 function harness(scenario: string, answer: boolean | "never", askMode: AskMode | (() => AskMode) = MANUAL, extraEnv: Record<string, string> = {}) {
-  const cwd = mkdtempSync(join(tmpdir(), "yourstack-acp-"));
+  const cwd = mkdtempSync(join(tmpdir(), "kernl-acp-"));
   const logFile = join(cwd, "..", `fake-${Math.random().toString(36).slice(2)}.log`);
   const asked: GateRequest[] = [];
   const events: string[] = [];

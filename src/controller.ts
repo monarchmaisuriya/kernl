@@ -34,9 +34,9 @@ import { listWorkspaces, repoRoot, type WorkspaceInfo } from "./workspaces/workt
 
 const MAIN = "main";
 
-/** ~/.yourstack, or YOURSTACK_USER_DIR (the integration tests point it at a temp folder). */
+/** ~/.kernl, or KERNL_USER_DIR (the integration tests point it at a temp folder). */
 function userCustomisationDir() {
-  return process.env.YOURSTACK_USER_DIR || join(homedir(), ".yourstack");
+  return process.env.KERNL_USER_DIR || join(homedir(), ".kernl");
 }
 
 /** Claude Code's own config folder, where it keeps agents/ and skills/. */
@@ -50,7 +50,7 @@ function approvalRules() {
 }
 
 function readSettings() {
-  const c = vscode.workspace.getConfiguration("yourstack");
+  const c = vscode.workspace.getConfiguration("kernl");
   return {
     // Validated by settingsProblem() before any model is built.
     provider: c.get<string>("provider", "anthropic"),
@@ -70,7 +70,7 @@ function readSettings() {
 /** Wires the panel, the gate, and one runtime per workspace (main folder + worktree workspaces). */
 export class Controller implements vscode.Disposable {
   readonly redactor = new Redactor();
-  private output = vscode.window.createOutputChannel("YourStack");
+  private output = vscode.window.createOutputChannel("kernl");
   private log = new Logger(this.output, this.redactor);
   readonly keys: KeyStore;
   readonly agentCredentials: AgentCredentials;
@@ -92,7 +92,7 @@ export class Controller implements vscode.Disposable {
   private multiRoot = false;
   /** Each worktree workspace's folder (the top-level workspace whose repository it belongs to). */
   private worktreeFolder = new Map<string, string>();
-  /** Named agents (from ~/.yourstack/agents and the main folder's .yourstack/agents) offered in the agent picker. */
+  /** Named agents (from ~/.kernl/agents and the main folder's .kernl/agents) offered in the agent picker. */
   private namedHarnesses: { id: string; label: string }[] = [];
 
   constructor(private context: vscode.ExtensionContext) {
@@ -130,10 +130,10 @@ export class Controller implements vscode.Disposable {
       harnesses: () => this.harnessList(),
     });
     this.disposables.push(
-      vscode.window.registerWebviewViewProvider("yourstack.panel", this.panel, { webviewOptions: { retainContextWhenHidden: true } }),
+      vscode.window.registerWebviewViewProvider("kernl.panel", this.panel, { webviewOptions: { retainContextWhenHidden: true } }),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("yourstack.approvals") || e.affectsConfiguration("yourstack.commandAllowList")) this.reportRuleProblems();
-        if (e.affectsConfiguration("yourstack")) this.inputsChanged({ kind: "settings", affects: (s) => e.affectsConfiguration(s), mainHarness: readSettings().harness });
+        if (e.affectsConfiguration("kernl.approvals") || e.affectsConfiguration("kernl.commandAllowList")) this.reportRuleProblems();
+        if (e.affectsConfiguration("kernl")) this.inputsChanged({ kind: "settings", affects: (s) => e.affectsConfiguration(s), mainHarness: readSettings().harness });
       }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => this.inputsChanged({ kind: "trust" })),
       // Coming back to VS Code (e.g. after logging in to a CLI in a terminal): check again.
@@ -156,7 +156,7 @@ export class Controller implements vscode.Disposable {
       timer = setTimeout(() => void this.refreshNamedAgents().then(() => (this.inputsChanged({ kind: "customisation" }), this.postSkills())), 300);
     };
     const watchers = [
-      vscode.workspace.createFileSystemWatcher("**/{AGENTS.md,.yourstack/**,.claude/agents/**,.claude/skills/**}"),
+      vscode.workspace.createFileSystemWatcher("**/{AGENTS.md,.kernl/**,.claude/agents/**,.claude/skills/**}"),
       vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(userCustomisationDir()), "**")),
       vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(claudeConfigDir()), "{agents,skills}/**")),
     ];
@@ -167,7 +167,7 @@ export class Controller implements vscode.Disposable {
   /** Malformed rules are skipped (that only ever leads to a card); say which ones, so nobody relies on them. */
   private reportRuleProblems() {
     const { problems } = approvalRules();
-    if (problems.length) void vscode.window.showWarningMessage(`YourStack skipped ${problems.length} approval rule(s): ${problems.join("; ")}`);
+    if (problems.length) void vscode.window.showWarningMessage(`kernl skipped ${problems.length} approval rule(s): ${problems.join("; ")}`);
   }
 
   /**
@@ -226,7 +226,7 @@ export class Controller implements vscode.Disposable {
 
   /** Where a folder's agent choice is kept in a multi-root window. */
   private harnessKey(root: string) {
-    return `yourstack.harness:${root}`;
+    return `kernl.harness:${root}`;
   }
 
   /** A new workspace runtime, in the permission mode kept for its folder or worktree. */
@@ -239,7 +239,7 @@ export class Controller implements vscode.Disposable {
 
   /** Where a workspace's permission mode is kept (per folder or worktree path). */
   private modeKey(root: string) {
-    return `yourstack.mode:${root}`;
+    return `kernl.mode:${root}`;
   }
 
   /** The mode chip's menu. Bypass asks first; a mode the agent can't confirm leaves the old one in place. */
@@ -269,10 +269,10 @@ export class Controller implements vscode.Disposable {
       const r = this.readiness.get(h.id.startsWith(NAMED_AGENT_PREFIX) ? "deepagents" : h.id) ?? { ready: true };
       return { ...h, group, ready: r.ready, problem: r.problem };
     };
-    return [view(HARNESSES[0], "yourstack"), ...this.namedHarnesses.map((h) => view(h, "yourstack")), ...HARNESSES.slice(1).map((h) => view(h, "agents"))];
+    return [view(HARNESSES[0], "kernl"), ...this.namedHarnesses.map((h) => view(h, "kernl")), ...HARNESSES.slice(1).map((h) => view(h, "agents"))];
   }
 
-  /** Readiness of every harness, from the CLIs' own status commands and YourStack's provider setup. */
+  /** Readiness of every harness, from the CLIs' own status commands and kernl's provider setup. */
   private readiness = new Map<string, Readiness>();
 
   private async refreshReadiness() {
@@ -289,13 +289,13 @@ export class Controller implements vscode.Disposable {
     this.postWorkspaces();
   }
 
-  /** The agent chip: YourStack and its named agents first, then the CLI agents, each with what it needs. */
+  /** The agent chip: kernl and its named agents first, then the CLI agents, each with what it needs. */
   private async pickHarness() {
     // Readiness is kept current (startup, window focus, key and login changes); only the first menu waits for it.
     if (this.readiness.size) void this.refreshReadiness();
     else await this.refreshReadiness();
     const ws = this.workspace(this.active);
-    if (!ws) return void vscode.window.showWarningMessage(this.noWorkspaceReason() ?? "YourStack is still loading this window's folders.");
+    if (!ws) return void vscode.window.showWarningMessage(this.noWorkspaceReason() ?? "kernl is still loading this window's folders.");
     if (ws.running) return void vscode.window.showWarningMessage("Stop the agent before changing it.");
     const list = this.harnessList();
     const item = (h: HarnessView) => ({
@@ -306,18 +306,18 @@ export class Controller implements vscode.Disposable {
     });
     const picked = await this.prompts.pick<vscode.QuickPickItem & { harness?: HarnessView }>(
       [
-        { label: "YourStack", kind: vscode.QuickPickItemKind.Separator },
-        ...list.filter((h) => h.group === "yourstack").map(item),
+        { label: "kernl", kind: vscode.QuickPickItemKind.Separator },
+        ...list.filter((h) => h.group === "kernl").map(item),
         { label: "Agents", kind: vscode.QuickPickItemKind.Separator },
         ...list.filter((h) => h.group === "agents").map(item),
       ],
-      { title: "YourStack: agent for this workspace" },
+      { title: "kernl: agent for this workspace" },
     );
     const h = picked?.harness;
     if (!h) return;
     if (!h.ready) {
       // Set it up first; switch only once it can run, so a cancelled setup doesn't leave a broken agent.
-      await (h.group === "yourstack" ? this.pickModel() : this.agentLogins());
+      await (h.group === "kernl" ? this.pickModel() : this.agentLogins());
       await this.refreshReadiness();
       const now = this.harnessList().find((x) => x.id === h.id);
       if (!now?.ready) {
@@ -329,7 +329,7 @@ export class Controller implements vscode.Disposable {
   }
 
   /**
-   * Restore from a user message: files only, or files and conversation (the YourStack agent only;
+   * Restore from a user message: files only, or files and conversation (the kernl agent only;
    * a CLI agent's conversation lives in the agent). Asks with the list of files it will change,
    * refuses files with unsaved edits, and offers Undo afterwards.
    */
@@ -385,7 +385,7 @@ export class Controller implements vscode.Disposable {
   }
 
   async clearHistory() {
-    if (!(await this.prompts.confirm("Delete all YourStack conversations and checkpoints?", "Your files are not changed. Restore won't be available for earlier messages.", "Delete"))) return;
+    if (!(await this.prompts.confirm("Delete all kernl conversations and checkpoints?", "Your files are not changed. Restore won't be available for earlier messages.", "Delete"))) return;
     await this.host.sessions.clear();
     await this.host.checkpoints.clear();
     for (const ws of this.workspaces.values()) if (!ws.running) ws.newThread();
@@ -472,7 +472,7 @@ export class Controller implements vscode.Disposable {
     if (picked) this.panel.post({ type: "addAttachments", items: [picked.attachment] });
   }
 
-  /** Dropped files and the Explorer's "Add to YourStack chat": only paths inside the shown workspace. */
+  /** Dropped files and the Explorer's "Add to kernl chat": only paths inside the shown workspace. */
   async attachUris(uris: string[]) {
     const root = this.workspace(this.active)?.root;
     if (!root) return;
@@ -527,7 +527,7 @@ export class Controller implements vscode.Disposable {
   private async refreshNamedAgents() {
     const root = this.activeFolder()?.root;
     const { agents } = await loadNamedAgents({ userDir: userCustomisationDir(), claudeDir: claudeConfigDir(), projectRoot: root ?? "", trusted: vscode.workspace.isTrusted && !!root });
-    this.namedHarnesses = agents.map((a) => ({ id: NAMED_AGENT_PREFIX + a.name, label: `YourStack: ${a.name}` }));
+    this.namedHarnesses = agents.map((a) => ({ id: NAMED_AGENT_PREFIX + a.name, label: `kernl: ${a.name}` }));
   }
 
   private postWorkspaces(focus?: string) {
@@ -667,10 +667,10 @@ export class Controller implements vscode.Disposable {
     // The new agent may not support the old mode (it falls back to Ask before edits).
     await this.context.workspaceState.update(this.modeKey(ws.root), ws.mode);
     if (ws.info) await this.commands.rememberHarness(ws.info, harness);
-    // In a multi-root window each folder keeps its own choice (yourstack.harness is only the default).
+    // In a multi-root window each folder keeps its own choice (kernl.harness is only the default).
     else if (this.multiRoot) await this.context.workspaceState.update(this.harnessKey(ws.root), harness);
     // A single folder's choice lives in settings; the resulting change event finds it already on this harness.
-    else await vscode.workspace.getConfiguration("yourstack").update("harness", harness, vscode.ConfigurationTarget.Workspace);
+    else await vscode.workspace.getConfiguration("kernl").update("harness", harness, vscode.ConfigurationTarget.Workspace);
     this.postWorkspaces();
   }
 
@@ -737,7 +737,7 @@ export class Controller implements vscode.Disposable {
   }
 
   async openSettings() {
-    await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:local.yourstack");
+    await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:local.kernl");
   }
 
   /** The workspace chip: switch, create, and for a worktree, review, merge, or discard. */
@@ -759,7 +759,7 @@ export class Controller implements vscode.Disposable {
         { label: "$(trash) Discard...", description: current.label, run: () => this.discard(current.id) },
       );
     }
-    const picked = await this.prompts.pick(items, { title: "YourStack: workspaces" });
+    const picked = await this.prompts.pick(items, { title: "kernl: workspaces" });
     await picked?.run();
   }
 

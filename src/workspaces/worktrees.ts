@@ -14,7 +14,7 @@ export interface WorkspaceInfo {
   harness: string;
 }
 
-export const BRANCH_PREFIX = "yourstack/";
+export const BRANCH_PREFIX = "kernl/";
 
 /** Lowercase letters, digits, and dashes; 1-40 characters. Never model input; typed by the user. */
 export function sanitizeName(raw: string): string {
@@ -32,7 +32,7 @@ export function storageDirFor(storageRoot: string, repo: string): string {
   return join(storageRoot, `${basename(repo)}-${createHash("sha1").update(repo).digest("hex").slice(0, 8)}`);
 }
 
-const configKey = (name: string, key: string) => `branch.${BRANCH_PREFIX}${name}.yourstack${key}`;
+const configKey = (name: string, key: string) => `branch.${BRANCH_PREFIX}${name}.kernl${key}`;
 
 export async function createWorkspace(repo: string, storageRoot: string, rawName: string, harness: string): Promise<WorkspaceInfo> {
   const name = sanitizeName(rawName);
@@ -52,7 +52,7 @@ export async function createWorkspace(repo: string, storageRoot: string, rawName
   return { name, branch, path: realpathSync(path), base, harness };
 }
 
-/** Workspaces of this repo: worktrees under its storage folder on a yourstack/ branch. */
+/** Workspaces of this repo: worktrees under its storage folder on a kernl/ branch. */
 export async function listWorkspaces(repo: string, storageRoot: string): Promise<WorkspaceInfo[]> {
   const dir = storageDirFor(storageRoot, repo);
   const realDir = existsSync(dir) ? realpathSync(dir) : dir;
@@ -119,7 +119,7 @@ export async function mergeWorkspace(repo: string, ws: WorkspaceInfo): Promise<M
   const pending = (await git(ws.path, ["status", "--porcelain", "--untracked-files=all"])).trim() !== "";
   if (pending) {
     await git(ws.path, ["add", "-A"]);
-    await git(ws.path, ["commit", "-m", `YourStack workspace ${ws.name}`]);
+    await git(ws.path, ["commit", "-m", `kernl workspace ${ws.name}`]);
   }
   try {
     await git(repo, ["merge", "--no-ff", "--no-edit", ws.branch]);

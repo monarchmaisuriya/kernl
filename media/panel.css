@@ -1,4 +1,4 @@
-/* YourStack panel. Colors come only from VS Code theme variables, so light, dark, and high-contrast themes all work. */
+/* kernl panel. Colors come only from VS Code theme variables, so light, dark, and high-contrast themes all work. */
 :root {
   --radius: 8px;
   --radius-sm: 6px;

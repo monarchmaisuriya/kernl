@@ -5,7 +5,7 @@ import type { ApprovalGate } from "../gate/approvalGate";
 import { gatedTool } from "../gate/gatedTool";
 
 /**
- * Long-running commands the YourStack agent starts and keeps going between messages: dev servers,
+ * Long-running commands the kernl agent starts and keeps going between messages: dev servers,
  * watchers, slow builds. Starting one asks exactly like running a command (the same approval rules
  * apply); each job shows in its own terminal; the agent can read its output and stop it. Jobs end
  * when their workspace closes.

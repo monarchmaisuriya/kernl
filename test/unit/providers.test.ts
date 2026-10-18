@@ -19,7 +19,7 @@ test("builds one model class per provider from settings and a stub key", () => {
 });
 
 test("explains what is missing instead of building a broken model", () => {
-  assert.match(settingsProblem({ ...base, provider: "openai", model: " " }, "k")!, /Choose a model for openai: use the model chip, or set yourstack.model/);
+  assert.match(settingsProblem({ ...base, provider: "openai", model: " " }, "k")!, /Choose a model for openai: use the model chip, or set kernl.model/);
   assert.equal(settingsProblem({ ...base, model: " " }, "k"), undefined, "Anthropic has a default model");
   assert.match(settingsProblem(base, undefined)!, /No API key stored for anthropic/);
   assert.match(settingsProblem({ ...base, provider: "openai-compatible", baseUrl: "localhost:11434" }, undefined)!, /http\(s\) URL/);
@@ -47,7 +47,7 @@ test("a custom provider builds ChatOpenAI against its own base URL and model, an
   assert.ok(model instanceof ChatOpenAI);
   assert.equal(model.model, "some/model");
   assert.equal((model as any).clientConfig.baseURL, "https://openrouter.ai/api/v1");
-  assert.equal((resolveProvider({ ...s, model: "override/model" }) as any).model, "override/model", "yourstack.model still wins when set");
+  assert.equal((resolveProvider({ ...s, model: "override/model" }) as any).model, "override/model", "kernl.model still wins when set");
 });
 
 test("malformed custom providers name the entry and field; unknown ids are explained", () => {
@@ -80,13 +80,13 @@ test("custom provider keys get their own secret, and Clear removes every provide
   await keys.store("custom:openrouter", "  sk-openrouter-secret-1  ");
   await keys.store("custom:removed-entry", "sk-orphan-secret-3");
   await keys.store("custom:openrouter", "sk-openrouter-secret-1");
-  secrets.map.set("yourstack.apiKey.anthropic", "sk-stored-before-the-index-2");
-  secrets.map.set("yourstack.agentKey.claude-code", "sk-agent-secret-4");
+  secrets.map.set("kernl.apiKey.anthropic", "sk-stored-before-the-index-2");
+  secrets.map.set("kernl.agentKey.claude-code", "sk-agent-secret-4");
   assert.equal(await keys.get("custom:openrouter"), "sk-openrouter-secret-1");
-  assert.ok(secrets.map.has("yourstack.apiKey.custom.removed-entry"));
+  assert.ok(secrets.map.has("kernl.apiKey.custom.removed-entry"));
   assert.equal(redactor.scrub("key sk-openrouter-secret-1 here"), "key [redacted] here");
   await keys.clearAll();
-  assert.deepEqual([...secrets.map.keys()], ["yourstack.agentKey.claude-code"], "agent credentials are cleared by their own store");
+  assert.deepEqual([...secrets.map.keys()], ["kernl.agentKey.claude-code"], "agent credentials are cleared by their own store");
   assert.equal(redactor.scrub("sk-openrouter-secret-1"), "sk-openrouter-secret-1", "cleared keys are no longer scrubbed");
 });
 

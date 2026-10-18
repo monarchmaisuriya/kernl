@@ -36,7 +36,7 @@ export class IntegratedBrowser implements vscode.Disposable {
     });
     const launched = await vscode.debug.startDebugging(
       undefined,
-      { type: "editor-browser", request: "launch", name: "YourStack Browser", url: "about:blank" },
+      { type: "editor-browser", request: "launch", name: "kernl Browser", url: "about:blank" },
       { noDebug: true, suppressDebugToolbar: true, suppressDebugView: true, suppressDebugStatusbar: true } as vscode.DebugSessionOptions,
     );
     if (!launched) throw new Error("VS Code refused to start the integrated browser (editor-browser debug session)");

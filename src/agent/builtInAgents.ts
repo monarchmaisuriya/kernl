@@ -1,7 +1,7 @@
 import type { NamedAgent } from "./namedAgents";
 
 /**
- * Delegates the YourStack agent always has (besides Deep Agents' general-purpose one). A user or
+ * Delegates the kernl agent always has (besides Deep Agents' general-purpose one). A user or
  * project agent with the same name replaces them. Their tool limits are enforced by the tool guard;
  * their actions still go through the approval gate.
  */

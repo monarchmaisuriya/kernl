@@ -5,11 +5,11 @@ import { createMiddleware } from "langchain";
 import { splitFrontmatter } from "./instructions";
 
 /**
- * Named agents: Markdown files in `~/.yourstack/agents/` (the user's) and `.yourstack/agents/`
+ * Named agents: Markdown files in `~/.kernl/agents/` (the user's) and `.kernl/agents/`
  * (the project's, trusted workspaces only; a project agent replaces a user agent of the same name).
  * Frontmatter: `name`, `description`, optional `tools`, optional `model`. The body is the prompt.
  * Claude Code subagents (`~/.claude/agents/`, `.claude/agents/`) load too, translated by
- * `fromClaudeAgent`; on the same name, `.yourstack/` wins over `.claude/`.
+ * `fromClaudeAgent`; on the same name, `.kernl/` wins over `.claude/`.
  * An agent can only have fewer tools than Deep Agents, never more, and every action it takes
  * still goes through the approval gate.
  */
@@ -26,11 +26,11 @@ export interface NamedAgent {
   file: string;
 }
 
-export const AGENTS_DIR = ".yourstack/agents";
+export const AGENTS_DIR = ".kernl/agents";
 export const CLAUDE_AGENTS_DIR = ".claude/agents";
 const NAME = /^[a-z0-9-]+$/;
 
-/** Claude Code tool names (without a `(specifier)`) and the YourStack tool group each one needs. Reading is always allowed. */
+/** Claude Code tool names (without a `(specifier)`) and the kernl tool group each one needs. Reading is always allowed. */
 const CLAUDE_TOOL_GROUPS: Record<string, ToolGroup | "read"> = {
   Read: "read", Grep: "read", Glob: "read", LS: "read",
   Edit: "edit", MultiEdit: "edit", Write: "edit", NotebookEdit: "edit",
@@ -45,10 +45,10 @@ function claudeTools(value: unknown): string[] | undefined {
 }
 
 /**
- * A Claude Code subagent file as a YourStack agent. `tools`/`disallowedTools` map to tool groups
+ * A Claude Code subagent file as a kernl agent. `tools`/`disallowedTools` map to tool groups
  * (unknown tools such as Agent or TodoWrite are ignored); `mcp__*` tools mean the mcp group.
  * `model` is ignored (Claude aliases mean nothing on other providers): the current model is used.
- * `permissionMode`, `hooks`, and the like are ignored: YourStack's own approvals always apply.
+ * `permissionMode`, `hooks`, and the like are ignored: kernl's own approvals always apply.
  */
 function fromClaudeAgent(file: string, text: string): NamedAgent | string {
   let parsed: { data: unknown; body: string };
@@ -112,12 +112,12 @@ async function loadDir(dir: string, label: string, parse = parseAgent): Promise<
   return { agents, problems };
 }
 
-/** Later sources win on the same name: ~/.claude, ~/.yourstack, then the project's .claude and .yourstack. */
+/** Later sources win on the same name: ~/.claude, ~/.kernl, then the project's .claude and .kernl. */
 export async function loadNamedAgents(src: { userDir: string; claudeDir: string; projectRoot: string; trusted: boolean }): Promise<{ agents: NamedAgent[]; problems: string[] }> {
   const none = { agents: [], problems: [] };
   const sources = [
     await loadDir(join(src.claudeDir, "agents"), "~/.claude/agents", fromClaudeAgent),
-    await loadDir(join(src.userDir, "agents"), "~/.yourstack/agents"),
+    await loadDir(join(src.userDir, "agents"), "~/.kernl/agents"),
     src.trusted ? await loadDir(join(src.projectRoot, CLAUDE_AGENTS_DIR), `/${CLAUDE_AGENTS_DIR}`, fromClaudeAgent) : none,
     src.trusted ? await loadDir(join(src.projectRoot, AGENTS_DIR), `/${AGENTS_DIR}`) : none,
   ];

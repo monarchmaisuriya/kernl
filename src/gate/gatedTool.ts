@@ -2,7 +2,7 @@ import { type StructuredToolInterface, tool } from "@langchain/core/tools";
 import type { ApprovalGate } from "./approvalGate";
 
 export type ToolRule = "ask" | "allow";
-const RULE = Symbol.for("yourstack.toolRule");
+const RULE = Symbol.for("kernl.toolRule");
 
 /**
  * The only way custom tools (browser, MCP) are handed to the agent. "ask" tools call the gate

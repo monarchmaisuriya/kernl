@@ -1,5 +1,5 @@
 // Runs inside a real VS Code opened on a multi-root workspace (two git repos, alpha and beta; see
-// runVscode.ts, YOURSTACK_WORKSPACE=multi): each folder is its own workspace with its own agent,
+// runVscode.ts, KERNL_WORKSPACE=multi): each folder is its own workspace with its own agent,
 // sends run in the right folder, worktrees belong to their folder, and Agent logins can switch agents.
 import { strict as assert } from "node:assert";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
@@ -21,7 +21,7 @@ async function check(name: string, fn: () => Promise<void>) {
 export async function run() {
   const folders = vscode.workspace.workspaceFolders!;
   const [alpha, beta] = folders.map((f) => f.uri.fsPath);
-  const ext = vscode.extensions.getExtension("local.yourstack")!;
+  const ext = vscode.extensions.getExtension("local.kernl")!;
   const { testing } = await ext.activate();
   const delivered: any[] = [];
   testing.onDidDeliver((m: any) => delivered.push(m));
@@ -49,11 +49,11 @@ export async function run() {
     confirm: async () => true,
   });
   const fakeAgent = { command: process.execPath, args: [join(__dirname, "fakeAcpAgent.cjs")], env: { FAKE_SCENARIO: "write" } };
-  const config = vscode.workspace.getConfiguration("yourstack");
+  const config = vscode.workspace.getConfiguration("kernl");
   await config.update("agentCommands", { "claude-code": fakeAgent }, vscode.ConfigurationTarget.Global);
 
   await check("multi-root: the panel lists each folder as its own workspace, labeled by folder name", async () => {
-    await vscode.commands.executeCommand("yourstack.panel.focus");
+    await vscode.commands.executeCommand("kernl.panel.focus");
     const ws = await waitFor("the folders", (m) => m.type === "workspaces" && m.items.length === 2);
     assert.deepEqual(ws.items.map((w: any) => [w.id, w.label]), [["folder:alpha", "alpha"], ["folder:beta", "beta"]]);
     assert.equal(ws.problem, undefined);
@@ -76,29 +76,29 @@ export async function run() {
 
   await check("multi-root: a new worktree workspace comes from the shown folder's repository", async () => {
     await testing.receive({ type: "focus", workspace: "folder:beta" });
-    scripted = { inputs: ["feature"], menu: [/YourStack/] };
+    scripted = { inputs: ["feature"], menu: [/kernl/] };
     const from = delivered.length;
-    await vscode.commands.executeCommand("yourstack.newWorkspace");
+    await vscode.commands.executeCommand("kernl.newWorkspace");
     const ws = await waitFor("the worktree workspace", (m) => m.type === "workspaces" && m.items.some((w: any) => w.id === "wt:beta/feature"), from);
     const item = ws.items.find((w: any) => w.id === "wt:beta/feature");
     assert.equal(item.label, "beta/feature");
     assert.equal(ws.focus, "wt:beta/feature");
     const list = await git(beta, ["worktree", "list", "--porcelain"]);
-    assert.match(list, /branch refs\/heads\/yourstack\/feature/, "the branch is in beta's repo");
-    assert.doesNotMatch(await git(alpha, ["branch", "--list", "yourstack/*"]), /feature/, "not in alpha's");
+    assert.match(list, /branch refs\/heads\/kernl\/feature/, "the branch is in beta's repo");
+    assert.doesNotMatch(await git(alpha, ["branch", "--list", "kernl/*"]), /feature/, "not in alpha's");
   });
 
   await check("Agent logins: a ready agent can be used in the shown workspace right away", async () => {
     await testing.receive({ type: "focus", workspace: "folder:alpha" });
     scripted = { menu: [/^Claude Code$/, /^Use Claude Code in this workspace$/] };
-    await vscode.commands.executeCommand("yourstack.agentLogins");
+    await vscode.commands.executeCommand("kernl.agentLogins");
     const actions = menusShown.at(-1)!.map((i: any) => i.label);
     assert.equal(actions[0], "Use Claude Code in this workspace", JSON.stringify(actions));
     assert.equal(harnessOf("folder:alpha"), "claude-code");
   });
 
   await check("multi-root: adding a folder adds a workspace; each folder's agent choice is kept across the reload", async () => {
-    const gamma = join(realpathSync(mkdtempSync(join(tmpdir(), "yourstack-gamma-"))), "gamma");
+    const gamma = join(realpathSync(mkdtempSync(join(tmpdir(), "kernl-gamma-"))), "gamma");
     mkdirSync(gamma);
     const from = delivered.length;
     vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: vscode.Uri.file(gamma) });

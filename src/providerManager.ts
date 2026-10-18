@@ -20,7 +20,7 @@ const BUILT_IN_LABELS: Record<string, string> = {
   "openai-compatible": "Local or OpenAI-compatible server",
 };
 
-const config = () => vscode.workspace.getConfiguration("yourstack");
+const config = () => vscode.workspace.getConfiguration("kernl");
 
 interface ProviderEntry {
   id: ProviderId;
@@ -40,7 +40,7 @@ async function providers(t: KeyTargets): Promise<ProviderEntry[]> {
 
 const keyStatus = (p: ProviderEntry) => (p.hasKey ? "key stored" : p.keyRequired ? "no key yet" : "no key needed");
 
-/** `offerUse`: after storing, offer to switch YourStack to this provider (when the flow doesn't do that itself). */
+/** `offerUse`: after storing, offer to switch kernl to this provider (when the flow doesn't do that itself). */
 async function askKey(t: KeyTargets, p: ProviderEntry, offerUse = false): Promise<boolean> {
   const key = await t.prompts.input({ title: `API key for ${p.label}`, password: true, ignoreFocusOut: true });
   if (!key) return false;
@@ -63,7 +63,7 @@ export async function pickModel(t: KeyTargets): Promise<string[] | undefined> {
   const list = await providers(t);
   const picked = await t.prompts.pick(
     list.map((p) => ({ label: p.label, description: [p.id === current ? `current: ${config().get<string>("model") || "default model"}` : undefined, keyStatus(p)].filter(Boolean).join(" · "), provider: p })),
-    { title: "YourStack: model provider" },
+    { title: "kernl: model provider" },
   );
   if (!picked) return undefined;
   const p = picked.provider;
@@ -84,7 +84,7 @@ export async function manageProviders(t: KeyTargets, test: (provider: ProviderId
   const ADD = { label: "$(add) Add a custom provider...", description: "any OpenAI-compatible service" };
   const picked = await t.prompts.pick<vscode.QuickPickItem & { provider?: ProviderEntry }>(
     [...list.map((p) => ({ label: p.label, description: keyStatus(p), provider: p })), ADD],
-    { title: "YourStack: providers for the YourStack agent" },
+    { title: "kernl: providers for the kernl agent" },
   );
   if (!picked) return undefined;
   if (!picked.provider) return addCustomProvider(t);
@@ -94,7 +94,7 @@ export async function manageProviders(t: KeyTargets, test: (provider: ProviderId
     { label: p.hasKey ? "Replace key..." : "Set key...", action: "set" },
     ...(p.hasKey ? [{ label: "Remove key", action: "remove" as const }] : []),
     ...(p.hasKey || !p.keyRequired ? [{ label: "Test connection", description: "sends one tiny request", action: "test" as const }] : []),
-    { label: "Use for YourStack...", description: "pick a model", action: "use" },
+    { label: "Use for kernl...", description: "pick a model", action: "use" },
   ];
   const action = await t.prompts.pick(actions, { title: p.label });
   if (!action) return undefined;
@@ -125,7 +125,7 @@ const LOGIN_COMMAND: Record<CliAgentId, string> = { "claude-code": "claude", cod
 /**
  * "Agent logins": each CLI agent's status. A ready agent can be used in the shown workspace right
  * away (`use`, absent when there is no workspace); any agent can log in in a terminal or use a key
- * stored in YourStack.
+ * stored in kernl.
  */
 export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => Promise<Readiness>, use?: (id: CliAgentId) => Promise<void>): Promise<string[] | undefined> {
   const rows = await Promise.all(
@@ -136,7 +136,7 @@ export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => 
       return { label: CLI_AGENTS[id].label, description: status, detail: r.problem, id, stored: !!stored, ready: r.ready };
     }),
   );
-  const picked = await t.prompts.pick(rows, { title: "YourStack: agent logins" });
+  const picked = await t.prompts.pick(rows, { title: "kernl: agent logins" });
   if (!picked) return undefined;
   type Action = "use" | "login" | "key" | "deepseek" | "remove";
   const actions: (vscode.QuickPickItem & { action: Action })[] = [
@@ -156,7 +156,7 @@ export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => 
       const terminal = vscode.window.createTerminal({ name: `${picked.label} login` });
       terminal.show();
       terminal.sendText(LOGIN_COMMAND[picked.id]);
-      if (picked.id === "claude-code") void vscode.window.showInformationMessage("In the terminal, type /login and follow the steps. YourStack checks again when you come back.");
+      if (picked.id === "claude-code") void vscode.window.showInformationMessage("In the terminal, type /login and follow the steps. kernl checks again when you come back.");
       return undefined;
     }
     case "key": {

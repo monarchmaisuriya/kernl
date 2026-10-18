@@ -2,11 +2,11 @@ import type * as vscode from "vscode";
 import type { Redactor } from "../log";
 import { BUILT_IN_PROVIDERS, type ProviderId } from "./registry";
 
-/** `yourstack.apiKey.anthropic`, and `yourstack.apiKey.custom.<id>` for custom providers. */
-export const secretName = (provider: ProviderId) => `yourstack.apiKey.${provider.replace(":", ".")}`;
+/** `kernl.apiKey.anthropic`, and `kernl.apiKey.custom.<id>` for custom providers. */
+export const secretName = (provider: ProviderId) => `kernl.apiKey.${provider.replace(":", ".")}`;
 // The names of every provider key ever stored. SecretStorage.keys() can omit a key stored a moment ago
 // (seen in VS Code 1.142), so Clear reads this index instead.
-const INDEX = "yourstack.apiKeyIndex";
+const INDEX = "kernl.apiKeyIndex";
 
 export type Secrets = Pick<vscode.SecretStorage, "get" | "store" | "delete">;
 

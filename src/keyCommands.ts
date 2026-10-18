@@ -5,7 +5,7 @@ import type { KeyStore } from "./providers/keys";
 import { BUILT_IN_PROVIDERS, customProviders, type ProviderId } from "./providers/registry";
 import type { Prompts } from "./workspaces/commands";
 
-const settings = () => vscode.workspace.getConfiguration("yourstack");
+const settings = () => vscode.workspace.getConfiguration("kernl");
 
 /** Where the key commands store keys. Each command returns the harnesses whose key changed, or undefined if cancelled. */
 export interface KeyTargets {
@@ -16,7 +16,7 @@ export interface KeyTargets {
 
 type Target = { provider: ProviderId } | { agent: CliAgentId };
 
-/** Writes yourstack.provider and yourstack.model where yourstack.provider is already set (workspace, else user). */
+/** Writes kernl.provider and kernl.model where kernl.provider is already set (workspace, else user). */
 export async function useProvider(provider: ProviderId, model: string) {
   const target = settings().inspect("provider")?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
   await settings().update("provider", provider, target);
@@ -24,17 +24,17 @@ export async function useProvider(provider: ProviderId, model: string) {
 }
 
 /**
- * Confirms a stored key. For a model provider YourStack doesn't use yet, it offers to switch to it
+ * Confirms a stored key. For a model provider kernl doesn't use yet, it offers to switch to it
  * (with that provider's default model): a stored key alone doesn't change which provider is used.
  */
 export function keyStored(label: string, provider?: ProviderId) {
-  const offer = provider && provider !== settings().get<string>("provider") ? `Use ${label} for YourStack` : undefined;
+  const offer = provider && provider !== settings().get<string>("provider") ? `Use ${label} for kernl` : undefined;
   void vscode.window.showInformationMessage(`Key stored for ${label}.`, ...(offer ? [offer] : [])).then(async (choice) => {
     if (offer && choice === offer) await useProvider(provider!, "");
   });
 }
 
-/** "YourStack: Set API key": pick a Deep Agents provider (built-in or custom) or a CLI agent, paste a key, store it. */
+/** "kernl: Set API key": pick a Deep Agents provider (built-in or custom) or a CLI agent, paste a key, store it. */
 export async function promptForApiKey(t: KeyTargets, currentProvider: string): Promise<string[] | undefined> {
   const custom = customProviders(settings().get("customProviders"));
   const items: (vscode.QuickPickItem & { target: Target })[] = [
@@ -49,7 +49,7 @@ export async function promptForApiKey(t: KeyTargets, currentProvider: string): P
       target: { agent },
     })),
   ];
-  const picked = await t.prompts.pick(items, { title: "YourStack: what is this key for?" });
+  const picked = await t.prompts.pick(items, { title: "kernl: what is this key for?" });
   if (!picked) return undefined;
   const target = picked.target;
   const name = "provider" in target ? target.provider : CLI_AGENTS[target.agent].label;
@@ -65,7 +65,7 @@ export async function promptForApiKey(t: KeyTargets, currentProvider: string): P
   return [target.agent];
 }
 
-/** "YourStack: Use DeepSeek for Claude Code": Claude Code talks to DeepSeek's Anthropic-compatible endpoint. */
+/** "kernl: Use DeepSeek for Claude Code": Claude Code talks to DeepSeek's Anthropic-compatible endpoint. */
 export async function useDeepSeekForClaudeCode(t: KeyTargets): Promise<string[] | undefined> {
   const key = await t.prompts.input({ title: "DeepSeek API key for Claude Code", prompt: `Claude Code will use ${DEEPSEEK_ANTHROPIC_URL}`, password: true, ignoreFocusOut: true });
   if (!key) return undefined;
@@ -74,7 +74,7 @@ export async function useDeepSeekForClaudeCode(t: KeyTargets): Promise<string[] 
   return ["claude-code"];
 }
 
-/** "YourStack: Add custom provider": adds an OpenAI-compatible entry to yourstack.customProviders and stores its key. */
+/** "kernl: Add custom provider": adds an OpenAI-compatible entry to kernl.customProviders and stores its key. */
 export async function addCustomProvider(t: KeyTargets): Promise<string[] | undefined> {
   const existing = settings().get<unknown[]>("customProviders") ?? [];
   const id = await t.prompts.input({ title: "Custom provider id", prompt: "Lowercase letters, digits, or dashes, e.g. openrouter", ignoreFocusOut: true });
@@ -93,7 +93,7 @@ export async function addCustomProvider(t: KeyTargets): Promise<string[] | undef
   if (!key) return undefined;
   await t.keys.store(provider, key);
   await settings().update("customProviders", [...existing, entry], vscode.ConfigurationTarget.Global);
-  if (await t.prompts.confirm(`Use ${entry.label} for Deep Agents now?`, `Sets yourstack.provider to ${provider}.`, "Use it")) {
+  if (await t.prompts.confirm(`Use ${entry.label} for Deep Agents now?`, `Sets kernl.provider to ${provider}.`, "Use it")) {
     await settings().update("provider", provider, vscode.ConfigurationTarget.Global);
   }
   return ["deepagents"];

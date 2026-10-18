@@ -11,15 +11,15 @@ import { messageText, runScript, toolCall, workspace } from "../support/harness"
 import { ScriptedChatModel } from "../support/scriptedModel";
 
 function dirs(user: Record<string, string>, project: Record<string, string>, claude: { user?: Record<string, string>; project?: Record<string, string> } = {}) {
-  const userDir = mkdtempSync(join(tmpdir(), "yourstack-user-"));
-  const claudeDir = mkdtempSync(join(tmpdir(), "yourstack-claude-"));
-  const projectRoot = mkdtempSync(join(tmpdir(), "yourstack-project-"));
+  const userDir = mkdtempSync(join(tmpdir(), "kernl-user-"));
+  const claudeDir = mkdtempSync(join(tmpdir(), "kernl-claude-"));
+  const projectRoot = mkdtempSync(join(tmpdir(), "kernl-project-"));
   const put = (dir: string, files: Record<string, string> = {}) => {
     mkdirSync(dir, { recursive: true });
     for (const [n, t] of Object.entries(files)) writeFileSync(join(dir, n), t);
   };
   put(join(userDir, "agents"), user);
-  put(join(projectRoot, ".yourstack/agents"), project);
+  put(join(projectRoot, ".kernl/agents"), project);
   put(join(claudeDir, "agents"), claude.user);
   put(join(projectRoot, ".claude/agents"), claude.project);
   return { userDir, claudeDir, projectRoot };
@@ -116,13 +116,13 @@ test("Claude Code agent files load: tools map to groups, specifiers and unknown 
   assert.deepEqual([...byName["everything-but-shell"].tools].sort(), ["browser", "edit", "mcp"]);
 });
 
-test(".yourstack wins over .claude on the same name; the user's ~/.claude agents load even in Restricted Mode", async () => {
-  const d = dirs({}, { "reviewer.md": "---\ndescription: yourstack version\n---\nYS\n" }, {
+test(".kernl wins over .claude on the same name; the user's ~/.claude agents load even in Restricted Mode", async () => {
+  const d = dirs({}, { "reviewer.md": "---\ndescription: kernl version\n---\nYS\n" }, {
     user: { "mine.md": "---\nname: mine\ndescription: from ~/.claude\n---\nMINE\n" },
     project: { "reviewer.md": "---\nname: reviewer\ndescription: claude version\n---\nCC\n" },
   });
   const trusted = await loadNamedAgents({ ...d, trusted: true });
-  assert.deepEqual(trusted.agents.map((a) => [a.name, a.description]), [["mine", "from ~/.claude"], ["reviewer", "yourstack version"]]);
+  assert.deepEqual(trusted.agents.map((a) => [a.name, a.description]), [["mine", "from ~/.claude"], ["reviewer", "kernl version"]]);
   const restricted = await loadNamedAgents({ ...d, trusted: false });
   assert.deepEqual(restricted.agents.map((a) => a.name), ["mine"]);
 });
