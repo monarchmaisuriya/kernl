@@ -32,6 +32,9 @@
   - A command leads with the agent's own description when it gives one ("Find usages of useRewards"), then the command; a `cd` into the workspace folder is left out.
   - Reads and searches in a row fold into one line, "Explored 1 file, 4 searches" ("· 1 failed" in red when one failed); click it for the individual rows. A shell command counts when every part of it only reads or searches (`grep`, `rg`, `find`, `ls`, `cat`, `head`, `tail`, `wc`, `sed -n`, output thrown away at most); anything that could write a file or run a program stays its own line.
   - Long output shows its first and last 5 lines, with **Show all**; a failed call opens itself.
+  - **Previews:** an image a call read or produced (a read PNG, a browser screenshot) shows as a thumbnail on its line and on its group's line, and larger with **Open** when you open the row. Images are kept with the conversation (PNG, JPEG, GIF, WebP up to 5 MB) and deleted with it.
+  - A group of reads names its files as chips on its line; a click opens the file.
+  - A fetched web page shows its site on the line and its address as a link inside; a web search shows how many results it found and lists them as links. Nothing is loaded from the web: no favicons or remote images.
   - An edit shows its size (+2 −1) and **View diff** (VS Code's diff editor).
   - Files the agent works on are links.
   - Click a row for its arguments and output.

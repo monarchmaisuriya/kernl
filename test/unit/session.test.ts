@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { AIMessage } from "@langchain/core/messages";
 import { buildAgent } from "../../src/agent/createAgent";
-import { AgentSession, type SessionEvents } from "../../src/agent/session";
+import { AgentSession, imagesOf, type SessionEvents } from "../../src/agent/session";
 import { GatedBackend } from "../../src/backend/gatedBackend";
 import { NodeWorkspaceFiles } from "../../src/backend/workspaceFiles";
 import { ApprovalGate } from "../../src/gate/approvalGate";
@@ -107,4 +107,11 @@ test("the agent's to-do list becomes the plan, not a tool row", async () => {
   await new AgentSession(async () => agent, events).send("explain");
   assert.ok(log.includes("plan:completed=Read the hook|in_progress=Explain it"), log.join(" | "));
   assert.ok(!log.some((l) => l.startsWith("call:write_todos") || l.startsWith("result:write_todos")), log.join(" | "));
+});
+
+test("images in a tool result reach the panel: kernl's own image parts and base64 data URLs; nothing else", () => {
+  assert.deepEqual(imagesOf([{ type: "text", text: "page" }, { type: "image", mimeType: "image/png", data: "AAAA" }]), [{ mimeType: "image/png", data: "AAAA" }]);
+  assert.deepEqual(imagesOf([{ type: "image_url", image_url: { url: "data:image/jpeg;base64,BBBB" } }]), [{ mimeType: "image/jpeg", data: "BBBB" }]);
+  assert.deepEqual(imagesOf([{ type: "image_url", image_url: { url: "https://example.com/x.png" } }]), [], "a URL is never fetched");
+  assert.deepEqual(imagesOf("plain text"), []);
 });

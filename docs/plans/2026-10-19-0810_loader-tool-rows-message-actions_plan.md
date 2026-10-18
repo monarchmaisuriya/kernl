@@ -184,6 +184,13 @@ Claude Code runs many lookups through its Bash tool, so they arrive as `execute`
 - [x] A `kernl` icon (the K mark from the logo, drawn solid) replaces the sparkle icon in all seven places: empty state, Working loader, thinking, sequential thoughts, the "think" tool kind, the Auto mode chip, the text-attachment chip. The sparkle icon is removed. Done: no `sparkle` left in `src/`; panel preview.
 - [x] `echo` may join a lookup (it writes nothing without a redirect, and redirects are still refused); like `cd`, it doesn't count as one. Done: classifier test with M's command.
 
+### Part 8: output formatting and the new logo (M's follow-up)
+
+M, after the commit: "formatting is not correct, and use the new icon/logo everywhere" (`kernl.png` replaced at 23:45 with a new mark).
+
+- [x] **Output:** Claude Code's adapter wraps command output in a ```` ```console ```` fence and file reads in a ```` ``` ```` fence [verified: adapter `dist/tool-calls/renderer.js:269`, `reporters/read.js:46-60`]; kernl shows text, so the fences appeared. The runner unwraps one fence around the whole output. Done: unit tests (console fence, longer fence, text that only contains a fence stays).
+- [x] **Logo:** `media/icon.png` is the new `kernl.png`; `scripts/logo-mark.swift` makes `media/mark.png` (the light glyph as a transparent, single-color image, 256 px); the activity bar uses it, and the panel's `kernl` icon paints it with the text color (CSS mask, allowed by the panel's `img-src`). The hand-drawn K paths are removed. Done: panel test; render check at 13-160 px; live check.
+
 ### Finish
 
 - [x] Fake agent's rich scenario sends a described `cd <cwd> && grep`; VS Code end-to-end check asserts the row. Done: suite passes.

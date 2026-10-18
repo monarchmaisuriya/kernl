@@ -139,6 +139,8 @@ export interface ToolRow {
   body: HTMLElement;
   /** A later report of the same call: new title, arguments, status, files, or edit. */
   update(name: string, args: Record<string, unknown>, rawArgs: string, info: ToolInfo): void;
+  /** An image the call read or produced: a thumbnail on the line, larger when opened. */
+  addImage(src: string): void;
   setResult(output: string, failed: boolean): void;
   stop(): void;
 }
@@ -147,6 +149,26 @@ export interface ToolRow {
 export interface ToolActions {
   showDiff(): void;
   openLocation(location: ToolLocation): void;
+  /** An http(s) page, in the browser (the host checks the scheme again). */
+  openLink(url: string): void;
+}
+
+/** A web page a call fetched or opened: its address, if it's http(s). */
+function webPage(value: unknown): URL | undefined {
+  try {
+    const url = new URL(str(value));
+    return url.protocol === "http:" || url.protocol === "https:" ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Web search hits, as agents list them: one "Title (https://…)" per line (Claude Code's WebSearch). */
+export function webHits(output: string): { title: string; url: string }[] {
+  return output.split("\n").flatMap((line) => {
+    const hit = /^\s*(?:[-*]\s+)?(.+?)\s+\((https?:\/\/[^\s()]+)\)\s*$/.exec(line);
+    return hit ? [{ title: hit[1], url: hit[2] }] : [];
+  });
 }
 
 const running = new Set<{ started: number; time: HTMLElement }>();
@@ -177,15 +199,26 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
   /** Everything that a later report of the same call can change. */
   // A command without the agent's description reads "Running <command>", then "Ran <command>".
   let undescribedCommand = false;
+  // The file the call is about, if any: an image's Open button and its name.
+  let location: ToolLocation | undefined;
+  // The web page the call fetched or opened, if any.
+  let page: URL | undefined;
   const show = (n: string, a: Record<string, unknown>, raw: string, i: ToolInfo) => {
-    // A command leads with what it's for; the command itself follows in monospace.
-    const d = i.command ? { action: i.description ?? (running.has(timer) ? "Running" : "Ran"), target: i.command } : describeTool(n, a);
+    // A command leads with what it's for; the command itself follows in monospace. A web page shows
+    // its site, not the whole address (that's in the tooltip and the opened row).
+    page = (i.kind === "fetch" || n === "browser_navigate") && !i.command ? webPage(a.url) : undefined;
+    const d = i.command
+      ? { action: i.description ?? (running.has(timer) ? "Running" : "Ran"), target: i.command }
+      : page
+        ? { action: n === "browser_navigate" ? "Opening" : "Fetch", target: page.hostname }
+        : describeTool(n, a);
     undescribedCommand = !!i.command && !i.description;
     action.textContent = d.action;
     target.textContent = d.target ?? "";
     target.hidden = !d.target;
     row.classList.toggle("command", !!i.command);
-    summary.title = d.target ? `${d.action}${i.command ? "\n" : " "}${d.target}` : d.action;
+    target.classList.toggle("tool-site", !!page);
+    summary.title = page ? `${d.action} ${page.href}` : d.target ? `${d.action}${i.command ? "\n" : " "}${d.target}` : d.action;
     kind.replaceChildren(icon(kindIcon(n, i.kind), 13));
     // A report without a status keeps the row's state (a new row starts running).
     if (running.has(timer) && (i.status || !row.dataset.status)) row.dataset.status = i.status === "pending" ? "pending" : "running";
@@ -195,6 +228,10 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
       size.title = `${i.diff.path}: ${i.diff.added} line(s) added, ${i.diff.removed} removed`;
     }
     files.replaceChildren();
+    location = i.locations?.[0] ?? location;
+    // A read names its file (for its group's file chips): the agent's location, or kernl's own path argument.
+    const file = location?.path ?? (quietKind(n, i.kind, i.lookup) === "read" && (a.file_path ?? a.path) ? path(a.file_path ?? a.path) : undefined);
+    if (file) row.dataset.file = file;
     for (const location of i.locations ?? []) {
       const link = el("button", "tool-location link", `${location.path}${location.line ? `:${location.line}` : ""}`);
       link.addEventListener("click", () => actions?.openLocation(location));
@@ -204,6 +241,13 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
       const view = el("button", "tool-view-diff link", "View diff");
       view.addEventListener("click", () => actions.showDiff());
       files.append(view);
+    }
+    if (page && actions) {
+      const url = page.href;
+      const open = el("button", "tool-location link", url);
+      open.title = `Open ${url} in your browser`;
+      open.addEventListener("click", () => actions.openLink(url));
+      files.append(open);
     }
     files.hidden = !files.childElementCount;
     argsView.replaceChildren(argsBlock(a, raw));
@@ -229,11 +273,49 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
     body,
     update: (n, a, raw, i) => show(n, a, raw, i),
     setResult(output, failed) {
-      if (output) body.append(outputBlock(output));
+      // Web search hits become links, and their count shows on the line.
+      const hits = webHits(output);
+      if (hits.length) {
+        time.before(el("span", "tool-hits", `${hits.length} result${hits.length === 1 ? "" : "s"}`));
+        const list = el("div", "tool-hit-list");
+        for (const hit of hits) {
+          const link = el("button", "tool-hit link");
+          link.title = `Open ${hit.url} in your browser`;
+          link.append(el("span", "tool-hit-title", hit.title), el("span", "tool-hit-site", webPage(hit.url)?.hostname ?? ""));
+          link.addEventListener("click", () => actions?.openLink(hit.url));
+          list.append(link);
+        }
+        body.append(list);
+      }
+      // The raw text only when it says more than the hits.
+      const rest = output.split("\n").filter((line) => line.trim() && !webHits(line).length);
+      if (output && (!hits.length || rest.length)) body.append(outputBlock(output));
       settle(failed ? "failed" : "done");
       // A failure is worth reading: its row opens itself.
       if (failed) row.open = true;
     },
     stop: () => settle("stopped"),
+    addImage(src) {
+      const name = location?.path.split("/").pop() ?? "Image";
+      // On the line: decorative (the row already says what was read).
+      const thumb = el("img", "tool-thumb");
+      thumb.src = src;
+      thumb.alt = "";
+      thumb.setAttribute("aria-hidden", "true");
+      time.before(thumb);
+      // Opened: the image itself, up to 384 px, and Open for a file.
+      const figure = el("div", "tool-preview");
+      const image = el("img", "tool-image");
+      image.src = src;
+      image.alt = name;
+      figure.append(image);
+      if (location && actions) {
+        const at = location;
+        const open = el("button", "link tool-preview-open", `Open ${name}`);
+        open.addEventListener("click", () => actions.openLocation(at));
+        figure.append(open);
+      }
+      files.before(figure);
+    },
   };
 }

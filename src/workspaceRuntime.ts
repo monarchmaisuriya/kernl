@@ -424,16 +424,26 @@ export class WorkspaceRuntime {
     return this.session.id;
   }
 
-  /** Keeps the conversation (and what the agent needs to continue it) in the session store. */
-  async saveSession() {
+  /**
+   * Keeps a conversation (and what the agent needs to continue it) in the session store. Everything
+   * is read when the save starts, before any await: New Chat and an agent switch replace
+   * `this.session` and the runner's thread right after starting a save of the one they leave.
+   * Only the conversation on screen takes the runner's history and harness; another one (a preview
+   * that arrived after New Chat) is saved as it is.
+   */
+  async saveSession(session = this.session) {
+    const current = session === this.session;
+    const exporting = current ? this.runner?.exportHistory() : undefined;
+    const harness = this.harness;
+    const key = this.sessionKey;
     try {
-      const history = await this.runner?.exportHistory();
-      if (history !== undefined) this.session.history = history;
+      const history = await exporting;
+      if (history !== undefined) session.history = history;
     } catch (err) {
       this.host.log.error(`[${this.label}] could not read the conversation to save it`, err);
     }
-    this.session.harness = this.harness;
-    await this.host.sessions.save(this.sessionKey, this.session).catch((err) => this.host.log.error(`[${this.label}] could not save the conversation`, err));
+    if (current) session.harness = harness;
+    await this.host.sessions.save(key, session).catch((err) => this.host.log.error(`[${this.label}] could not save the conversation`, err));
   }
 
   /** Shows a stored conversation and continues it with its agent (the caller switched the harness to match). */
@@ -573,6 +583,25 @@ export class WorkspaceRuntime {
     return this.jobs;
   }
 
+  /**
+   * A tool's image is saved as a file (not inside the conversation) and the conversation keeps its
+   * path, so the preview comes back after a reload without the conversation growing by megabytes.
+   */
+  private async savePreview(callId: string, image: { mimeType: string; data: string }) {
+    const session = this.session;
+    const file = await this.host.sessions.savePreview(session.id, callId, image).catch((err) => {
+      this.host.log.error(`[${this.label}] couldn't save a tool image`, err);
+      return undefined;
+    });
+    if (!file) return;
+    // The preview belongs to the conversation the image came from: shown only if that's still the
+    // one on screen, and saved either way (it usually arrives after the run's own save).
+    const preview = { type: "toolPreview" as const, workspace: this.id, id: callId, file };
+    if (this.session === session) this.post(preview);
+    else session.events.push(preview);
+    await this.saveSession(session);
+  }
+
   /** Everything shown for this workspace is also kept in its session ("cleared" only resets the view). */
   private post(m: TranscriptEvent) {
     this.host.post(m);
@@ -606,6 +635,7 @@ export class WorkspaceRuntime {
       },
       configChanged: (values) => this.agentChangedConfig(values),
       toolResult: (id, name, output, failed) => this.post({ type: "toolResult", workspace: ws, id, name, output: output.slice(0, 4000), ...(failed ? { failed: true } : {}) }),
+      toolImage: (id, image) => void this.savePreview(id, image),
       usage: (inputTokens, outputTokens) => this.post({ type: "usage", workspace: ws, inputTokens, outputTokens }),
       subagentText: (id, delta) => this.post({ type: "subagentText", workspace: ws, id, delta }),
       finished: (reason, message) => {

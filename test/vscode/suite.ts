@@ -354,6 +354,39 @@ export async function run() {
     reloaded.dispose();
   });
 
+  await check("New Chat saves the conversation it leaves: its agent history, and a tool image's preview that arrived after the run", async () => {
+    const base = runtimeHost(true, () => true, []);
+    const rich = { ...fakeAgent, env: { ...fakeAgent.env, FAKE_SCENARIO: "rich" } };
+    const host: RuntimeHost = { ...base, providerSettings: () => ({ ...base.providerSettings(), agentCommands: { "claude-code": rich } }) };
+    const posted: any[] = [];
+    host.post = (m) => posted.push(m);
+    const ws = new WorkspaceRuntime("main", "Main", root, "claude-code", host);
+    const until = async (what: string, ok: () => boolean | Promise<boolean>) => {
+      const deadline = Date.now() + 20_000;
+      while (!(await ok())) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    };
+    try {
+      await ws.send("explain the hook (saved on New Chat)");
+      await until("the image's preview", () => posted.some((m) => m.type === "toolPreview" && m.id === "i1"));
+      ws.newThread();
+      const saved = async () => {
+        const item = (await host.sessions.list(ws.sessionKey)).find((s) => s.title.startsWith("explain the hook (saved on New Chat)") || s.title === "Explain the rewards hook");
+        return item ? host.sessions.load(ws.sessionKey, item.id) : undefined;
+      };
+      await until("the left conversation saved with its preview", async () => !!(await saved())?.events.some((e) => e.type === "toolPreview"));
+      const record = (await saved())!;
+      const file = (record.events.find((e) => e.type === "toolPreview") as any).file;
+      assert.ok(existsSync(join(host.sessions.previewsDir, file)), "the saved preview points at its file");
+      assert.equal(record.harness, "claude-code");
+      assert.ok((record.history as any)?.sessionId, "the agent's own session, so it can continue");
+    } finally {
+      ws.dispose();
+    }
+  });
+
   await check("Send shows the message and running state at once; Stop while the restore point is still being taken ends the run before the agent starts", async () => {
     const posted: any[] = [];
     const host = runtimeHost(true, () => true, posted);
@@ -625,6 +658,10 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       assert.equal(command?.description, "Find usages of useRewards", "a command leads with the agent's description");
       assert.equal(command?.command, "grep -n useRewards src", "without the cd into the workspace folder");
       assert.equal(command?.lookup, "search", "a read-only command folds in with the other lookups");
+      // The image is written to disk first, so its preview arrives just after the run ends.
+      const preview = await waitFor("the read image's preview", (m) => m.type === "toolPreview" && m.id === "i1", from);
+      assert.match(preview.file, /\.png$/, "a read image is saved and shown as a preview");
+      assert.ok(got.some((m) => m.type === "status" && typeof m.previewBase === "string") || delivered.some((m) => m.type === "status" && typeof m.previewBase === "string"), "the panel knows where previews load from");
       assert.ok(got.some((m) => m.type === "toolCall" && m.id === "e1" && m.diff?.added === 2 && m.diff?.removed === 1));
       assert.ok(got.some((m) => m.type === "plan" && m.entries.length === 2));
       assert.ok(got.some((m) => m.type === "context" && m.used === 150000 && m.size === 200000));

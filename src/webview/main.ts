@@ -351,7 +351,7 @@ function placeToolRow(p: Pane, container: HTMLElement, row: HTMLElement, quiet: 
     row.dataset.quiet = quiet;
     return container.append(row);
   }
-  const created = createToolGroup();
+  const created = createToolGroup((path) => send({ type: "openLocation", workspace: p.view.id, path }));
   p.toolGroups.set(created.element, created);
   previous.replaceWith(created.element);
   created.add(previous, earlier);
@@ -673,6 +673,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       const tool = createToolRow(m.name, args, m.args, m.name === "task", m, {
         showDiff: () => send({ type: "showToolDiff", workspace, id }),
         openLocation: (l) => send({ type: "openLocation", workspace, path: l.path, ...(l.line ? { line: l.line } : {}) }),
+        openLink: (url) => send({ type: "openLink", url }),
       });
       const row = tool.row;
       if (m.name === "task") {
@@ -716,6 +717,13 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       if (tool) tool.setResult(m.output, m.failed === true);
       else if (row) row.append(el("pre", "result", m.output));
       else p.log.append(el("pre", "result", `${m.name}\n${m.output}`));
+      refreshGroups(p);
+      break;
+    }
+    case "toolPreview": {
+      // Only a saved preview's own name (conversation/call-id.ext) is accepted, under the host's previews folder.
+      if (!status?.previewBase || !/^[\w-]+\/[\w-]+\.(png|jpg|gif|webp)$/.test(m.file)) break;
+      p.tools.get(m.id)?.addImage(`${status.previewBase}/${m.file}`);
       refreshGroups(p);
       break;
     }

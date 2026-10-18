@@ -146,7 +146,7 @@ export interface MenuItemView {
 }
 
 export type HostToPanel =
-  | { type: "status"; ready: boolean; problem?: string; provider: string; model: string; restricted: boolean; thinkingDisplay: "auto" | "collapsed" | "expanded" }
+  | { type: "status"; ready: boolean; problem?: string; provider: string; model: string; restricted: boolean; thinkingDisplay: "auto" | "collapsed" | "expanded"; previewBase?: string }
   /** The full workspace list and run state; sent on ready and whenever it changes. */
   | { type: "workspaces"; items: WorkspaceView[]; harnesses: HarnessView[]; focus?: string; problem?: string }
   /** Sent whenever a webview becomes ready: every open approval card. */
@@ -181,6 +181,8 @@ export type HostToPanel =
   /** The agent's own slash commands (ACP), offered on "/". */
   | { type: "commands"; workspace: string; items: SkillView[] }
   | { type: "toolResult"; workspace: string; id: string; name: string; output: string; failed?: boolean }
+  /** An image a tool read or produced, saved in kernl's storage: `file` is relative to the status's `previewBase`. */
+  | { type: "toolPreview"; workspace: string; id: string; file: string }
   | { type: "approval"; card: ApprovalCard }
   | { type: "approvalClosed"; id: string }
   | { type: "usage"; workspace: string; inputTokens: number; outputTokens: number }

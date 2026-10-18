@@ -22,7 +22,12 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   /** The panel was hidden or closed (an open in-panel menu can't be answered any more). */
   readonly onDidHide = this.hidden.event;
 
-  constructor(private extensionUri: vscode.Uri, private redactor: Redactor, private onMessage: (m: PanelToHost) => void) {}
+  constructor(private extensionUri: vscode.Uri, private redactor: Redactor, private onMessage: (m: PanelToHost) => void, private previewsDir?: vscode.Uri) {}
+
+  /** Where the webview loads tool images from (see SessionStore.previewsDir), once it exists. */
+  previewBase(): string | undefined {
+    return this.view && this.previewsDir ? this.view.webview.asWebviewUri(this.previewsDir).toString() : undefined;
+  }
 
   /** True while the panel is on screen and its webview is listening. */
   get visible(): boolean {
@@ -34,7 +39,9 @@ export class AgentPanel implements vscode.WebviewViewProvider {
     view.onDidChangeVisibility(() => view.visible || this.hidden.fire());
     const webview = view.webview;
     this.channel.attach((m) => void webview.postMessage(m));
-    webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "out", "webview"), vscode.Uri.joinPath(this.extensionUri, "media")] };
+    // The panel's own files, plus tool images (only that folder of kernl's storage, not the conversations).
+    const roots = [vscode.Uri.joinPath(this.extensionUri, "out", "webview"), vscode.Uri.joinPath(this.extensionUri, "media"), ...(this.previewsDir ? [this.previewsDir] : [])];
+    webview.options = { enableScripts: true, localResourceRoots: roots };
     webview.html = panelHtml(webview, this.extensionUri);
     webview.onDidReceiveMessage((m) => {
       if (isPanelToHost(m)) this.onMessage(m);

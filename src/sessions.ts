@@ -41,8 +41,33 @@ export interface SessionSummary {
   messages: number;
 }
 
+/** Image types kept as previews: raster only (an SVG can carry script and links), by file extension. */
+const PREVIEW_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+export const PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+const safeName = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_");
+
 export class SessionStore {
   constructor(private dir: string) {}
+
+  /**
+   * Where tool images are kept, one folder per conversation; the panel may load files from here
+   * (and nothing else in this store). Inside the store, so "Delete conversations" removes them too.
+   */
+  get previewsDir(): string {
+    return join(this.dir, "previews");
+  }
+
+  /** Saves a tool's image; returns its path under `previewsDir`, or undefined for a type or size that isn't kept. */
+  async savePreview(sessionId: string, callId: string, image: { mimeType: string; data: string }): Promise<string | undefined> {
+    const ext = PREVIEW_TYPES[image.mimeType.toLowerCase()];
+    if (!ext) return undefined;
+    const bytes = Buffer.from(image.data, "base64");
+    if (!bytes.length || bytes.length > PREVIEW_MAX_BYTES) return undefined;
+    const file = `${safeName(sessionId)}/${safeName(callId)}-${randomUUID().slice(0, 8)}.${ext}`;
+    await mkdir(join(this.previewsDir, safeName(sessionId)), { recursive: true });
+    await writeFile(join(this.previewsDir, file), bytes);
+    return file;
+  }
 
   private folder(workspaceKey: string) {
     return join(this.dir, workspaceKey.replace(/[^a-zA-Z0-9_-]/g, "_"));

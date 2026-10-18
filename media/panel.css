@@ -103,11 +103,31 @@ body.vscode-reduce-motion .message-actions { transition: none; }
 /* Reads and searches in a row, as one line that opens to them */
 .tool-group-failed { color: var(--vscode-errorForeground); }
 .tool-group-failed { flex: none; }
-.tool-group > summary > .icon:last-child { margin-left: auto; }
+.tool-group-files { display: inline-flex; gap: 4px; min-width: 0; overflow: hidden; }
+.tool-file-chip { display: inline-flex; align-items: center; gap: 3px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--border); font-size: 0.88em; white-space: nowrap; color: var(--muted); }
+.tool-file-chip:hover { color: var(--vscode-foreground); }
+.tool-file-more { font-size: 0.88em; color: var(--muted); }
+.tool-group-thumbs { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
 .tool-group-rows { margin: 2px 0 4px 18px; display: flex; flex-direction: column; }
 /* A command: its description (cut with an ellipsis past 60%), then the command, dimmer */
 .tool.command .tool-action { flex: 0 1 auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool.command .tool-target { color: var(--muted); }
+/* An image a call read or produced: a thumbnail on its line (and its group's), larger when opened */
+.tool-thumb { width: 24px; height: 24px; flex: none; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); }
+.tool > summary > .tool-thumb { margin-left: auto; }
+.tool > summary > .tool-thumb + .tool-time, .tool > summary > .tool-thumb ~ .tool-thumb { margin-left: 0; }
+.tool-thumb-more { font-size: 0.88em; font-variant-numeric: tabular-nums; }
+.tool-preview { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.tool-image { display: block; max-width: min(100%, 384px); max-height: 384px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+.tool-preview-open { padding: 0; font-size: 0.88em; }
+/* Web: a fetched page's site on its line; search hits as title + site links when opened */
+.tool-site { color: var(--vscode-textLink-foreground); }
+.tool-hits { flex: none; margin-left: auto; font-size: 0.88em; color: var(--muted); }
+.tool > summary > .tool-hits + .tool-time { margin-left: 0; }
+.tool-hit-list { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.tool-hit { display: inline-flex; gap: 8px; padding: 0; text-align: left; max-width: 100%; }
+.tool-hit-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-hit-site { flex: none; color: var(--muted); font-size: 0.9em; }
 .tool-output-preview { display: flex; flex-direction: column; gap: 2px; }
 .tool-output-all { align-self: flex-start; padding: 0; font-size: 0.88em; }
 .tool-time { margin-left: auto; padding-left: 6px; flex: none; font-variant-numeric: tabular-nums; font-size: 0.9em; }
@@ -318,3 +338,5 @@ body.vscode-high-contrast .chip, body.vscode-high-contrast .tool, body.vscode-hi
 body.vscode-high-contrast .anchored-menu, body.vscode-high-contrast .mode-menu, body.vscode-high-contrast .plan-bar, body.vscode-high-contrast .card, body.vscode-high-contrast .tool-output { border: 1px solid var(--vscode-contrastBorder); }
 body.vscode-high-contrast .menu-item:focus-visible, body.vscode-high-contrast .mode-option:focus-visible { outline: 1px dashed var(--vscode-contrastActiveBorder, var(--vscode-focusBorder)); }
 body.vscode-reduce-motion .tool > summary > .icon:last-child, body.vscode-reduce-motion .thinking > summary > .icon:last-child, body.vscode-reduce-motion .plan-bar > summary > .icon:last-child { transition: none; }
+/* kernl's mark (media/mark.png), in the text color like the SVG icons (icons.ts) */
+.kernl-mark { display: inline-block; flex: none; background-color: currentColor; -webkit-mask: url(mark.png) center / contain no-repeat; mask: url(mark.png) center / contain no-repeat; }

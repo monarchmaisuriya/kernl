@@ -1008,3 +1008,108 @@ test("read-only shell lookups fold in with reads and searches, even when the com
   assert.equal(p.visibleLog().querySelectorAll(":scope > .tool").length, 2, "the group, then npm test on its own line");
   assert.equal(group.querySelectorAll(".tool-group-rows > .tool")[1].querySelector(".tool-action")!.textContent, "Find x", "inside, the row keeps its description");
 });
+
+test("kernl's mark (the logo's glyph) marks the agent: the empty state, the Working indicator, thinking, and Auto mode", () => {
+  const p = loadPanel();
+  p.host(workspaces([{ ...MAIN, mode: "auto", modes: [{ id: "auto", label: "Auto mode", icon: "kernl", description: "" }, { id: "ask", label: "Ask before edits", icon: "shield", description: "" }] }]));
+  const big = p.doc.querySelector<HTMLElement>(".empty .kernl-mark")!;
+  assert.ok(big, "the empty state");
+  assert.equal(big.style.width, "40px");
+  assert.equal(big.getAttribute("aria-hidden"), "true");
+  assert.ok(p.doc.querySelector(".mode .kernl-mark"), "the Auto mode chip");
+  p.host(workspaces([{ ...MAIN, running: true }]));
+  assert.ok(p.doc.querySelector(".working-mark .kernl-mark"), "the Working indicator");
+  p.host({ type: "thinking", workspace: "main", delta: "hmm" });
+  assert.ok(p.doc.querySelector(".thinking summary .kernl-mark"), "thinking");
+  assert.equal(p.doc.querySelectorAll("svg path[d^='M3.33 3h2.13']").length, 0, "the old hand-drawn K is gone");
+});
+
+test("an image a call read shows as a thumbnail on its line and its group's line, and larger with Open when opened", () => {
+  const p = loadPanel();
+  p.host({ ...STATUS, previewBase: "https://res.test/previews" } as HostToPanel);
+  p.host(workspaces([WT]));
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "i1", name: "Read logo.png", args: "{}", kind: "read", status: "running", locations: [{ path: "media/logo.png" }] });
+  p.host({ type: "toolResult", workspace: "wt:fix", id: "i1", name: "Read logo.png", output: "" });
+  p.host({ type: "toolPreview", workspace: "wt:fix", id: "i1", file: "conv-1/i1-abcd1234.png" });
+  const row = p.doc.querySelector<HTMLDetailsElement>(".tool")!;
+  const thumb = row.querySelector<HTMLImageElement>(":scope > summary > .tool-thumb")!;
+  assert.equal(thumb.src, "https://res.test/previews/conv-1/i1-abcd1234.png");
+  assert.equal(thumb.getAttribute("aria-hidden"), "true", "decorative on the line");
+  const image = row.querySelector<HTMLImageElement>(".tool-preview .tool-image")!;
+  assert.equal(image.alt, "logo.png");
+  p.button("Open logo.png", row)!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "openLocation", workspace: "wt:fix", path: "media/logo.png" });
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "r2", name: "Read a.ts", args: "{}", kind: "read", status: "running" });
+  const group = p.doc.querySelector<HTMLElement>(".tool-group")!;
+  assert.equal(group.querySelectorAll(":scope > summary .tool-thumb").length, 1, "the group's line carries its members' thumbnails");
+  for (const bad of ["../../secrets.png", "conv/x.svg", "https://evil.test/x.png"]) {
+    p.host({ type: "toolPreview", workspace: "wt:fix", id: "r2", file: bad });
+  }
+  assert.equal(p.all(".tool-thumb").length, 2, "only a saved preview's own name is loaded (the row's and the group's copy)");
+});
+
+test("a group shows at most three thumbnails, then how many more", () => {
+  const p = loadPanel();
+  p.host({ ...STATUS, previewBase: "https://res.test/previews" } as HostToPanel);
+  p.host(workspaces([WT]));
+  for (const n of [1, 2, 3, 4, 5]) {
+    p.host({ type: "toolCall", workspace: "wt:fix", id: `i${n}`, name: `Read ${n}.png`, args: "{}", kind: "read", status: "running" });
+    p.host({ type: "toolPreview", workspace: "wt:fix", id: `i${n}`, file: `c/i${n}-0000000${n}.png` });
+  }
+  const line = p.doc.querySelector(".tool-group > summary")!;
+  assert.equal(line.querySelectorAll(".tool-group-thumbs .tool-thumb").length, 3);
+  assert.equal(line.querySelector(".tool-thumb-more")!.textContent, "+2");
+});
+
+test("a group's line names the files it read as chips that open them, without opening the group", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT]));
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "r1", name: "Read src/a.ts", args: "{}", kind: "read", status: "running", locations: [{ path: "src/a.ts", line: 3 }] });
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "s1", name: "grep x", args: "{}", kind: "search", status: "running" });
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "r2", name: "Read src/a.ts", args: "{}", kind: "read", status: "running", locations: [{ path: "src/a.ts", line: 40 }] });
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "r3", name: "Read lib/b.ts", args: "{}", kind: "read", status: "running", locations: [{ path: "lib/b.ts" }] });
+  const group = p.doc.querySelector<HTMLDetailsElement>(".tool-group")!;
+  const chips = [...group.querySelectorAll<HTMLButtonElement>(":scope > summary .tool-file-chip")];
+  assert.deepEqual(chips.map((c) => c.textContent), ["a.ts", "b.ts"], "each file once, by name");
+  assert.equal(chips[1].title, "Open lib/b.ts");
+  chips[1].click();
+  assert.deepEqual(p.sent.at(-1), { type: "openLocation", workspace: "wt:fix", path: "lib/b.ts" });
+  assert.equal(group.open, false, "the chip opens the file, not the group");
+
+  const k = loadPanel();
+  k.host(workspaces([MAIN]));
+  k.host({ type: "toolCall", workspace: "main", id: "a", name: "read_file", args: JSON.stringify({ file_path: "/src/app.ts" }) });
+  k.host({ type: "toolCall", workspace: "main", id: "b", name: "grep", args: JSON.stringify({ pattern: "x" }) });
+  assert.deepEqual([...k.doc.querySelectorAll(".tool-file-chip")].map((c) => c.textContent), ["app.ts"], "kernl's own read_file names its file too");
+});
+
+test("a fetched page shows its site on the line and its address as a link when opened; search hits become links with a count", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT]));
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "f1", name: "Fetch https://docs.example.com/guide/setup?x=1", args: JSON.stringify({ url: "https://docs.example.com/guide/setup?x=1", prompt: "How to set up?" }), kind: "fetch", status: "running" });
+  const fetchRow = p.all(".tool")[0];
+  assert.equal(fetchRow.querySelector(".tool-action")!.textContent, "Fetch");
+  assert.equal(fetchRow.querySelector(".tool-target")!.textContent, "docs.example.com", "the site, not the whole address");
+  assert.equal(fetchRow.querySelector("summary")!.title, "Fetch https://docs.example.com/guide/setup?x=1");
+  p.button("https://docs.example.com/guide/setup?x=1", fetchRow)!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "openLink", url: "https://docs.example.com/guide/setup?x=1" });
+
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "w1", name: 'Search "acp protocol"', args: JSON.stringify({ query: "acp protocol" }), kind: "fetch", status: "running" });
+  p.host({ type: "toolResult", workspace: "wt:fix", id: "w1", name: "search", output: "Agent Client Protocol (https://agentclientprotocol.com/)\nZed docs (https://zed.dev/docs/ai)" });
+  const searchRow = p.all(".tool")[1];
+  assert.equal(searchRow.querySelector(".tool-hits")!.textContent, "2 results");
+  const hits = [...searchRow.querySelectorAll<HTMLButtonElement>(".tool-hit")];
+  assert.deepEqual(hits.map((h) => [h.querySelector(".tool-hit-title")!.textContent, h.querySelector(".tool-hit-site")!.textContent]), [["Agent Client Protocol", "agentclientprotocol.com"], ["Zed docs", "zed.dev"]]);
+  hits[1].click();
+  assert.deepEqual(p.sent.at(-1), { type: "openLink", url: "https://zed.dev/docs/ai" });
+  assert.equal(searchRow.querySelector(".tool-output"), null, "the raw lines aren't repeated");
+  assert.equal(p.doc.querySelectorAll("img").length, 0, "nothing is loaded from the web: no favicons");
+
+  p.host({ type: "toolCall", workspace: "wt:fix", id: "f2", name: "Fetch javascript:alert(1)", args: JSON.stringify({ url: "javascript:alert(1)" }), kind: "fetch", status: "running" });
+  assert.equal(p.all(".tool")[2].querySelector(".tool-site"), null, "only http(s) pages get a site chip and a link");
+
+  const k = loadPanel();
+  k.host(workspaces([MAIN]));
+  k.host({ type: "toolCall", workspace: "main", id: "n1", name: "browser_navigate", args: JSON.stringify({ url: "http://localhost:5173/login" }) });
+  assert.deepEqual([k.doc.querySelector(".tool-action")!.textContent, k.doc.querySelector(".tool-site")!.textContent], ["Opening", "localhost"], "kernl's browser shows the site too");
+});

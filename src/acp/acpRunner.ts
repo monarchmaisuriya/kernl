@@ -58,6 +58,16 @@ export function describeCommand(rawInput: unknown, cwd: string): Pick<ToolInfo, 
   return { ...(command ? { command } : {}), ...(description ? { description } : {}), ...(lookup ? { lookup } : {}) };
 }
 
+/**
+ * Agents built for Markdown clients wrap a tool's output in a code fence (Claude Code: ```console
+ * around a command's output, ``` around a file). kernl shows output as plain text, so one fence
+ * around the whole text is removed; any other text is left as it is.
+ */
+export function unfenced(text: string): string {
+  const fenced = /^(`{3,})[^\n`]*\n([\s\S]*?)\n?\1\s*$/.exec(text);
+  return fenced ? fenced[2] : text;
+}
+
 /** Lines added and removed between two texts (multiset count: fast, and exact for the totals shown). */
 export function diffSize(before: string | null, after: string): { added: number; removed: number } {
   const old = new Map<string, number>();
@@ -338,8 +348,14 @@ export class AcpRunner implements Runner {
     };
     this.o.events.toolCall(id, call.title, call.rawInput ?? {}, info);
     if (call.status === "completed" || call.status === "failed") {
-      const out = (u.content ?? []).map(textOf).filter(Boolean).join("\n");
-      this.o.events.toolResult(id, call.title, out || call.status, call.status === "failed");
+      const out = (u.content ?? []).map((c: any) => unfenced(textOf(c))).filter(Boolean).join("\n");
+      // A read image (or any image a tool returns) comes as an ACP image block: base64 and its type.
+      const images = (u.content ?? [])
+        .map((c: any) => (c?.type === "content" ? c.content : c))
+        .filter((b: any) => b?.type === "image" && typeof b.data === "string" && typeof b.mimeType === "string");
+      // With an image, the preview is the output: no "completed" stand-in text.
+      this.o.events.toolResult(id, call.title, out || (images.length ? "" : call.status), call.status === "failed");
+      for (const b of images) this.o.events.toolImage?.(id, { mimeType: b.mimeType, data: b.data });
       this.calls.delete(id);
     }
   }

@@ -25,10 +25,30 @@ export interface SessionEvents {
   configChanged?(values: Record<string, string>): void;
   /** `failed`: the tool reported an error (LangChain status "error", ACP status "failed"). */
   toolResult(id: string, name: string, output: string, failed?: boolean): void;
+  /** An image a tool returned (a read image, a browser screenshot), base64, for the panel's preview. */
+  toolImage?(id: string, image: ToolImage): void;
   /** Text a delegated subagent writes, for the `task` call that started it (not the main reply). */
   subagentText?(taskId: string, delta: string): void;
   usage(inputTokens: number, outputTokens: number): void;
   finished(reason: "done" | "stopped" | "error", message?: string): void;
+}
+
+/** An image a tool read or produced (base64), as agents send it. */
+export interface ToolImage {
+  mimeType: string;
+  data: string;
+}
+
+/** Images in a tool result: `{ type: "image", mimeType, data }` (kernl's tools) or a base64 `data:` image_url. */
+export function imagesOf(content: unknown): ToolImage[] {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((b: any): ToolImage[] => {
+    const mimeType = b?.mimeType ?? b?.mime_type;
+    if (b?.type === "image" && typeof b.data === "string" && typeof mimeType === "string") return [{ mimeType, data: b.data }];
+    const url = typeof b?.image_url === "string" ? b.image_url : b?.image_url?.url;
+    const dataUrl = b?.type === "image_url" && typeof url === "string" ? /^data:([^;,]+);base64,(.*)$/s.exec(url) : null;
+    return dataUrl ? [{ mimeType: dataUrl[1], data: dataUrl[2] }] : [];
+  });
 }
 
 function textOf(content: unknown): string {
@@ -156,6 +176,7 @@ export class AgentSession implements Runner {
           flush();
           if (this.hiddenCalls.has(message.tool_call_id)) continue;
           this.events.toolResult(message.tool_call_id, message.name ?? "", textOf(message.content), message.status === "error");
+          for (const image of imagesOf(message.content)) this.events.toolImage?.(message.tool_call_id, image);
         }
       }
       flush();
@@ -187,9 +208,12 @@ export class AgentSession implements Runner {
 
   /** The thread's messages, serializable (StoredMessage[]). */
   async exportHistory(): Promise<unknown> {
+    // The thread is read now, before any await: a New Chat right after this call starts a new one.
+    const threadId = this.threadId;
+    const seed = this.seed;
     const agent: any = await this.agent();
-    const state = await agent.getState({ configurable: { thread_id: this.threadId } });
-    const messages = state?.values?.messages ?? this.seed ?? [];
+    const state = await agent.getState({ configurable: { thread_id: threadId } });
+    const messages = state?.values?.messages ?? seed ?? [];
     return messages.length ? mapChatMessagesToStoredMessages(messages) : undefined;
   }
 

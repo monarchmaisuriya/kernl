@@ -41,6 +41,7 @@ function harness(scenario: string, answer: boolean | "never", askMode: AskMode |
       title: (t) => events.push(`title:${t}`),
       configChanged: (v) => events.push(`config:mode=${v.mode}`),
       toolResult: (_id, _n, out) => events.push(`result:${out}`),
+      toolImage: (id, image) => events.push(`image:${id}:${image.mimeType}:${image.data.length}`),
       usage: () => {},
       finished: (reason, msg) => events.push(`finished:${reason}${msg ? `:${msg}` : ""}`),
     },
@@ -227,8 +228,10 @@ test("a full agent's updates all reach the panel: thinking, one tool call merged
   h.runner.dispose();
   const e = h.events;
   assert.deepEqual(e.filter((x) => x.startsWith("thinking:")), ["thinking:Look at the hook ", "thinking:before answering."]);
-  assert.deepEqual(e.filter((x) => x.startsWith("call:Read")), ["call:Read src/a.ts:pending:read:@3", "call:Read src/a.ts:running:read:@3", "call:Read src/a.ts"], JSON.stringify(e));
-  assert.ok(e.includes("result:export const a = 1;"), "its output ends it");
+  assert.deepEqual(e.filter((x) => x.startsWith("call:Read src")), ["call:Read src/a.ts:pending:read:@3", "call:Read src/a.ts:running:read:@3", "call:Read src/a.ts"], JSON.stringify(e));
+  assert.ok(e.includes("result:export const a = 1;"), "its output ends it, without the agent's code fence");
+  assert.ok(e.includes("result:src/a.ts:3"), "a command's output loses its console fence");
+  assert.ok(e.includes("image:i1:image/png:96"), `a read image is passed on, base64 with its type: ${JSON.stringify(e)}`);
   assert.ok(e.includes("command:Find usages of useRewards|grep -n useRewards src|search"), `a command leads with its description, without the cd into the session folder: ${JSON.stringify(e)}`);
   assert.ok(e.includes("call:Edit src/a.ts:running:edit") && e.includes("call:Edit src/a.ts"), JSON.stringify(e));
   assert.ok(e.includes("diff:e1:changed"));
@@ -249,6 +252,15 @@ test("a command drops only a leading cd into the session's own folder, and keeps
   assert.deepEqual(describeCommand({ command: "cd /ws" }, "/ws"), { command: "cd /ws" }, "a bare cd is the whole command");
   assert.deepEqual(describeCommand(undefined, "/ws"), {});
   assert.deepEqual(describeCommand({ command: "cat /ws/src/a.ts" }, "/ws"), { command: "cat /ws/src/a.ts", lookup: "read" }, "a read-only command is marked as a lookup");
+});
+
+test("a tool's output loses the code fence an agent wraps it in, and nothing else", async () => {
+  const { unfenced } = await import("../../src/acp/acpRunner");
+  assert.equal(unfenced("```console\nsrc/a.ts:3: useRewards\n```"), "src/a.ts:3: useRewards", "Claude Code's command output");
+  assert.equal(unfenced("````\nhas ``` inside\n````"), "has ``` inside", "a longer fence around text with a fence in it");
+  assert.equal(unfenced("```\n```"), "", "empty output");
+  assert.equal(unfenced("see:\n```\nx\n```"), "see:\n```\nx\n```", "text that only contains a fence stays");
+  assert.equal(unfenced("plain output"), "plain output");
 });
 
 test("an edit's size counts added and removed lines; a new file is all added", async () => {

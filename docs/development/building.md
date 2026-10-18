@@ -20,6 +20,17 @@ Then run **Developer: Reload Window** in VS Code. Until the reload, the window k
 
 On macOS without `code` on the PATH, use `"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"`.
 
+## Changing the logo
+
+`kernl.png` is the logo. After replacing it, regenerate the two images made from it:
+
+```bash
+cp kernl.png media/icon.png
+swift scripts/logo-mark.swift kernl.png media/mark.png
+```
+
+`media/icon.png` is the extension's icon. `media/mark.png` is the logo's light glyph as a transparent, single-color image: the activity bar and the panel paint it in the theme's color.
+
 ## Check the installed build
 
 The installed copy lives in `~/.vscode/extensions/local.kernl-<version>/`. To confirm it matches what you built:

@@ -102,7 +102,9 @@ export class Controller implements vscode.Disposable {
   constructor(private context: vscode.ExtensionContext) {
     this.keys = new KeyStore(context.secrets, this.redactor);
     this.agentCredentials = new AgentCredentials(context.secrets, this.redactor);
-    this.panel = new AgentPanel(context.extensionUri, this.redactor, (m) => void this.onPanelMessage(m).catch((e) => this.fail("Panel action failed", e)));
+    const sessions = new SessionStore(join(context.globalStorageUri.fsPath, "sessions"));
+    // The panel may load tool images from the store's previews folder (and nothing else of it).
+    this.panel = new AgentPanel(context.extensionUri, this.redactor, (m) => void this.onPanelMessage(m).catch((e) => this.fail("Panel action failed", e)), vscode.Uri.file(sessions.previewsDir));
     this.panelPrompts = new PanelPrompts(this.panel, vscodePrompts);
     this.prompts = this.panelPrompts;
     this.host = {
@@ -113,7 +115,7 @@ export class Controller implements vscode.Disposable {
       deepAgentsProblem: () => this.deepAgentsProblem(),
       providerSettings: () => readSettings(),
       approvalRules: () => approvalRules().rules,
-      sessions: new SessionStore(join(context.globalStorageUri.fsPath, "sessions")),
+      sessions,
       checkpoints: new Checkpoints(join(context.globalStorageUri.fsPath, "checkpoints")),
       userDir: userCustomisationDir(),
       claudeDir: claudeConfigDir(),
@@ -815,7 +817,7 @@ export class Controller implements vscode.Disposable {
     const resolved = resolveProvider(s);
     const model = "error" in resolved ? s.model : resolved.model;
     const thinkingDisplay = s.thinkingDisplay === "collapsed" || s.thinkingDisplay === "expanded" ? s.thinkingDisplay : "auto";
-    this.panel.post({ type: "status", ready: !problem, problem, provider: s.provider, model, restricted: scope.ok && !scope.trusted, thinkingDisplay });
+    this.panel.post({ type: "status", ready: !problem, problem, provider: s.provider, model, restricted: scope.ok && !scope.trusted, thinkingDisplay, previewBase: this.panel.previewBase() });
   }
 
   /** Each workspace decides whether the change concerns it; running ones rebuild after their run. */

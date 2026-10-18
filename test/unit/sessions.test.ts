@@ -1,7 +1,7 @@
 // Stored conversations: saved per workspace, listed newest first, empty ones not kept; a stored
 // kernl conversation continues with its history; cutting history stops before a given turn.
 import { strict as assert } from "node:assert";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -52,6 +52,14 @@ test("a stored kernl conversation continues: the next message sees the earlier t
   assert.match(resumed.seen(), /MARK-Q[\s\S]*MARK-A[\s\S]*MARK-F/);
 });
 
+test("a history export started just before a New Chat returns the conversation it started on, not the new empty one", async () => {
+  const first = await runAgent([new AIMessage("answer one MARK-A")]);
+  await first.session.send("question one MARK-Q");
+  const exporting = first.session.exportHistory(); // New Chat starts the save, then...
+  first.session.newThread(); // ...starts the new thread at once
+  assert.match(JSON.stringify(await exporting), /MARK-Q[\s\S]*MARK-A/);
+});
+
 test("cutting history stops right before the chosen user turn", () => {
   const h = [{ type: "human" }, { type: "ai" }, { type: "human" }, { type: "ai" }, { type: "tool" }, { type: "human" }, { type: "ai" }];
   assert.equal((cutHistory(h, 0) as unknown[]).length, 0);
@@ -89,4 +97,17 @@ test("queued messages are kept per workspace with their attachments, don't show 
   await store.saveQueue("ws1", items);
   await store.clear();
   assert.deepEqual(await store.loadQueue("ws1"), [], "Clear history clears queued messages too");
+});
+
+test("a tool's image is saved as a file next to the conversations: raster types only, up to 5 MB, removed with them", async () => {
+  const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-")));
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+  const file = await store.savePreview("conv-1", "call/1", { mimeType: "image/png", data: png });
+  assert.match(file!, /^conv-1\/call_1-[0-9a-f]{8}\.png$/, "inside the conversation's folder, a safe name");
+  assert.deepEqual(readFileSync(join(store.previewsDir, file!)), Buffer.from(png, "base64"));
+  assert.equal(await store.savePreview("conv-1", "c2", { mimeType: "image/svg+xml", data: Buffer.from("<svg/>").toString("base64") }), undefined, "an SVG can carry script and links");
+  assert.equal(await store.savePreview("conv-1", "c3", { mimeType: "image/png", data: Buffer.alloc(5 * 1024 * 1024 + 1).toString("base64") }), undefined, "over 5 MB");
+  assert.equal(await store.savePreview("conv-1", "c4", { mimeType: "image/png", data: "" }), undefined, "empty");
+  await store.clear();
+  assert.equal(existsSync(join(store.previewsDir, file!)), false, "Delete conversations removes them too");
 });
