@@ -2,8 +2,10 @@ import * as vscode from "vscode";
 import { CLI_AGENT_IDS, CLI_AGENTS, type CliAgentId } from "./acp/agents";
 import { CREDENTIAL_ENV, DEEPSEEK_ANTHROPIC_URL } from "./acp/credentials";
 import { loginCommand } from "./connections/agentChecks";
+import { modelsRequest } from "./connections/keyCheck";
 import { addCustomProvider, type KeyTargets, keyStored, useProvider } from "./keyCommands";
-import { BUILT_IN_PROVIDERS, customProviders, type ProviderId, resolveProvider } from "./providers/registry";
+import { listModels } from "./providers/modelList";
+import { BUILT_IN_PROVIDERS, type CustomProvider, customProviders, keyRequired, missingSecretHeader, type ProviderId, providerApi, resolveProvider } from "./providers/registry";
 
 /**
  * The provider and login menus, all native QuickPicks:
@@ -27,15 +29,16 @@ interface ProviderEntry {
   label: string;
   keyRequired: boolean;
   hasKey: boolean;
+  custom?: CustomProvider;
 }
 
 async function providers(t: KeyTargets): Promise<ProviderEntry[]> {
   const custom = customProviders(config().get("customProviders"));
-  const ids: { id: ProviderId; label: string }[] = [
+  const ids: { id: ProviderId; label: string; custom?: CustomProvider }[] = [
     ...BUILT_IN_PROVIDERS.map((id) => ({ id: id as ProviderId, label: BUILT_IN_LABELS[id] })),
-    ...("error" in custom ? [] : custom).map((c) => ({ id: `custom:${c.id}` as ProviderId, label: c.label })),
+    ...("error" in custom ? [] : custom).map((c) => ({ id: `custom:${c.id}` as ProviderId, label: c.label, custom: c })),
   ];
-  return Promise.all(ids.map(async (p) => ({ ...p, keyRequired: p.id !== "openai-compatible", hasKey: !!(await t.keys.get(p.id)) })));
+  return Promise.all(ids.map(async (p) => ({ ...p, keyRequired: keyRequired(p.id, p.custom), hasKey: !!(await t.keys.get(p.id)) })));
 }
 
 const keyStatus = (p: ProviderEntry) => (p.hasKey ? "key stored" : p.keyRequired ? "no key yet" : "no key needed");
@@ -49,11 +52,30 @@ async function askKey(t: KeyTargets, p: ProviderEntry, offerUse = false): Promis
   return true;
 }
 
-/** Asks for a model id, suggesting the current one or the provider's default. */
+/** The provider's models, or undefined when it can't list them (then the model is typed). */
+async function providerModels(t: KeyTargets, p: ProviderEntry): Promise<string[] | undefined> {
+  const auth = await t.keys.auth(p.id, config().get("customProviders"));
+  if ((p.keyRequired && !auth.apiKey) || (p.custom && missingSecretHeader(p.custom, auth))) return undefined;
+  const req = modelsRequest({ id: p.id, baseUrl: p.id === "openai-compatible" ? config().get("baseUrl", "") || undefined : p.custom?.baseUrl, custom: p.custom }, auth);
+  return req && listModels(req, providerApi({ provider: p.id, custom: p.custom }), { timeoutMs: 5_000 });
+}
+
+const TYPE_MODEL = "Type a model id...";
+
+/** Picks a model from the provider's list (the current or default one marked), or asks for an id when there is no list or the user chooses to type one. */
 async function askModel(t: KeyTargets, p: ProviderEntry): Promise<string | undefined> {
   const current = config().get<string>("provider") === p.id ? config().get<string>("model", "") : "";
   const resolved = resolveProvider({ provider: p.id, model: current, baseUrl: config().get("baseUrl", ""), customProviders: config().get("customProviders") });
   const suggested = "error" in resolved ? current : resolved.model;
+  const ids = await providerModels(t, p);
+  if (ids) {
+    const picked = await t.prompts.pick(
+      [...ids.map((id) => ({ label: id, description: id === suggested ? (current ? "current" : "default") : undefined, id })), { label: TYPE_MODEL, description: "a model this list doesn't show", id: undefined }],
+      { title: `Model for ${p.label}` },
+    );
+    if (!picked) return undefined;
+    if (picked.id) return picked.id;
+  }
   return t.prompts.input({ title: `Model for ${p.label}`, value: suggested, prompt: "A model id, e.g. claude-sonnet-5-5, gpt-5.6, deepseek-flash. Empty uses the provider's default when it has one", ignoreFocusOut: true });
 }
 
@@ -81,7 +103,7 @@ export async function pickModel(t: KeyTargets): Promise<string[] | undefined> {
 /** "Manage providers": key status per provider; set, replace, remove, or test a key; add a custom provider. */
 export async function manageProviders(t: KeyTargets, test: (provider: ProviderId, model: string) => Promise<string>): Promise<string[] | undefined> {
   const list = await providers(t);
-  const ADD = { label: "$(add) Add a custom provider...", description: "any OpenAI-compatible service" };
+  const ADD = { label: "$(add) Add a custom provider...", description: "any OpenAI- or Anthropic-compatible service, with headers" };
   const picked = await t.prompts.pick<vscode.QuickPickItem & { provider?: ProviderEntry }>(
     [...list.map((p) => ({ label: p.label, description: keyStatus(p), provider: p })), ADD],
     { title: "kernl: providers for the kernl agent" },

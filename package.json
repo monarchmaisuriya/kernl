@@ -146,6 +146,26 @@
         "command": "kernl.clearHistory",
         "title": "Delete conversations and checkpoints",
         "category": "kernl"
+      },
+      {
+        "command": "kernl.open",
+        "title": "Open kernl",
+        "category": "kernl"
+      },
+      {
+        "command": "kernl.ask",
+        "title": "Ask kernl…",
+        "category": "kernl"
+      },
+      {
+        "command": "kernl.askAboutSelection",
+        "title": "Ask kernl about this file or selection",
+        "category": "kernl"
+      },
+      {
+        "command": "kernl.quickMenu",
+        "title": "Menu",
+        "category": "kernl"
       }
     ],
     "configuration": [
@@ -200,7 +220,45 @@
                 ]
               }
             },
-            "markdownDescription": "Optional model parameters for Deep Agents:\n\n- `temperature`: 0 to 2 (0 to 1 for anthropic)\n- `maxOutputTokens`: the longest reply\n- `reasoningEffort`: `low`, `medium`, or `high`. OpenAI-style providers get reasoning effort, anthropic gets extended thinking (2048 / 8192 / 24576 tokens; not with `temperature`), google gets a thinking level. Not supported for deepseek.\n\nA value a provider can't take is named in the panel instead of being dropped."
+            "markdownDescription": "Optional model parameters for Deep Agents:\n\n- `temperature`: 0 to 2 (0 to 1 for anthropic)\n- `maxOutputTokens`: the longest reply\n- `reasoningEffort`: `low`, `medium`, or `high`. OpenAI-style providers get reasoning effort, anthropic gets extended thinking (2048 / 8192 / 24576 tokens; not with `temperature`), google gets a thinking level. Not supported for deepseek.\n\nA value a provider can't take is named in the panel instead of being dropped. `#kernl.modelProfiles#` overrides these per model."
+          },
+          "kernl.modelProfiles": {
+            "type": "object",
+            "default": {},
+            "order": 3,
+            "tags": [
+              "advanced"
+            ],
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "temperature": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2
+                },
+                "maxOutputTokens": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "reasoningEffort": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                },
+                "contextWindow": {
+                  "type": "integer",
+                  "minimum": 1000,
+                  "markdownDescription": "The model's context window in tokens. Deep Agents compacts the conversation at 85% of it; without it, at 170k tokens for models it doesn't know."
+                }
+              }
+            },
+            "markdownDescription": "Options per model, over `#kernl.modelOptions#`. Keys are `provider/model` (e.g. `anthropic/claude-sonnet-5-5`, `custom:gateway/team/model`) or `*` for every model; the model's own entry wins. The thinking chip writes `reasoningEffort` here (`off` turns off an effort set by a broader entry).\n\n```json\n{ \"*\": { \"contextWindow\": 200000 }, \"anthropic/claude-opus-5-5\": { \"reasoningEffort\": \"high\", \"contextWindow\": 1000000 } }\n```"
           },
           "kernl.customProviders": {
             "type": "array",
@@ -225,13 +283,36 @@
                 },
                 "model": {
                   "type": "string"
+                },
+                "protocol": {
+                  "type": "string",
+                  "enum": [
+                    "openai",
+                    "anthropic"
+                  ],
+                  "default": "openai",
+                  "markdownDescription": "The API the service speaks: `openai` (`/chat/completions`) or `anthropic` (`/v1/messages`; `baseUrl` is the part before `/v1`)."
+                },
+                "headers": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "markdownDescription": "Headers sent with every request, e.g. a team id. Not for secrets: values here are plain settings."
+                },
+                "secretHeaders": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "markdownDescription": "Names of headers whose values are kept in VS Code's secret storage (set them with **kernl: Set API key**). A provider with one needs no API key."
                 }
               },
               "additionalProperties": false
             },
             "order": 4,
             "scope": "application",
-            "markdownDescription": "OpenAI-compatible services, each selectable as `kernl.provider` `custom:<id>`. Keys are stored with **kernl: Set API key**, never here.\n\nUser settings only: a workspace can't point your keys at another server."
+            "markdownDescription": "OpenAI- or Anthropic-compatible services, each selectable as `kernl.provider` `custom:<id>`. Keys and secret header values are stored with **kernl: Add custom provider** or **kernl: Set API key**, never here.\n\nUser settings only: a workspace can't point your keys at another server."
           },
           "kernl.baseUrl": {
             "type": "string",
@@ -336,6 +417,11 @@
               "advanced"
             ],
             "markdownDescription": "Override how a CLI agent is launched: `{ \"claude-code\" | \"codex\" | \"opencode\": { \"command\": string, \"args\"?: string[], \"env\"?: object } }`. Ask-mode forcing still applies.\n\nUser settings only: a workspace can't choose what program runs."
+          },
+          "kernl.sessions.importFromAgents": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "List Claude Code's, Codex's, and OpenCode's own sessions for the folder in **Conversations** (started in a terminal or another app), and open them in kernl with their history. kernl asks each ready agent for its list (ACP `session/list`); it doesn't read their files."
           }
         }
       },
@@ -489,6 +575,23 @@
             "markdownDescription": "Check stored API keys with the provider's model list (`GET /models`: no tokens spent) when a key changes and when the Connections view opens."
           }
         }
+      },
+      {
+        "title": "Title bar and status bar",
+        "order": 11,
+        "properties": {
+          "kernl.replaceChatButton": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "markdownDescription": "Hide VS Code's chat button in the Command Center and use kernl's instead: the kernl button in the editor toolbar right below it, the `kernl` status bar item, and `Ctrl+Alt+K`. This sets VS Code's `#chat.agentsControl.enabled#` to `hidden` in your user settings; turning this off puts back what was there. (VS Code doesn't let extensions place a button in the Command Center itself.)"
+          },
+          "kernl.statusBar.show": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show `kernl` in the status bar: it opens the kernl menu, and warns when a login, key, or MCP server needs you."
+          }
+        }
       }
     ],
     "menus": {
@@ -550,6 +653,54 @@
           "command": "kernl.attachToChat",
           "when": "false"
         }
+      ],
+      "editor/title": [
+        {
+          "submenu": "kernl.menu",
+          "group": "navigation@100"
+        }
+      ],
+      "kernl.menu": [
+        {
+          "command": "kernl.open",
+          "group": "1_chat@1"
+        },
+        {
+          "command": "kernl.ask",
+          "group": "1_chat@2"
+        },
+        {
+          "command": "kernl.askAboutSelection",
+          "group": "1_chat@3"
+        },
+        {
+          "command": "kernl.newChat",
+          "group": "1_chat@4"
+        },
+        {
+          "command": "kernl.newWorkspace",
+          "group": "1_chat@5"
+        },
+        {
+          "command": "kernl.sessions",
+          "group": "1_chat@6"
+        },
+        {
+          "command": "kernl.pickHarness",
+          "group": "2_agent@1"
+        },
+        {
+          "command": "kernl.agentLogins",
+          "group": "2_agent@2"
+        },
+        {
+          "command": "kernl.showConnections",
+          "group": "2_agent@3"
+        },
+        {
+          "command": "kernl.openSettings",
+          "group": "3_settings@1"
+        }
       ]
     },
     "walkthroughs": [
@@ -593,6 +744,35 @@
             ]
           }
         ]
+      }
+    ],
+    "submenus": [
+      {
+        "id": "kernl.menu",
+        "label": "kernl",
+        "icon": {
+          "light": "media/mark-light.png",
+          "dark": "media/mark.png"
+        }
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "kernl.open",
+        "key": "ctrl+alt+k"
+      },
+      {
+        "command": "kernl.ask",
+        "key": "ctrl+alt+shift+k"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "kernl.kernl",
+        "name": "kernl",
+        "fullName": "kernl",
+        "description": "Send this to kernl's panel (the agent and workspace it shows)",
+        "isSticky": false
       }
     ]
   },

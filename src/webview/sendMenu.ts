@@ -83,15 +83,15 @@ export function createSendMenu(onPick: (mode: SendMode) => void) {
     if (!menu.hidden && !menu.contains(e.target as Node) && e.target !== button) close();
   });
 
-  /** Nothing to send disables everything; while the agent runs, Send queues and forking waits. */
+  /** Nothing to send disables everything, the arrow too; while the agent runs, Send queues and forking waits. */
   function update(state: { hasText: boolean; running: boolean; available: boolean }) {
-    button.disabled = !state.available;
+    button.disabled = !state.available || !state.hasText;
     for (const item of items) {
       const mode = item.dataset.mode as SendMode;
       item.disabled = !state.hasText || (mode === "fork" && state.running);
       item.title = mode === "fork" && state.running ? "Stop the agent first" : mode === "now" && state.running ? "Sends when the agent finishes" : "";
     }
-    if (!state.available) close();
+    if (button.disabled) close();
   }
 
   return { button, menu, open, close, update };

@@ -2,14 +2,16 @@
 // the logo's light glyph becomes opaque and everything else (the dark tile, the margin) transparent.
 // VS Code and the panel paint it with the theme's color, as they do their own icons.
 // Run after changing kernl.png: swift scripts/logo-mark.swift kernl.png media/mark.png
+// and, for light themes (where VS Code shows an extension's image icon as drawn), a dark copy:
+// swift scripts/logo-mark.swift kernl.png media/mark-light.png dark
 import CoreGraphics
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
 let args = CommandLine.arguments
-guard args.count == 3 else {
-  FileHandle.standardError.write("usage: swift scripts/logo-mark.swift <logo.png> <mark.png>\n".data(using: .utf8)!)
+guard args.count == 3 || (args.count == 4 && args[3] == "dark") else {
+  FileHandle.standardError.write("usage: swift scripts/logo-mark.swift <logo.png> <mark.png> [dark]\n".data(using: .utf8)!)
   exit(2)
 }
 guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil),
@@ -72,8 +74,9 @@ for y in 0..<side {
     }
     let alpha = UInt8(count > 0 ? sum / count : 0)
     let i = (y * side + x) * 4
-    // White, premultiplied by its coverage.
-    mark[i] = alpha; mark[i + 1] = alpha; mark[i + 2] = alpha; mark[i + 3] = alpha
+    // White (or, with "dark", VS Code's light-theme icon gray #424242), premultiplied by its coverage.
+    let shade = args.count == 4 ? UInt8(Int(alpha) * 0x42 / 255) : alpha
+    mark[i] = shade; mark[i + 1] = shade; mark[i + 2] = shade; mark[i + 3] = alpha
   }
 }
 

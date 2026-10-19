@@ -15,7 +15,7 @@ export interface RuntimeShape {
 }
 
 // The inputs each harness is built from. Approval rules are read live by the gate, so they need no rebuild.
-const DEEP_AGENTS_SETTINGS = ["kernl.provider", "kernl.model", "kernl.baseUrl", "kernl.customProviders", "kernl.modelOptions", "kernl.sequentialThinking", "kernl.mcpServers", "kernl.mcp", "kernl.sources"];
+const DEEP_AGENTS_SETTINGS = ["kernl.provider", "kernl.model", "kernl.baseUrl", "kernl.customProviders", "kernl.modelOptions", "kernl.modelProfiles", "kernl.sequentialThinking", "kernl.mcpServers", "kernl.mcp", "kernl.sources"];
 
 /** Named agents (`deepagents:<name>`) are built by the Deep Agents harness and depend on the same inputs. */
 const family = (harness: string) => (harness.startsWith("deepagents:") ? "deepagents" : harness);

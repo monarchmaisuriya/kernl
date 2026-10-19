@@ -15,7 +15,7 @@ import { PendingApprovals } from "../../src/gate/pendingApprovals";
 const fake = resolve(__dirname, "fakeAcpAgent.cjs");
 const MANUAL: AskMode = { kind: "configOption", optionId: "mode", value: "default" };
 
-function harness(scenario: string, answer: boolean | "never", askMode: AskMode | (() => AskMode) = MANUAL, extraEnv: Record<string, string> = {}, more: Pick<AcpRunnerOptions, "sessionSetup" | "commandOutput" | "connection" | "loginHint"> = {}) {
+function harness(scenario: string, answer: boolean | "never", askMode: AskMode | (() => AskMode) = MANUAL, extraEnv: Record<string, string> = {}, more: Pick<AcpRunnerOptions, "sessionSetup" | "commandOutput" | "connection" | "loginHint" | "rememberedOptions" | "agentDecidesKernlTools"> = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "kernl-acp-"));
   const logFile = join(cwd, "..", `fake-${Math.random().toString(36).slice(2)}.log`);
   const asked: GateRequest[] = [];
@@ -44,6 +44,8 @@ function harness(scenario: string, answer: boolean | "never", askMode: AskMode |
       commands: (items) => events.push(`commands:${items.map((c) => c.name).join(",")}`),
       title: (t) => events.push(`title:${t}`),
       configChanged: (v) => events.push(`config:mode=${v.mode}`),
+      agentOptions: (options) => options.length && events.push(`options:${options.map((o) => `${o.id}=${o.value}`).join(",")}`),
+      replayedUserMessage: (t) => events.push(`user:${t}`),
       toolResult: (_id, _n, out) => events.push(`result:${out}`),
       toolImage: (id, image) => events.push(`image:${id}:${image.mimeType}:${image.data.length}`),
       usage: () => {},
@@ -319,6 +321,43 @@ test("kernl's tools are given in every session with the agent's options; the age
   assert.ok(h.events.includes("command:-|echo from agent|-"), "kernl's run_in_terminal shows as a command row");
 });
 
+test("in Auto mode the agent decides for kernl's tools too: its own permission request for one becomes the card", async () => {
+  const server = new KernlToolServer();
+  const access = await server.register(() => [echo]);
+  for (const approve of [true, false]) {
+    const h = harness("kernl-tools", approve, MANUAL, { FAKE_MCP_HTTP: "1" }, {
+      sessionSetup: async () => ({ mcpServers: [{ type: "http", name: "kernl", url: access.url, headers: Object.entries(access.headers).map(([name, value]) => ({ name, value })) }] }),
+      agentDecidesKernlTools: () => true,
+    });
+    try {
+      await h.runner.send("go");
+    } finally {
+      h.runner.dispose();
+    }
+    assert.equal(h.asked.length, 1, "one card: the agent's own request");
+    assert.ok(h.fakeLog().includes(`kernl tool permission ${approve ? "allow" : "decline"}`), h.fakeLog().join(" | "));
+  }
+  await server.dispose();
+});
+
+test("kernl's browser called by an agent: its row reads in plain words, and in Ask mode the agent's request still gets no second card", async () => {
+  const navigate = tool(async ({ url }: { url: string }) => `opened ${url}`, { name: "browser_navigate", description: "Open", schema: z.object({ url: z.string() }) as any });
+  const server = new KernlToolServer();
+  const access = await server.register(() => [navigate]);
+  const h = harness("kernl-tools", false, MANUAL, { FAKE_MCP_HTTP: "1", FAKE_KERNL_INPUT: JSON.stringify({ url: "https://developers.brevo.com/docs" }) }, {
+    sessionSetup: async () => ({ mcpServers: [{ type: "http", name: "kernl", url: access.url, headers: Object.entries(access.headers).map(([name, value]) => ({ name, value })) }] }),
+  });
+  try {
+    await h.runner.send("go");
+  } finally {
+    h.runner.dispose();
+    await server.dispose();
+  }
+  assert.ok(h.events.some((e) => e.startsWith("call:Browser: open developers.brevo.com")), h.events.join(" | "));
+  assert.deepEqual(h.asked, [], "the row's new title doesn't hide that it's kernl's tool");
+  assert.ok(h.fakeLog().includes("kernl tool permission allow"));
+});
+
 test("an agent that can't reach HTTP MCP servers isn't given kernl's server", async () => {
   const h = harness("write", true, MANUAL, {}, { sessionSetup: async () => ({ mcpServers: [{ type: "http", name: "kernl", url: "http://127.0.0.1:1/mcp", headers: [] }] }) });
   await h.runner.send("go");
@@ -368,4 +407,86 @@ test("the adapters' login status push, a Codex MCP server that didn't start, and
   await failed.runner.send("go");
   failed.runner.dispose();
   assert.deepEqual(mcp[0], { type: "mcpStartupFailed", server: "docs", error: "MCP server `docs` failed to start: connection refused" });
+});
+
+// A CLI agent's model, thinking, and fast mode (the "options" fake): reported as chips, the user's
+// remembered choices applied to a new session before its first message (model first, then the mode),
+// and a live change replacing the chips with the agent's rebuilt list.
+test("remembered model, effort, and fast mode are applied to a new session before the mode and the prompt", async () => {
+  const h = harness("options", true, MANUAL, {}, { rememberedOptions: () => ({ model: "big[1m]", effort: "high", fast: true }) });
+  await h.runner.send("go");
+  assert.deepEqual(
+    h.fakeLog().filter((l) => /^(initialize|setConfig|prompt)/.test(l)),
+    ["initialize booleanOptions=true", "setConfig model=big[1m]", "setConfig effort=high", "setConfig fast=true", "setConfig mode=default", "prompt"],
+  );
+  assert.equal(h.events.filter((e) => e.startsWith("options:")).at(-1), "options:model=big[1m],effort=high,fast=true");
+  // A live model change: the agent rebuilds effort (high isn't offered for small) and drops fast mode.
+  assert.equal(await h.runner.setOption("model", "small"), true);
+  assert.equal(h.events.at(-1), "options:model=small,effort=medium");
+  h.runner.dispose();
+});
+
+test("a remembered choice the agent no longer offers is skipped; with no session yet, setOption leaves it for the next one", async () => {
+  const h = harness("options", true, MANUAL, {}, { rememberedOptions: () => ({ model: "retired-model", effort: "low" }) });
+  assert.equal(await h.runner.setOption("effort", "low"), false, "no session yet");
+  await h.runner.send("go");
+  assert.deepEqual(h.fakeLog().filter((l) => l.startsWith("setConfig")), ["setConfig effort=low", "setConfig mode=default"]);
+  h.runner.dispose();
+});
+
+// Sessions started outside kernl: the agent lists them for the folder (pages followed), and opening one
+// loads it now with its replay shown (the user's messages too); the next message continues it.
+test("session/list follows the agent's pages; an agent that can't list says so with undefined", async () => {
+  const h = harness("write", true, MANUAL, { FAKE_LIST: "1" });
+  const sessions = await h.runner.listSessions();
+  assert.deepEqual(sessions?.map((s) => `${s.sessionId}:${s.title}`), ["stored-1:Fix the flaky test", "stored-2:Add a changelog"]);
+  assert.deepEqual(h.fakeLog().filter((l) => l.startsWith("listSessions")), [`listSessions cwd=${h.cwd} cursor=none`, `listSessions cwd=${h.cwd} cursor=page-2`]);
+  h.runner.dispose();
+  const none = harness("write", true);
+  assert.equal(await none.runner.listSessions(), undefined);
+  none.runner.dispose();
+});
+
+test("loadNow shows a stored session's replay, user messages included, and the next message continues that session", async () => {
+  const h = harness("write", true, MANUAL, { FAKE_LOAD: "1" });
+  h.runner.newThread({ sessionId: "stored-1" });
+  assert.equal(await h.runner.loadNow(), undefined);
+  assert.deepEqual(h.events.slice(0, 2), ["user:REPLAYED-OLD-QUESTION", "text:REPLAYED-OLD-MESSAGE"]);
+  await h.runner.send("go on");
+  assert.deepEqual(h.fakeLog().filter((l) => /^(loadSession|newSession|prompt)/.test(l)), ["loadSession stored-1", "prompt"], "loaded once, no new session");
+  h.runner.dispose();
+  const cant = harness("write", true);
+  cant.runner.newThread({ sessionId: "stored-1" });
+  assert.equal(await cant.runner.loadNow(), "Fake Agent can't load stored sessions");
+  cant.runner.dispose();
+});
+
+// Choosing the model before the first message: prepare opens the session early (the agent reports its
+// options), and the first send uses that same session; a session opened for a conversation that changed
+// meanwhile (New chat during prepare) is closed, not kept.
+test("prepare opens the session before any message; the first send uses it (one session/new)", async () => {
+  const h = harness("options", true);
+  const preparing = h.runner.prepare();
+  assert.equal(h.runner.prepare(), preparing, "a running prepare is shared");
+  assert.equal(await preparing, undefined);
+  assert.equal(h.events.filter((e) => e.startsWith("options:")).at(-1), "options:model=small,effort=medium", "the chips are there before the first message");
+  assert.equal(await h.runner.setOption("model", "big"), true, "a pick goes to the open session");
+  await h.runner.send("go");
+  assert.deepEqual(h.fakeLog().filter((l) => /^(newSession|prompt)/.test(l)).map((l) => l.split(" ")[0]), ["newSession", "prompt"]);
+  h.runner.dispose();
+});
+
+test("New chat while a session is being prepared closes that session; the first send opens a fresh one", async () => {
+  const h = harness("options", true, MANUAL, { FAKE_NEW_DELAY: "300" });
+  const preparing = h.runner.prepare();
+  for (const deadline = Date.now() + 10_000; !h.fakeLog().some((l) => l.startsWith("newSession")); ) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for session/new");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  h.runner.newThread();
+  await preparing;
+  await h.runner.send("go");
+  const log = h.fakeLog().filter((l) => /^(newSession|closeSession|prompt)/.test(l)).map((l) => l.split(" ")[0]);
+  assert.deepEqual(log, ["newSession", "closeSession", "newSession", "prompt"]);
+  h.runner.dispose();
 });

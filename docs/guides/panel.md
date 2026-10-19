@@ -1,9 +1,33 @@
 # The panel
 
+## kernl from anywhere
+
+| Where | What |
+| --- | --- |
+| The kernl button in the editor toolbar (top right of an editor) | The kernl menu |
+| `kernl` in the status bar | The same menu; it shows a warning and a count when the agents you're using need you (a login, a key) |
+| `Ctrl+Alt+K` | Open kernl |
+| `Ctrl+Alt+Shift+K` | Ask kernl…: type a request; it goes to the workspace the panel shows (queued if the agent is working) |
+| `@kernl` in VS Code's chat | Sends the request, and files it references, to the kernl panel; the work and approvals happen there |
+
+**The kernl menu:**
+- Open kernl, Ask kernl…, and Ask kernl about this file or selection (attaches the file, or the selected lines, to the message box);
+- New chat, New workspace, Conversations;
+- Choose agent, Agent logins, Show connections, settings.
+
+**`kernl.replaceChatButton`** hides VS Code's chat button in the Command Center so kernl's takes its role. It does this by setting VS Code's `chat.agentsControl.enabled` to `hidden` in your user settings; turning the option off puts back what was there, unless you've changed it yourself since.
+
+- **Where kernl's button goes:** VS Code doesn't let extensions place a button in the Command Center itself, so kernl's is the one in the editor toolbar right below it.
+- **With the Command Center turned off:** VS Code shows a different chat button, which only its "hide AI features" switch removes, so kernl leaves it.
+
+`kernl.statusBar.show` hides the status bar item.
+
+## In the panel
+
 - **Title bar:**
   - `+` starts a new chat in the workspace you're looking at;
   - the branch icon creates a workspace;
-  - the clock icon lists the workspace's conversations, kept across restarts;
+  - the clock icon lists the workspace's conversations, kept across restarts, and the CLI agents' own sessions in this folder (see [CLI agents](cli-agents.md#sessions-started-outside-kernl));
   - `...` holds Choose agent, Manage providers, Agent logins, settings, Show connections, and Show loaded sources.
   - Every list (agent, model, workspace, attach, conversations, setup steps) opens in the panel next to the button that opened it, with a search box for long lists; Escape or a click outside closes it. From the Command Palette, with the panel hidden, VS Code's own list is used. Typed answers (keys, names) still use VS Code's input box.
 - **Composer:**
@@ -13,8 +37,10 @@
   - `/` lists skills (kernl agent);
   - right-click files or folders in the Explorer and pick **Add to kernl chat** (several at once with a multi-selection); a file from another folder of the window names that folder: switch to it with the workspace chip;
   - drag files onto the panel while holding **Shift** (VS Code blocks plain drags into extension panels; the composer shows "Drop to attach"). From VS Code's own Explorer this is broken in VS Code 1.140 and later (see known issues); from Finder it works, and text files are attached by their content (up to 20,000 characters). Anything that can't be attached says why;
-  - the agent chip warns when an agent still needs setup;
-  - the model chip (kernl only) and one button that sends, or stops a running agent.
+  - the model and thinking chips: for kernl, the provider's model and how much it thinks ([providers](providers.md#choosing-a-model)); for a CLI agent, its own model, thinking level, and fast mode ([CLI agents](cli-agents.md#model-thinking-and-fast-mode));
+  - one button that sends, or stops a running agent; the arrow next to it (more ways to send) turns on once there's something to send.
+
+  What you've typed (and attached) but not sent is kept for the window: it's back after a reload or a VS Code restart, until you send it or clear it. Long pasted text over 50,000 characters isn't kept.
 
   Enter sends; Shift+Enter adds a line. The arrow next to Send opens three ways to send:
   - **Send** (Enter). While the agent is working, the message waits in a queue instead.
@@ -45,4 +71,5 @@
 - **Approvals:** Approve allows once. An agent's own "always" option shows in its words when it offers one, and is never the default. Shortcuts: ⌘/Ctrl+Y allows once, ⌘/Ctrl+⌥/Alt+Y allows always, ⌘/Ctrl+⌥/Alt+Z rejects. They don't fire while you're typing a message.
 - **Accessibility:** screen readers hear "Reply finished" with the reply, approvals, and errors, not every streamed word; each turn has a heading. Animations stop with Reduce Motion, and high-contrast themes get borders.
 - **Replies:** agent replies render as Markdown (code blocks with Copy, lists, tables, links). Only `http(s)` links are clickable and they open in your browser; images are never loaded; raw HTML in a reply shows as text. Your own messages, tool output, and approval cards stay plain text.
-- **Footer:** the workspace chip (a dot means another workspace is running, or waiting for your approval) and the permission mode chip (below).
+- **Colors:** one accent (your theme's button color) marks what's primary or in progress: Send, Approve, the working mark, running workspaces, the plan step in progress, the context ring, and waiting cards. Links use the link color; warnings, errors, and success use one color each, always with an icon or words. Everything follows your theme, including high contrast.
+- **Footer:** the workspace chip (a dot means another workspace is running, or waiting for your approval), the agent chip (with a warning button when the agent still needs setup), and the permission mode chip (below).

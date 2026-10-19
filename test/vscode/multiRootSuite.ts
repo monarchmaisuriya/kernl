@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import { git } from "../../src/workspaces/git";
+import { agentCommands } from "../support/noRealAgents";
 
 const results: string[] = [];
 /**
@@ -29,6 +30,8 @@ async function check(name: string, fn: () => Promise<void>) {
 }
 
 export async function run() {
+  // Before anything can start an agent: no real one, ever (see noRealAgents.ts).
+  await vscode.workspace.getConfiguration("kernl").update("agentCommands", agentCommands(), vscode.ConfigurationTarget.Global);
   const folders = vscode.workspace.workspaceFolders!;
   const [alpha, beta] = folders.map((f) => f.uri.fsPath);
   const ext = vscode.extensions.getExtension("local.kernl")!;
@@ -72,7 +75,7 @@ export async function run() {
   });
   const fakeAgent = { command: process.execPath, args: [join(__dirname, "fakeAcpAgent.cjs")], env: { FAKE_SCENARIO: "write" } };
   const config = vscode.workspace.getConfiguration("kernl");
-  await config.update("agentCommands", { "claude-code": fakeAgent }, vscode.ConfigurationTarget.Global);
+  await config.update("agentCommands", agentCommands({ "claude-code": fakeAgent }), vscode.ConfigurationTarget.Global);
 
   await check("multi-root: the panel lists each folder as its own workspace, labeled by folder name", async () => {
     await vscode.commands.executeCommand("kernl.panel.focus");
@@ -154,7 +157,7 @@ export async function run() {
     assert.ok(ws.items.some((w: any) => w.id === "wt:beta/feature"), "worktrees are found again");
   });
 
-  await config.update("agentCommands", undefined, vscode.ConfigurationTarget.Global);
+  await config.update("agentCommands", agentCommands(), vscode.ConfigurationTarget.Global);
   // The whole timeline, pass or fail, for comparing a failing run with a passing one.
   const timelineFile = process.env.KERNL_TIMELINE ?? join(tmpdir(), `kernl-timeline-multi-${started}.txt`);
   writeFileSync(timelineFile, timeline.join("\n") + "\n");

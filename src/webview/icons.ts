@@ -28,6 +28,11 @@ const ICONS = {
   clock: [{ d: "M8 2.25a5.75 5.75 0 1 0 0 11.5 5.75 5.75 0 0 0 0-11.5zM8 5v3.25l2 1.25" }],
   undo: [{ d: "M5.5 3.5 2.75 6.25 5.5 9M3 6.25h6.25a3.75 3.75 0 0 1 0 7.5H7" }],
   tool: [{ d: "M10.5 2.25a3 3 0 0 0-2.9 3.75L2.5 11.1a1.25 1.25 0 0 0 1.75 1.75l5.1-5.1a3 3 0 0 0 3.75-2.9l-1.6 1.6-1.6-.5-.5-1.6z" }],
+  /** A processor: the model chip. */
+  processor: [{ d: "M4.5 4.5h7v7h-7zM6.5 6.5h3v3h-3zM6.5 2v2.5M9.5 2v2.5M6.5 11.5V14M9.5 11.5V14M2 6.5h2.5M2 9.5h2.5M11.5 6.5H14M11.5 9.5H14" }],
+  /** Fast mode: an outline bolt when off, filled when on. */
+  bolt: [{ d: "M9 1.75 3.75 9H8l-1 5.25L12.25 7H8z" }],
+  boltOn: [{ d: "M9 1.75 3.75 9H8l-1 5.25L12.25 7H8z", fill: true }],
 } satisfies Record<string, Shape[]>;
 
 /** The SVG icons, plus kernl's own mark (an image, see `mark`). */

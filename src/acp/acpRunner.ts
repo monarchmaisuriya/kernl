@@ -11,7 +11,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { KERNL_SERVER_NAME } from "../mcp/kernlServer";
 import { cleanTerminalOutput } from "../terminal/output";
-import { type Attachment, attachmentNote, type ToolInfo } from "../ui/protocol";
+import { type AgentOptionView, type Attachment, attachmentNote, type ToolInfo } from "../ui/protocol";
+import { chipOptions, nextRemembered, wireValue } from "./agentOptions";
+import { browserRowTitle, describeBrowserCall } from "../browser/describe";
 
 export interface AcpRunnerOptions {
   agentLabel: string;
@@ -34,6 +36,14 @@ export interface AcpRunnerOptions {
   connection?: (signal: ConnectionSignal) => void;
   /** How to log the agent in, said when it answers "authentication required" ("Run `claude auth login` in a terminal"). */
   loginHint?: string;
+  /**
+   * Whether the agent's own permission request for one of kernl's tools is shown as a card (Auto mode:
+   * the agent decides, and kernl's tool doesn't ask again). Otherwise it's answered yes, because kernl's
+   * tool asks through kernl's gate itself.
+   */
+  agentDecidesKernlTools?: () => boolean;
+  /** The user's model, thinking, and fast-mode choices for this agent (option id -> value), applied to each new session before its first message. */
+  rememberedOptions?: () => Readonly<Record<string, string | boolean>>;
 }
 
 /** ACP's "authentication required" (RequestError.authRequired): the agent can't run until the user logs in. */
@@ -91,6 +101,8 @@ interface CallState {
   output?: string;
   /** The agent's own name for the tool, when it sends one (Claude Code: `mcp__kernl__run_in_terminal`). */
   toolName?: string;
+  /** The kernl tool this call is, by its name in any agent's form (kept when the row gets a plain-words title). */
+  kernlTool?: string;
 }
 
 /**
@@ -149,14 +161,24 @@ export class AcpRunner implements Runner {
   private active: { stopped: boolean } | undefined;
   /** Resolves with why the current agent process ended; never rejects. */
   private exitReason: Promise<string> | undefined;
-  /** A stored session to load on the next send, and whether its replayed history is arriving now. */
+  /**
+   * A stored session to load on the next send, and whether its replayed history is arriving now:
+   * dropped when the panel already shows it (kernl's own conversation), shown when it doesn't (a
+   * session opened from the agent's list).
+   */
   private resumeId: string | undefined;
-  private replaying = false;
+  private replaying: false | "drop" | "show" = false;
   /** The previous session's close; the next session waits for it, so the agent never holds both. */
   private closing: Promise<void> | undefined;
   private agentCapabilities: acp.AgentCapabilities | undefined;
   /** The current session's modes (for agents that use session modes rather than config options). */
   private sessionModes: acp.NewSessionResponse["modes"];
+  /** The current session's model, thinking, and fast-mode chips, as last reported. */
+  private options: AgentOptionView[] = [];
+  /** A session being opened before any message (prepare); a send waits for it rather than opening a second one. */
+  private preparing: Promise<string | undefined> | undefined;
+  /** Counts conversation changes (newThread), so a session opened for an earlier one is closed instead of kept. */
+  private generation = 0;
   private loggedUnknown = new Set<string>();
   /** Tool calls of the current session, merged as updates arrive. */
   private calls = new Map<string, CallState>();
@@ -173,6 +195,7 @@ export class AcpRunner implements Runner {
     this.active = run;
     try {
       const conn = await this.connect();
+      await this.preparing;
       const sessionId = await this.ensureSession(conn);
       if (run.stopped) return this.o.events.finished("stopped");
       // resource_link is the one attachment form every ACP agent must accept; the text lists them too.
@@ -209,6 +232,7 @@ export class AcpRunner implements Runner {
    */
   newThread(history?: unknown) {
     this.stop();
+    this.generation++;
     const previous = this.sessionId;
     this.sessionId = undefined;
     this.calls.clear();
@@ -232,6 +256,7 @@ export class AcpRunner implements Runner {
     if (!this.connection || !this.sessionId || !this.agentCapabilities?.sessionCapabilities?.fork) return undefined;
     const setup = await this.setup();
     const forked = await this.connection.unstable_forkSession({ sessionId: this.sessionId, cwd: this.o.cwd, mcpServers: setup.mcpServers, ...(setup.meta ? { _meta: setup.meta } : {}) });
+    this.reportOptions(forked.configOptions);
     await this.forceMode(this.connection, forked as unknown as acp.NewSessionResponse);
     this.sessionId = forked.sessionId;
     return { sessionId: forked.sessionId };
@@ -285,7 +310,8 @@ export class AcpRunner implements Runner {
     const connection = new acp.ClientSideConnection(() => this.client(), stream);
     const init = await Promise.race([
       // terminal_output_delta: an agent that runs commands in its own shell (Codex) streams their output to us.
-      connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, _meta: { terminal_output_delta: true } } }),
+      // session.configOptions.boolean: fast mode arrives as an on/off switch rather than an "on"/"off" select.
+      connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { configOptions: { boolean: {} } }, _meta: { terminal_output_delta: true } } }),
       exitReason.then((message) => Promise.reject(new Error(message))),
     ]);
     this.agentCapabilities = init.agentCapabilities;
@@ -303,38 +329,165 @@ export class AcpRunner implements Runner {
     return { ...setup, mcpServers: setup.mcpServers.filter((s) => !isHttp(s)) };
   }
 
+  /**
+   * Opens the session now, before any message, so the agent reports its model, thinking, and fast
+   * options and they can be chosen first; the first send uses this session. Returns why it couldn't
+   * (the first send then tries again and reports it). A prepare already running is shared.
+   */
+  prepare(): Promise<string | undefined> {
+    if (this.active || this.sessionId) return Promise.resolve(undefined);
+    this.preparing ??= (async () => {
+      try {
+        await this.ensureSession(await this.connect());
+        return undefined;
+      } catch (err: any) {
+        return String(err?.message ?? err);
+      } finally {
+        this.preparing = undefined;
+      }
+    })();
+    return this.preparing;
+  }
+
   /** Opens a session if needed and confirms its ask mode before anything is sent. */
   private async ensureSession(conn: acp.ClientSideConnection): Promise<string> {
     if (this.sessionId) return this.sessionId;
+    const generation = this.generation;
+    const id = await this.openSession(conn);
+    if (generation !== this.generation) {
+      // The conversation changed while this session opened (New chat during a prepare): it belongs to no one.
+      // Its close is the one the next session waits for, so the agent never holds both.
+      this.sessionId = undefined;
+      this.closing = conn.closeSession({ sessionId: id }).then(
+        () => {},
+        (e: any) => this.o.log?.(`${this.o.agentLabel}: could not close session ${id}: ${e?.message ?? e}`),
+      );
+      return this.ensureSession(conn);
+    }
+    return id;
+  }
+
+  private async openSession(conn: acp.ClientSideConnection): Promise<string> {
     await this.closing;
     this.closing = undefined;
     const resumeId = this.resumeId;
     this.resumeId = undefined;
     if (resumeId && this.agentCapabilities?.loadSession) {
       // The agent replays the old conversation as updates; the panel already shows it, so they're dropped.
-      this.replaying = true;
-      try {
-        const setup = await this.setup();
-        const loaded = await conn.loadSession({ sessionId: resumeId, cwd: this.o.cwd, mcpServers: setup.mcpServers, ...(setup.meta ? { _meta: setup.meta } : {}) });
-        const session = { ...loaded, sessionId: resumeId } as acp.NewSessionResponse;
-        await this.forceMode(conn, session);
-        this.sessionId = resumeId;
-        return resumeId;
-      } catch (err: any) {
-        if (err instanceof AskModeRefusal) throw err;
-        this.o.log?.(`${this.o.agentLabel}: could not load session ${resumeId}: ${err?.message ?? err}`);
-        this.o.notice?.(`${this.o.agentLabel} couldn't reload the earlier conversation; this message starts a new one.`);
-      } finally {
-        this.replaying = false;
-      }
+      const failed = await this.load(conn, resumeId, "drop");
+      if (!failed) return resumeId;
+      this.o.notice?.(`${this.o.agentLabel} couldn't reload the earlier conversation; this message starts a new one.`);
     } else if (resumeId) {
       this.o.notice?.(`${this.o.agentLabel} can't reload earlier conversations; this message starts a new one.`);
     }
     const setup = await this.setup();
     const session = await conn.newSession({ cwd: this.o.cwd, mcpServers: setup.mcpServers, ...(setup.meta ? { _meta: setup.meta } : {}) });
+    this.reportOptions(session.configOptions);
+    // Before the mode: a model change can change which modes the agent allows (Claude Code clamps it).
+    await this.applyRemembered(conn, session.sessionId);
     await this.forceMode(conn, session);
     this.sessionId = session.sessionId;
     return session.sessionId;
+  }
+
+  /** ACP session/load: the agent replays the session's history (dropped or shown) and continues it. Returns why it failed, or undefined. */
+  private async load(conn: acp.ClientSideConnection, sessionId: string, replay: "drop" | "show"): Promise<string | undefined> {
+    this.replaying = replay;
+    try {
+      const setup = await this.setup();
+      const loaded = await conn.loadSession({ sessionId, cwd: this.o.cwd, mcpServers: setup.mcpServers, ...(setup.meta ? { _meta: setup.meta } : {}) });
+      this.reportOptions(loaded.configOptions);
+      await this.forceMode(conn, { ...loaded, sessionId } as acp.NewSessionResponse);
+      this.sessionId = sessionId;
+      return undefined;
+    } catch (err: any) {
+      if (err instanceof AskModeRefusal) throw err;
+      this.o.log?.(`${this.o.agentLabel}: could not load session ${sessionId}: ${err?.message ?? err}`);
+      return String(err?.message ?? err);
+    } finally {
+      this.replaying = false;
+    }
+  }
+
+  /**
+   * Loads the session newThread() named now, showing the agent's replay of its history: a session
+   * opened from the agent's own list, which the panel has no transcript for. Returns why it couldn't
+   * (the agent can't load sessions, or the load failed); the next send then starts a new session.
+   */
+  async loadNow(): Promise<string | undefined> {
+    if (this.active) return "the agent is running";
+    const conn = await this.connect();
+    const id = this.resumeId;
+    if (!id) return "no session to load";
+    this.resumeId = undefined;
+    if (!this.agentCapabilities?.loadSession) return `${this.o.agentLabel} can't load stored sessions`;
+    await this.closing;
+    this.closing = undefined;
+    return this.load(conn, id, "show");
+  }
+
+  /**
+   * The agent's stored sessions for this folder (ACP session/list), newest first as the agent sends
+   * them; undefined when it can't list. Pages are followed up to `maxSessions` (Codex filters a page
+   * by folder after fetching it, so a page can be short or empty while more follow).
+   */
+  async listSessions(maxSessions = 500): Promise<acp.SessionInfo[] | undefined> {
+    const conn = await this.connect();
+    if (!this.agentCapabilities?.sessionCapabilities?.list) return undefined;
+    const out: acp.SessionInfo[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 50 && out.length < maxSessions; page++) {
+      const res = await conn.listSessions({ cwd: this.o.cwd, ...(cursor ? { cursor } : {}) });
+      out.push(...res.sessions);
+      cursor = res.nextCursor ?? undefined;
+      if (!cursor) break;
+    }
+    return out.slice(0, maxSessions);
+  }
+
+  /** Whether the agent's text is shown now: during a run that wasn't stopped (late text after Stop is dropped), or a shown replay. */
+  private streaming() {
+    return (this.active !== undefined && !this.active.stopped) || this.replaying === "show";
+  }
+
+  /** Keeps the session's chips and tells the workspace; a reply or update without options changes nothing. */
+  private reportOptions(list: readonly acp.SessionConfigOption[] | null | undefined) {
+    if (!list) return;
+    this.options = chipOptions(list);
+    this.o.events.agentOptions?.(this.options);
+  }
+
+  /** The user's remembered choices, applied in order (model first); one the agent no longer offers is skipped, one it refuses is logged. */
+  private async applyRemembered(conn: acp.ClientSideConnection, sessionId: string) {
+    const remembered = this.o.rememberedOptions?.() ?? {};
+    const done = new Set<string>();
+    for (let next = nextRemembered(this.options, remembered, done); next; next = nextRemembered(this.options, remembered, done)) {
+      done.add(next.option.id);
+      try {
+        await this.sendOption(conn, sessionId, next.option, next.value);
+      } catch (err: any) {
+        this.o.log?.(`${this.o.agentLabel}: couldn't apply the remembered ${next.option.name} (${String(next.value)}): ${err?.message ?? err}`);
+      }
+    }
+  }
+
+  private async sendOption(conn: acp.ClientSideConnection, sessionId: string, option: AgentOptionView, value: string | boolean) {
+    const wire = wireValue(option, value);
+    const req = wire.boolean ? { sessionId, configId: option.id, type: "boolean" as const, value: wire.value as boolean } : { sessionId, configId: option.id, value: wire.value as string };
+    const res = await conn.setSessionConfigOption(req);
+    this.reportOptions(res.configOptions);
+  }
+
+  /**
+   * Sets one of the live session's chips (model, thinking, fast) and reports the agent's new options
+   * (a model change rebuilds the others). False when there's no session yet: the choice is applied to
+   * the next one (rememberedOptions).
+   */
+  async setOption(id: string, value: string | boolean): Promise<boolean> {
+    const option = this.options.find((o) => o.id === id);
+    if (!this.connection || !this.sessionId || !option) return false;
+    await this.sendOption(this.connection, this.sessionId, option, value);
+    return true;
   }
 
   /**
@@ -358,6 +511,7 @@ export class AcpRunner implements Runner {
       for (const { optionId, value } of mode.kind === "configOption" ? [mode] : mode.options) {
         const set = async () => {
           const res = await conn.setSessionConfigOption({ sessionId: session.sessionId, configId: optionId, value });
+          this.reportOptions(res.configOptions);
           return ((res.configOptions ?? []).find((o: any) => o.id === optionId) as any)?.currentValue;
         };
         // OpenCode 2.0.27 replies with the previous value when leaving its plan mode; setting it again
@@ -417,7 +571,12 @@ export class AcpRunner implements Runner {
     if (typeof u._meta?.claudeCode?.toolName === "string") call.toolName = u._meta.claudeCode.toolName;
     // kernl's own terminal tools are commands: the row shows the command like the agent's own shell.
     if ([call.toolName, call.title].some((n) => isKernlTool(n) && /(run_in_terminal|start_background_job)$/.test(n!))) call.kind = "execute";
-    this.commandOutput(id, call, u._meta);
+    call.kernlTool ??= [call.toolName, call.title].find(isKernlTool);
+    // kernl's browser tools in plain words ("Browser: open developers.brevo.com"), not the agent's MCP title.
+    const browser = call.kernlTool ? describeBrowserCall(call.kernlTool, call.rawInput) : undefined;
+    if (browser) call.title = browserRowTitle(browser);
+    // An old command in a shown replay isn't run again: no terminal for it.
+    if (!this.replaying) this.commandOutput(id, call, u._meta);
     const diff = (u.content ?? []).find((c: any) => c?.type === "diff");
     if (diff) call.diff = { path: String(diff.path), before: diff.oldText ?? null, after: String(diff.newText ?? "") };
     this.calls.set(id, call);
@@ -469,19 +628,24 @@ export class AcpRunner implements Runner {
         if (!run || run.stopped) return toPermissionResponse(params.options, false, true);
         const call = params.toolCall as any;
         const known = this.calls.get(String(call.toolCallId));
-        if ([call._meta?.claudeCode?.toolName, known?.toolName, known?.title, call.title].some(isKernlTool)) return toPermissionResponse(params.options, true, false);
+        const kernlTool = [call._meta?.claudeCode?.toolName, known?.kernlTool, known?.toolName, known?.title, call.title].some(isKernlTool);
+        if (kernlTool && !this.o.agentDecidesKernlTools?.()) return toPermissionResponse(params.options, true, false);
         const decision = await this.o.gate.decide(toGateRequest(this.o.agentLabel, params));
         return toPermissionResponse(params.options, decision, run.stopped);
       },
       sessionUpdate: async ({ sessionId, update }) => {
         const u: any = update;
-        if (this.replaying && u.sessionUpdate !== "current_mode_update") return;
+        if (this.replaying === "drop" && u.sessionUpdate !== "current_mode_update") return;
         switch (u.sessionUpdate) {
+          case "user_message_chunk":
+            // Only a shown replay has the user's own messages in it; a live turn's are the panel's.
+            if (this.replaying === "show") this.o.events.replayedUserMessage?.(textOf(u.content));
+            return;
           case "agent_message_chunk":
-            if (this.active && !this.active.stopped) this.o.events.text(textOf(u.content));
+            if (this.streaming()) this.o.events.text(textOf(u.content));
             return;
           case "agent_thought_chunk":
-            if (this.active && !this.active.stopped) this.o.events.thinking?.(textOf(u.content));
+            if (this.streaming()) this.o.events.thinking?.(textOf(u.content));
             return;
           case "tool_call":
           case "tool_call_update":
@@ -499,6 +663,7 @@ export class AcpRunner implements Runner {
             if (typeof u.title === "string" && u.title.trim()) this.o.events.title?.(u.title.trim());
             return;
           case "config_option_update":
+            this.reportOptions(u.configOptions);
             this.o.events.configChanged?.(Object.fromEntries((u.configOptions ?? []).map((o: any) => [String(o.id), String(o.currentValue)])));
             return;
           case "current_mode_update":

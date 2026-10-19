@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type * as acp from "@agentclientprotocol/sdk";
 import { AcpRunner } from "./acp/acpRunner";
 import { CLI_AGENTS, type CliAgentId, isCliAgentId, type KernlToolUse, resolveLaunch, sessionMeta } from "./acp/agents";
 import { AgentLifecycle, type BuiltParts } from "./agent/agentLifecycle";
@@ -26,15 +27,15 @@ import { loadMcpTools, type McpServer, mergeServers, SIGN_IN_REASON, settingServ
 import type { LoadedSources } from "./sources";
 import { loginCommand } from "./connections/agentChecks";
 import type { RuntimeConnectionSignal } from "./connections/signals";
-import { createChatModel, type ProviderSettings, type ResolvedProvider, resolveProvider } from "./providers/registry";
+import { createChatModel, type ProviderAuth, type ProviderSettings, type ResolvedProvider, resolveProvider } from "./providers/registry";
 import { jobTerminal } from "./terminal/jobTerminal";
 import { CommandMirror } from "./terminal/mirror";
 import { TerminalRunner } from "./terminal/runner";
 import { runInTerminalTool } from "./terminal/tool";
 import { gatedTool } from "./gate/gatedTool";
-import type { Attachment, HostToPanel, SendMode, WorkspaceView } from "./ui/protocol";
+import type { AgentOptionView, Attachment, HostToPanel, SendMode, WorkspaceView } from "./ui/protocol";
 import type { Checkpoints } from "./checkpoints";
-import { cutHistory, type QueuedMessage, type SessionRecord, type SessionStore, type TranscriptEvent } from "./sessions";
+import { cutHistory, type QueuedMessage, replayTranscript, type SessionRecord, type SessionStore, type TranscriptEvent, turnsAfter } from "./sessions";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, relative, sep } from "node:path";
 import type { WorkspaceInfo } from "./workspaces/worktrees";
@@ -89,12 +90,24 @@ export interface RuntimeHost {
   kernlTools(tools: () => readonly StructuredToolInterface[]): Promise<KernlServerAccess & { unregister: () => void }>;
   /** The user's approval rules (user settings only), read on every gate decision. */
   approvalRules(): readonly Rule[];
-  apiKey(provider: string): Promise<string | undefined>;
+  /** The provider's key and secret header values from SecretStorage. */
+  providerAuth(provider: string): Promise<ProviderAuth>;
   /** Launch env from the agent's stored credential; empty when none is stored. */
   agentEnv(id: CliAgentId): Promise<Record<string, string>>;
   trusted(): boolean;
   browser(): IntegratedBrowser;
   workspacesChanged(): void;
+  /** VS Code's per-window state (workspaceState): the CLI agents' remembered model, thinking, and fast-mode choices. */
+  state: Pick<vscode.Memento, "get" | "update">;
+}
+
+/** How long Conversations waits for a CLI agent's list of its sessions. */
+const LIST_TIMEOUT_MS = 10_000;
+
+/** A CLI agent's chips as last reported in this folder, and the user's own choices (option id -> value), applied to each new session. */
+interface RememberedOptions {
+  last?: AgentOptionView[];
+  chosen?: Record<string, string | boolean>;
 }
 
 /**
@@ -106,6 +119,8 @@ export class WorkspaceRuntime {
   readonly approvals: PendingApprovals;
   readonly gate: ApprovalGate;
   private runner: Runner | undefined;
+  /** The live CLI session's chips, once it has reported them (cleared when the runner goes). */
+  private liveOptions: AgentOptionView[] | undefined;
   /** The conversation shown in this workspace (kept in the session store). */
   private session: SessionRecord;
   /** History to continue from when the runner is created (a reopened or cut-back session). */
@@ -121,6 +136,12 @@ export class WorkspaceRuntime {
   private jobTerminals = new Map<string, vscode.Terminal>();
   /** Set while a runner is being built (it reads SecretStorage); counts as running. */
   private creating: Promise<Runner> | undefined;
+  /** A send is waiting for its runner to be built (counts as running; building alone doesn't). */
+  private awaitingRunner = false;
+  /** A stored CLI session is loading (openAgentSession): messages sent meanwhile wait, then send. */
+  private loadingSession = false;
+  /** While an agent replays a stored session: its events, shown together once it ends (see openAgentSession). */
+  private replayBuffer: TranscriptEvent[] | undefined;
   private lifecycle: AgentLifecycle | undefined;
   private terminal: TerminalRunner | undefined;
   /** Commands a CLI agent runs in its own shell (Codex), shown read-only. */
@@ -172,18 +193,33 @@ export class WorkspaceRuntime {
     this.toolGate = new ApprovalGate(this.approvals, {
       rules: () => host.approvalRules(),
       denied: (_request, rule) => this.post({ type: "notice", workspace: this.id, text: `Refused by your approval rule deny: ${rule}` }),
-      mode: () => (this.permissionMode === "bypass" ? "bypass" : "ask"),
+      // kernl's tools called by a CLI agent: no kernl card in Bypass (no prompts) or Auto (the agent
+      // decides, and its own permission request becomes the card; see agentDecidesKernlTools).
+      mode: () => (this.permissionMode === "bypass" || this.agentDecidesKernlTools() ? "bypass" : "ask"),
     });
   }
 
   /** Each part of "running" (the integration tests' failure timeline reads them), and the queue. */
   runState() {
-    return { starting: this.starting, creating: this.creating !== undefined, runner: this.runner?.running ?? false, queue: this.queue.map((q) => q.text), queuePaused: this.queuePaused };
+    return {
+      starting: this.starting,
+      awaitingRunner: this.awaitingRunner,
+      loadingSession: this.loadingSession,
+      creating: this.creating !== undefined,
+      runner: this.runner?.running ?? false,
+      queue: this.queue.map((q) => q.text),
+      queuePaused: this.queuePaused,
+    };
   }
 
+  /**
+   * Whether a run is in progress: a send (taking its restore point, waiting for its runner, or the
+   * agent replying) or a stored session loading. Building a runner on its own isn't a run (the early
+   * start, prepareAgent). Each state counted here drains the queue when it ends.
+   */
   get running() {
     const s = this.runState();
-    return s.starting || s.creating || s.runner;
+    return s.starting || s.awaitingRunner || s.loadingSession || s.runner;
   }
 
   view(): WorkspaceView {
@@ -192,7 +228,51 @@ export class WorkspaceRuntime {
     const queue = this.queue.map((q) => ({ id: q.id, text: q.text, attachments: q.attachments.length }));
     const modeList = PERMISSION_MODES.filter((m) => modes[m]).map((m) => ({ id: m, label: MODE_INFO[m].label, icon: MODE_INFO[m].icon, description: modes[m]! }));
     const forkLimit = this.forkLimit();
-    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused, mode: this.permissionMode, modes: modeList, ...(forkLimit ? { forkLimit } : {}) };
+    const agentOptions = this.agentOptions();
+    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused, mode: this.permissionMode, modes: modeList, ...(forkLimit ? { forkLimit } : {}), ...(agentOptions ? { agentOptions } : {}) };
+  }
+
+  private optionsKey(harness = this.harness) {
+    return `kernl.agentOptions.${this.root}.${harness}`;
+  }
+
+  private remembered(): RememberedOptions {
+    return this.host.state.get<RememberedOptions>(this.optionsKey()) ?? {};
+  }
+
+  /**
+   * A CLI agent's chips: the live session's, or before it starts, its last session's in this folder
+   * with the user's choices shown (they're applied when the session starts). Undefined for kernl, or
+   * before the agent has ever reported any.
+   */
+  private agentOptions(): AgentOptionView[] | undefined {
+    if (!isCliAgentId(this.harness)) return undefined;
+    if (this.liveOptions) return this.liveOptions;
+    const { last, chosen = {} } = this.remembered();
+    return last?.map((o) => (o.id in chosen ? { ...o, value: chosen[o.id] } : o));
+  }
+
+  /** The agent reported its options: shown now, and kept as this folder's "last" for the next start. */
+  private agentReportedOptions(options: AgentOptionView[]) {
+    this.liveOptions = options;
+    void this.host.state.update(this.optionsKey(), { ...this.remembered(), last: options });
+    this.host.workspacesChanged();
+  }
+
+  /**
+   * The user picked a model, thinking level, or fast mode on a chip: remembered for this folder and
+   * agent, and set on the live session now (or on the next one, before its first message).
+   */
+  async setAgentOption(id: string, value: string | boolean) {
+    const harness = this.harness;
+    const r = this.remembered();
+    await this.host.state.update(this.optionsKey(harness), { ...r, chosen: { ...r.chosen, [id]: value } });
+    try {
+      if (!(this.runner instanceof AcpRunner && (await this.runner.setOption(id, value)))) this.host.workspacesChanged();
+    } catch (err: any) {
+      const name = this.agentOptions()?.find((o) => o.id === id)?.name ?? id;
+      this.post({ type: "notice", workspace: this.id, text: `${CLI_AGENTS[harness as CliAgentId]?.label ?? harness} didn't change ${name}: ${err?.message ?? err}` });
+    }
   }
 
   /** A CLI agent copies its whole session to fork (ACP session/fork), so only the latest turn can fork. */
@@ -278,6 +358,15 @@ export class WorkspaceRuntime {
     this.permissionMode = now;
     this.post({ type: "notice", workspace: this.id, text: `${CLI_AGENTS[this.harness].label} switched to ${MODE_INFO[now].label}.` });
     this.host.workspacesChanged();
+  }
+
+  /**
+   * In Auto mode the CLI agent judges each call, kernl's tools included: kernl adds no card of its own,
+   * and the agent's permission request for a kernl tool is shown as the card. Read on every call, so a
+   * mode change applies mid-run.
+   */
+  private agentDecidesKernlTools(): boolean {
+    return this.permissionMode === "auto";
   }
 
   /** The mode kept for this workspace, applied before any session starts. */
@@ -390,14 +479,18 @@ export class WorkspaceRuntime {
     try {
       // Building a runner reads SecretStorage; hold the promise so a second Send can't start a second agent.
       this.creating ??= this.createRunner().finally(() => (this.creating = undefined));
+      this.awaitingRunner = true;
       runner = this.runner ??= await this.creating;
     } catch (err: any) {
+      this.awaitingRunner = false;
       this.post({ type: "finished", workspace: this.id, reason: "error", message: err?.message ?? String(err) });
       this.holdQueue();
       if (this.staleHarness !== undefined) this.rebuild(this.staleHarness);
       this.host.workspacesChanged();
       return;
     }
+    // From here to runner.send() nothing waits, so the runner reports running before this clears.
+    this.awaitingRunner = false;
     this.lastFinish = undefined;
     // The kernl agent is told it's in plan mode (its gate refuses changes either way).
     const forAgent = !isCliAgentId(this.harness) && this.permissionMode === "plan" ? PLAN_NOTE + trimmed : trimmed;
@@ -506,6 +599,44 @@ export class WorkspaceRuntime {
       this.pendingHistory = undefined;
     }
     this.replay();
+    const agentSession = (record.history as { sessionId?: unknown } | undefined)?.sessionId;
+    if (isCliAgentId(this.harness) && !record.importedFrom && typeof agentSession === "string") await this.addTurnsFromAgent(record);
+  }
+
+  /**
+   * kernl's own CLI conversation, reopened: the agent loads the session now, and the turns it has after
+   * kernl's last message (added in a terminal or another app since) are added below kernl's transcript,
+   * which keeps its Restore points. If the session can't be loaded now, it's loaded on the next send, as before.
+   */
+  private async addTurnsFromAgent(record: SessionRecord) {
+    this.loadingSession = true;
+    this.replayBuffer = [];
+    let failed: string | undefined;
+    try {
+      this.creating ??= this.createRunner().finally(() => (this.creating = undefined));
+      const runner = (this.runner ??= await this.creating);
+      failed = runner instanceof AcpRunner ? await runner.loadNow() : "not an ACP agent";
+      if (failed) runner.newThread(record.history);
+    } catch (err: any) {
+      failed = err?.message ?? String(err);
+    } finally {
+      this.loadingSession = false;
+    }
+    const replayed = this.replayBuffer;
+    this.replayBuffer = undefined;
+    if (failed) this.host.log.info(`[${this.label}] couldn't load the agent's session to look for turns added elsewhere: ${failed}`);
+    else {
+      const lastUser = [...record.events].reverse().find((e) => e.type === "userMessage") as Extract<TranscriptEvent, { type: "userMessage" }> | undefined;
+      const added = turnsAfter(replayed, lastUser?.text);
+      if (added === undefined) this.host.log.info(`[${this.label}] the agent's session doesn't contain kernl's last message (changed elsewhere?); nothing added`);
+      else if (added.length) {
+        this.post({ type: "notice", workspace: this.id, text: "Added in another app since this conversation was last open in kernl:" });
+        for (const e of replayTranscript(added, this.id)) this.post(e);
+        await this.saveSession();
+      }
+    }
+    this.host.workspacesChanged();
+    this.sendNextQueued();
   }
 
   /** Shows this session's transcript again (after switching or cutting it). */
@@ -594,6 +725,7 @@ export class WorkspaceRuntime {
   private reset() {
     this.runner?.dispose();
     this.runner = undefined;
+    this.liveOptions = undefined;
     void this.lifecycle?.invalidate();
   }
 
@@ -654,8 +786,107 @@ export class WorkspaceRuntime {
 
   /** Everything shown for this workspace is also kept in its session ("cleared" only resets the view). */
   private post(m: TranscriptEvent) {
+    // An agent's replay of a stored session is collected first, then shown (see openAgentSession).
+    if (this.replayBuffer && m.type !== "cleared") return void this.replayBuffer.push(m);
     this.host.post(m);
     if (m.type !== "cleared") this.session.events.push(m);
+  }
+
+  /** A user message of a replayed session; consecutive parts of one message are joined. */
+  private replayedUserMessage(text: string) {
+    const events = this.replayBuffer ?? this.session.events;
+    const last = events.at(-1);
+    if (last?.type === "userMessage") return void (last.text += text);
+    const turn = events.filter((e) => e.type === "userMessage").length;
+    this.post({ type: "userMessage", workspace: this.id, text, id: randomUUID(), turn });
+  }
+
+  /**
+   * Opens a CLI agent's stored session (`record.importedFrom`): the agent loads it (ACP session/load)
+   * and its replay becomes the transcript, so turns added in a terminal or another app show; sending
+   * continues it. A record opened before is loaded again. The caller switched the harness to the agent.
+   * `notice`: shown above it (e.g. the session is open in another app).
+   */
+  async openAgentSession(record: SessionRecord, notice?: string) {
+    if (this.running || !record.importedFrom || !isCliAgentId(this.harness)) return;
+    this.loadingSession = true;
+    try {
+      await this.loadAgentSession(record, notice);
+    } finally {
+      this.loadingSession = false;
+      this.host.workspacesChanged();
+      this.sendNextQueued();
+    }
+  }
+
+  private async loadAgentSession(record: SessionRecord, notice?: string) {
+    if (!record.importedFrom || !isCliAgentId(this.harness)) return;
+    await this.saveSession();
+    this.session = record;
+    record.events = [];
+    this.thinking.reset();
+    this.holdQueue();
+    this.host.post({ type: "cleared", workspace: this.id });
+    if (notice) this.post({ type: "notice", workspace: this.id, text: notice });
+    let failed: string | undefined;
+    const label = CLI_AGENTS[this.harness].label;
+    this.replayBuffer = [];
+    try {
+      this.creating ??= this.createRunner().finally(() => (this.creating = undefined));
+      const runner = (this.runner ??= await this.creating);
+      runner.newThread({ sessionId: record.importedFrom.sessionId });
+      failed = runner instanceof AcpRunner ? await runner.loadNow() : "not an ACP agent";
+    } catch (err: any) {
+      failed = err?.message ?? String(err);
+    }
+    const replayed = this.replayBuffer;
+    this.replayBuffer = undefined;
+    for (const e of replayTranscript(replayed, this.id)) this.post(e);
+    if (failed) this.post({ type: "notice", workspace: this.id, text: `${label} couldn't load this session (${failed}). Sending starts a new one.` });
+    await this.saveSession();
+    this.host.workspacesChanged();
+  }
+
+  /**
+   * Starts this workspace's CLI agent session now, before any message, so its model, thinking, and
+   * fast chips show and can be chosen first; the first message uses it. Only for a CLI agent in a
+   * trusted workspace, while idle. A failure is logged: the first message reports it as usual.
+   */
+  async prepareAgent() {
+    if (!isCliAgentId(this.harness) || !this.host.trusted() || this.running || this.starting) return;
+    try {
+      this.creating ??= this.createRunner().finally(() => (this.creating = undefined));
+      const runner = (this.runner ??= await this.creating);
+      const failed = runner instanceof AcpRunner ? await runner.prepare() : undefined;
+      if (failed) this.host.log.info(`[${this.label}] ${CLI_AGENTS[this.harness].label} didn't start before the first message: ${failed}`);
+    } catch (err: any) {
+      this.host.log.info(`[${this.label}] ${CLI_AGENTS[this.harness]?.label ?? this.harness} didn't start before the first message: ${err?.message ?? err}`);
+    }
+  }
+
+  /**
+   * A CLI agent's stored sessions for this folder (ACP session/list), or undefined when it can't list
+   * them or doesn't start. The agent runs briefly on its own, apart from this workspace's session.
+   */
+  async listAgentSessions(agent: CliAgentId): Promise<acp.SessionInfo[] | undefined> {
+    if (!this.host.trusted()) return undefined;
+    const settings = this.host.providerSettings();
+    const launch = resolveLaunch(agent, settings.agentCommands, await this.host.agentEnv(agent), "ask", { tools: false, terminal: false });
+    if ("error" in launch) return undefined;
+    const quiet = { text() {}, toolCall() {}, toolResult() {}, usage() {}, finished() {} };
+    const runner = new AcpRunner({ agentLabel: CLI_AGENTS[agent].label, launch, mode: () => ({ kind: "environment" }), cwd: this.root, gate: this.gate, events: quiet, log: (line) => this.host.log.info(line) });
+    let timer: NodeJS.Timeout | undefined;
+    // Conversations waits for the lists: an agent that doesn't answer is left out, not waited for.
+    const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(`no answer in ${LIST_TIMEOUT_MS / 1000} s`)), LIST_TIMEOUT_MS)));
+    try {
+      return await Promise.race([runner.listSessions(), timeout]);
+    } catch (err: any) {
+      this.host.log.info(`[${this.label}] ${CLI_AGENTS[agent].label} couldn't list its sessions: ${err?.message ?? err}`);
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+      runner.dispose();
+    }
   }
 
   private events(): SessionEvents {
@@ -684,6 +915,8 @@ export class WorkspaceRuntime {
         this.host.workspacesChanged();
       },
       configChanged: (values) => this.agentChangedConfig(values),
+      agentOptions: (options) => this.agentReportedOptions(options),
+      replayedUserMessage: (text) => this.replayedUserMessage(text),
       toolResult: (id, name, output, failed) => this.post({ type: "toolResult", workspace: ws, id, name, output: output.slice(0, 4000), ...(failed ? { failed: true } : {}) }),
       toolImage: (id, image) => void this.savePreview(id, image),
       usage: (inputTokens, outputTokens) => this.post({ type: "usage", workspace: ws, inputTokens, outputTokens }),
@@ -728,6 +961,8 @@ export class WorkspaceRuntime {
         return { mcpServers: [{ type: "http" as const, name: KERNL_SERVER_NAME, url: access.url, headers }], meta: sessionMeta(spec.id, use) };
       },
       connection: (signal) => this.host.connectionSignal(signal, spec.id),
+      rememberedOptions: () => this.host.state.get<RememberedOptions>(this.optionsKey(spec.id))?.chosen ?? {},
+      agentDecidesKernlTools: () => this.agentDecidesKernlTools(),
       loginHint: `Run \`${loginCommand(spec.id)}\` in a terminal, or use Log in in kernl: Show connections.`,
       commandOutput: (event) => (this.mirror ??= new CommandMirror(`${spec.label.replace(/ \(.*\)$/, "")}: ${this.label}`)).show(event),
     }));
@@ -814,8 +1049,8 @@ export class WorkspaceRuntime {
     const problem = await this.host.deepAgentsProblem();
     if (problem) throw new Error(problem);
     const s = this.host.providerSettings();
-    const apiKey = await this.host.apiKey(s.provider);
-    const model = createChatModel(s, apiKey);
+    const auth = await this.host.providerAuth(s.provider);
+    const model = createChatModel(s, auth);
     const trusted = this.host.trusted();
     const { imports, commandsDir } = await this.host.sources(this.root, trusted);
     const instructions = await assembleInstructions({ userDir: this.host.userDir, projectRoot: this.root, trusted, imported: imports.instructions });
@@ -826,7 +1061,7 @@ export class WorkspaceRuntime {
     if (this.harness.startsWith(NAMED_AGENT_PREFIX) && !selected) {
       this.post({ type: "notice", workspace: this.id, text: `The ${this.harness.slice(NAMED_AGENT_PREFIX.length)} agent's file is gone; using the plain kernl agent.` });
     }
-    const modelFor = (a: NamedAgent) => (a.model ? createChatModel({ ...s, model: a.model }, apiKey) : model);
+    const modelFor = (a: NamedAgent) => (a.model ? createChatModel({ ...s, model: a.model }, auth) : model);
     // Restricted Mode: read-only backend, no browser or MCP tools, only the user's own agents.
     const browser = trusted ? browserTools(this.host.browser(), this.gate) : [];
     const mcp = trusted ? await this.loadMcp(s, imports.mcpServers) : { tools: [], close: async () => {} };

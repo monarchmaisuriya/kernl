@@ -2,7 +2,7 @@
 // and page text are untrusted, so nothing is ever parsed as HTML (test/unit/webviewSafety.test.ts).
 // One transcript per workspace (the main folder plus worktree workspaces); the footer's workspace
 // chip switches between them. New chat and New workspace live in VS Code's view title bar.
-import { type ApprovalCard, type HarnessView, type HostToPanel, type PanelToHost, type PlanEntryView, PREVIEW_FILE, type SendMode, type SkillView, type WorkspaceView } from "../ui/protocol";
+import { type AgentOptionView, type ApprovalCard, type HarnessView, type HostToPanel, type PanelToHost, type PlanEntryView, PREVIEW_FILE, type SendMode, type SkillView, type WorkspaceView } from "../ui/protocol";
 import { icon } from "./icons";
 import { attachmentChip, createAttachments } from "./attachments";
 import { createConnectionsView } from "./connections";
@@ -101,6 +101,9 @@ function thoughtRow(args: Record<string, unknown>): HTMLElement {
 
 type Status = Extract<HostToPanel, { type: "status" }>;
 
+/** A model's name for its chip: the part after the last "/" ("litellm/GPT-5.6" -> "GPT-5.6"); the tooltip keeps the full id. */
+const shortModel = (model: string) => model.slice(model.lastIndexOf("/") + 1) || model;
+
 const app = document.getElementById("app")!;
 const banner = el("div", "banner");
 const logs = el("div", "logs");
@@ -138,14 +141,27 @@ input.setAttribute("aria-label", "Message");
 // Opens the host's agent menu (kernl and its agents first, then Claude Code, Codex, OpenCode).
 const agentChip = el("button", "chip harness");
 const modelChip = el("button", "chip model");
+const thinkingChip = el("button", "chip reasoning");
+// A CLI agent's fast mode (Claude Code, Codex), when its model offers one.
+const fastChip = el("button", "chip fast");
 // Menus the host opens for a control appear next to it (see menu.ts).
 agentChip.dataset.anchor = "agent";
 modelChip.dataset.anchor = "model";
+thinkingChip.dataset.anchor = "thinking";
 const sendButton = iconButton("send", "Send", icon("send"));
 const attachButton = iconButton("chip attach", "Add files or folders", icon("plus"));
 attachButton.title = "Add files or folders (in the Explorer: right-click, Add to kernl chat)";
 attachButton.dataset.anchor = "attach";
-const attachments = createAttachments(input, (m) => send(m), () => render());
+const attachments = createAttachments(input, (m) => send(m), () => (render(), saveDraft()));
+
+// The unsent message is kept by the host (per window) a moment after each change, so a restart doesn't lose it.
+let draftTimer: ReturnType<typeof setTimeout> | undefined;
+function saveDraft(now = false) {
+  clearTimeout(draftTimer);
+  const save = () => send({ type: "draft", text: input.value, attachments: attachments.current() });
+  if (now) save();
+  else draftTimer = setTimeout(save, 400);
+}
 const sendMenu = createSendMenu((mode) => submit(mode));
 const sendGroup = el("div", "send-group");
 sendGroup.append(sendButton, sendMenu.button);
@@ -154,7 +170,7 @@ const toolbar = el("div", "toolbar");
 const setupButton = el("button", "chip setup");
 setupButton.hidden = true;
 setupButton.append(icon("warning", 14));
-toolbar.append(attachButton, setupButton, agentChip, modelChip, el("span", "spacer"), sendGroup);
+toolbar.append(attachButton, modelChip, thinkingChip, fastChip, el("span", "spacer"), sendGroup);
 const context = el("div", "context-row");
 context.append(attachments.suggestion, attachments.chips);
 const inputWrap = el("div", "input-wrap");
@@ -189,7 +205,8 @@ jobsChip.addEventListener("click", () => send({ type: "pickJob" }));
 const usage = el("span", "usage");
 const contextRing = createContextRing();
 const planBar = createPlanBar();
-footer.append(modeMenu.menu, workspaceChip, modeChip, jobsChip, el("span", "spacer"), contextRing.ring, usage);
+// Where, who, how: the workspace, its agent (with its setup warning), then the agent's mode.
+footer.append(modeMenu.menu, workspaceChip, setupButton, agentChip, modeChip, jobsChip, el("span", "spacer"), contextRing.ring, usage);
 const connectionsView = createConnectionsView(send);
 app.append(banner, logs, planBar.bar, composer, footer, anchoredMenu.menu, connectionsView.view, politeAnnouncer, urgentAnnouncer);
 
@@ -266,11 +283,15 @@ function render() {
   sendButton.title = sendLabel;
   sendButton.disabled = !p || (!running && !input.value.trim());
   sendMenu.update({ hasText: !!input.value.trim(), running, available: !!p });
+  // Send and its options are one pill: Stop paints it in the secondary colors; nothing to do mutes it.
+  sendGroup.classList.toggle("stop", running);
+  sendGroup.classList.toggle("off", sendButton.disabled && sendMenu.button.disabled);
   input.disabled = !p;
   renderQueue(p);
 
   const harness = harnesses.find((h) => h.id === p?.view.harness);
-  agentChip.replaceChildren(el("span", "chip-text", harness?.label ?? p?.view.harness ?? "Agent"), icon("chevron", 14));
+  // kernl's own agent shows the kernl mark; a CLI agent (Claude Code, Codex, OpenCode) a terminal.
+  agentChip.replaceChildren(icon((harness?.id ?? p?.view.harness ?? "").startsWith("deepagents") ? "kernl" : "terminal", 14), el("span", "chip-text", harness?.label ?? p?.view.harness ?? "Agent"), icon("chevron", 14));
   setupButton.hidden = !harness || harness.ready;
   setupButton.title = harness?.problem ? `${harness.problem}\nOpen Connections` : "Open Connections";
   setupButton.setAttribute("aria-label", `${harness?.label ?? "Agent"} needs setup: ${harness?.problem ?? ""}. Open Connections`);
@@ -280,11 +301,44 @@ function render() {
   agentChip.title = harness?.problem ?? "Change the agent for this workspace";
   agentChip.disabled = !p || running;
 
-  modelChip.hidden = !deepAgents || !status;
-  if (status) {
-    modelChip.replaceChildren(el("span", "chip-text", status.model || `${status.provider}: no model set`), icon("chevron", 14));
+  // kernl's own agent: the provider's model and kernl's thinking level. A CLI agent: its own options.
+  const options = deepAgents ? undefined : p?.view.agentOptions;
+  const agentOption = (kind: AgentOptionView["kind"]) => options?.find((o) => o.kind === kind);
+  const choiceName = (o: AgentOptionView) => o.choices?.find((c) => c.value === o.value)?.name ?? String(o.value);
+  const cliModel = agentOption("model");
+  modelChip.hidden = deepAgents ? !status : !cliModel;
+  modelChip.dataset.option = cliModel?.id ?? "";
+  modelChip.disabled = !deepAgents && running;
+  if (deepAgents && status) {
+    modelChip.replaceChildren(icon("processor", 14), el("span", "chip-text", status.model ? shortModel(status.model) : `${status.provider}: no model set`), icon("chevron", 14));
     modelChip.setAttribute("aria-label", `Model: ${status.provider} ${status.model}. Change model`);
     modelChip.title = `${status.provider} · ${status.model || "no model set"}\nChange the Deep Agents provider and model`;
+  } else if (cliModel) {
+    modelChip.replaceChildren(icon("processor", 14), el("span", "chip-text", shortModel(choiceName(cliModel))), icon("chevron", 14));
+    modelChip.setAttribute("aria-label", `Model: ${choiceName(cliModel)}. Change ${harness?.label ?? "the agent"}'s model`);
+    modelChip.title = `${harness?.label ?? "Agent"}'s model: ${choiceName(cliModel)}`;
+  }
+  const cliThinking = agentOption("thinking");
+  const level = deepAgents ? (status?.thinking ? (status.thinking === "off" ? "Off" : status.thinking[0].toUpperCase() + status.thinking.slice(1)) : undefined) : cliThinking && choiceName(cliThinking);
+  const thinker = deepAgents ? status?.model : (cliModel && choiceName(cliModel)) || harness?.label;
+  thinkingChip.hidden = !level;
+  thinkingChip.dataset.option = cliThinking?.id ?? "";
+  thinkingChip.disabled = !deepAgents && running;
+  if (level) {
+    thinkingChip.replaceChildren(icon("bulb", 14), el("span", "chip-text", level), icon("chevron", 14));
+    thinkingChip.setAttribute("aria-label", `Thinking: ${level}. Change how much ${thinker} thinks`);
+    thinkingChip.title = `How much ${thinker} thinks before answering: ${level}`;
+  }
+  const fast = agentOption("fast");
+  fastChip.hidden = !fast;
+  fastChip.disabled = running;
+  if (fast) {
+    fastChip.dataset.option = fast.id;
+    fastChip.classList.toggle("on", fast.value === true);
+    fastChip.setAttribute("aria-pressed", String(fast.value === true));
+    fastChip.replaceChildren(icon(fast.value === true ? "boltOn" : "bolt", 14), el("span", "chip-text", "Fast"));
+    fastChip.setAttribute("aria-label", `Fast mode: ${fast.value === true ? "on" : "off"}`);
+    fastChip.title = `${fast.name}: ${fast.value === true ? "on" : "off"}. Click to turn it ${fast.value === true ? "off" : "on"}`;
   }
 
   banner.replaceChildren();
@@ -459,6 +513,7 @@ function submit(mode: SendMode = "now") {
   const files = attachments.take();
   input.value = "";
   attachments.refresh();
+  saveDraft(true);
   if (!p.view.running) p.assistant = undefined;
   send({ type: "send", workspace: active, text, ...(files.length ? { attachments: files } : {}), ...(mode === "now" ? {} : { mode }) });
   render();
@@ -497,6 +552,7 @@ input.addEventListener("input", () => {
   attachments.setSkills(slash);
   attachments.onInput(slash.length > 0);
   render();
+  saveDraft();
 });
 attachButton.addEventListener("click", () => send({ type: "pickAttachments" }));
 // Files dropped anywhere on the panel are attached (the host checks they're in the workspace).
@@ -529,7 +585,9 @@ app.addEventListener("drop", (e) => {
 });
 agentChip.addEventListener("click", () => send({ type: "pickHarness" }));
 setupButton.addEventListener("click", () => connectionsView.show(setupButton.dataset.connection));
-modelChip.addEventListener("click", () => send({ type: "pickModel" }));
+modelChip.addEventListener("click", () => send(modelChip.dataset.option ? { type: "pickAgentOption", workspace: active, id: modelChip.dataset.option } : { type: "pickModel" }));
+thinkingChip.addEventListener("click", () => send(thinkingChip.dataset.option ? { type: "pickAgentOption", workspace: active, id: thinkingChip.dataset.option } : { type: "pickThinking" }));
+fastChip.addEventListener("click", () => send({ type: "setAgentOption", workspace: active, id: fastChip.dataset.option!, value: fastChip.getAttribute("aria-pressed") !== "true" }));
 workspaceChip.addEventListener("click", () => send({ type: "pickWorkspace" }));
 
 function renderCard(card: ApprovalCard) {
@@ -611,6 +669,14 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       return;
     case "activeFile":
       attachments.setActiveFile(m.path);
+      return;
+    case "restoreDraft":
+      // Never over what was typed since the panel opened.
+      if (input.value.trim() || attachments.current().length) return;
+      input.value = m.text;
+      attachments.add(m.attachments);
+      attachments.refresh();
+      render();
       return;
     case "menu":
       anchoredMenu.open(m);
@@ -805,6 +871,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       input.value = m.text;
       attachments.refresh();
       input.focus();
+      saveDraft();
       break;
     case "notice":
       p.log.append(el("div", "note", m.text));

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { registerKernlParticipant } from "./chatParticipant";
 import { Controller } from "./controller";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -14,6 +15,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("kernl.openSettings", () => controller.openSettings()),
     vscode.commands.registerCommand("kernl.showSources", () => controller.showSources()),
     vscode.commands.registerCommand("kernl.showConnections", () => controller.showConnections()),
+    vscode.commands.registerCommand("kernl.open", () => controller.open()),
+    vscode.commands.registerCommand("kernl.ask", () => controller.ask()),
+    vscode.commands.registerCommand("kernl.askAboutSelection", () => controller.askAboutSelection()),
+    vscode.commands.registerCommand("kernl.quickMenu", () => controller.quickMenu()),
     vscode.commands.registerCommand("kernl.manageProviders", () => controller.manageProviders()),
     vscode.commands.registerCommand("kernl.agentLogins", () => controller.agentLogins()),
     vscode.commands.registerCommand("kernl.pickHarness", () => controller.pickHarnessCommand()),
@@ -23,6 +28,9 @@ export function activate(context: vscode.ExtensionContext) {
       controller.attachUris((uris?.length ? uris : uri ? [uri] : []).map((u) => u.toString())),
     ),
   );
+  // "@kernl" in VS Code's own chat, where it's available.
+  const participant = registerKernlParticipant(controller.chatForwarding(), vscode.Uri.joinPath(context.extensionUri, "media", "icon.png"));
+  if (participant) context.subscriptions.push(participant);
   // Returned for the integration tests (test/vscode): the real SecretStorage-backed key stores and the controller seam.
   return { keys: controller.keys, agentCredentials: controller.agentCredentials, testing: controller.testingApi() };
 }

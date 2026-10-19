@@ -24,6 +24,8 @@ export interface SessionRecord {
   forkOf?: string;
   /** A title the agent gave the conversation (ACP session_info_update); preferred over the first message. */
   agentTitle?: string;
+  /** A CLI agent's session opened from its own list (started in a terminal or another app): its transcript is the agent's replay, loaded again on each open. */
+  importedFrom?: { agent: string; sessionId: string };
 }
 
 /** A message waiting for the current run to end (the composer's queue). */
@@ -39,9 +41,50 @@ export interface SessionSummary {
   harness: string;
   updatedAt: number;
   messages: number;
+  /** The CLI agent's session this conversation continues, so the agent's own list shows it once. */
+  agentSessionId?: string;
 }
 
 export const PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * The turns an agent's replay of a session has after `lastUserText` (kernl's last message in its own
+ * transcript): what was added in a terminal or another app since. The agent's copy of a message starts
+ * with kernl's text (kernl may have added an attachment note). All of the replay when kernl has no
+ * message yet; [] when nothing was added; undefined when kernl's message isn't in the replay.
+ */
+export function turnsAfter(replayed: readonly TranscriptEvent[], lastUserText: string | undefined): TranscriptEvent[] | undefined {
+  if (lastUserText === undefined) return [...replayed];
+  const mine = lastUserText.trim();
+  const isUser = (e: TranscriptEvent): e is Extract<TranscriptEvent, { type: "userMessage" }> => e.type === "userMessage";
+  let at = -1;
+  replayed.forEach((e, i) => isUser(e) && e.text.trimStart().startsWith(mine) && (at = i));
+  if (at < 0) return undefined;
+  const next = replayed.findIndex((e, i) => i > at && isUser(e));
+  return next < 0 ? [] : replayed.slice(next);
+}
+
+/** The most events of an agent's replayed session kept as its transcript; a longer one shows its latest turns. */
+export const REPLAY_MAX_EVENTS = 4000;
+
+/**
+ * An agent's replay of a stored session as a transcript: each turn ends (finished) before the next user
+ * message and at the end, as a live turn does. A replay longer than `max` events keeps its latest turns,
+ * from a user message on, with a notice that earlier ones are only in the agent's history.
+ */
+export function replayTranscript(events: readonly TranscriptEvent[], workspace: string, max = REPLAY_MAX_EVENTS): TranscriptEvent[] {
+  const out: TranscriptEvent[] = [];
+  const end = () => out.length && out.at(-1)!.type !== "finished" && out.push({ type: "finished", workspace, reason: "done" });
+  for (const e of events) {
+    if (e.type === "userMessage") end();
+    out.push(e);
+  }
+  end();
+  if (out.length <= max) return out;
+  const from = out.findIndex((e, i) => e.type === "userMessage" && out.length - i <= max - 1);
+  const kept = from < 0 ? out.slice(-(max - 1)) : out.slice(from);
+  return [{ type: "notice", workspace, text: "This session is long: showing its latest turns. The agent still has all of it." }, ...kept];
+}
 const safeName = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_");
 
 export class SessionStore {
@@ -127,7 +170,9 @@ export class SessionStore {
     const out: SessionSummary[] = [];
     for (const n of names) {
       const s = await this.load(workspaceKey, n.slice(0, -5));
-      if (s) out.push({ id: s.id, title: s.title, harness: s.harness, updatedAt: s.updatedAt, messages: s.events.filter((e) => e.type === "userMessage").length });
+      if (!s) continue;
+      const agentSessionId = s.importedFrom?.sessionId ?? (s.history as { sessionId?: unknown } | undefined)?.sessionId;
+      out.push({ id: s.id, title: s.title, harness: s.harness, updatedAt: s.updatedAt, messages: s.events.filter((e) => e.type === "userMessage").length, ...(typeof agentSessionId === "string" ? { agentSessionId } : {}) });
     }
     return out.sort((a, b) => b.updatedAt - a.updatedAt);
   }

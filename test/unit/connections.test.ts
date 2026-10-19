@@ -172,3 +172,35 @@ test("a forced or changed request during a running check gets a fresh check afte
   await changed;
   assert.equal(m.get("agent:claude-code")?.state, "ready");
 });
+
+test("whenAnswered waits for the first check, and through a check after a change, so a decision reads its answer; it gives up after the cap", async () => {
+  const m = new ConnectionMonitor(() => 5);
+  await m.whenAnswered("agent:codex", 1_000);
+  const releases: (() => void)[] = [];
+  const check = (state: ConnectionStatus["state"]) => () => new Promise<ConnectionStatus[]>((r) => releases.push(() => r([row("agent:codex", state)])));
+  void m.check("agent:codex", check("needsAction"));
+  void m.check("agent:codex", check("needsAction"), { changed: true });
+  let answered = false;
+  const waiting = m.whenAnswered("agent:codex", 5_000).then(() => (answered = true));
+  assert.equal(m.get("agent:codex"), undefined, "no answer yet: a send now would read nothing");
+  releases[0]();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(answered, false, "the first answer is outdated; the queued check is still running");
+  releases[1]();
+  await waiting;
+  assert.equal(m.get("agent:codex")?.state, "needsAction");
+  void m.check("agent:codex", () => new Promise<ConnectionStatus[]>(() => {}), { changed: true });
+  const started = Date.now();
+  await m.whenAnswered("agent:codex", 50);
+  assert.ok(Date.now() - started < 1_000, "a check that never answers holds a decision only until the cap");
+});
+
+test("a routine recheck keeps the last answer, even 'unknown' (an agent started with its own command): nothing waits for it", async () => {
+  const m = new ConnectionMonitor(() => 5);
+  await m.check("agent:codex", async () => [row("agent:codex", "unknown")]);
+  void m.check("agent:codex", () => new Promise<ConnectionStatus[]>(() => {}));
+  assert.deepEqual([m.get("agent:codex")?.state, m.get("agent:codex")?.checking], ["unknown", true]);
+  const started = Date.now();
+  await m.whenAnswered("agent:codex", 5_000);
+  assert.ok(Date.now() - started < 1_000, "the answer still holds, so a send goes ahead at once");
+});

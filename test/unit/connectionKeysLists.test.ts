@@ -26,6 +26,16 @@ test("each provider's models-list request carries the key in a header, never in 
   assert.equal(keyRequest("openai-compatible", key), undefined, "no URL, nothing to ask");
 });
 
+test("a custom provider's models-list request carries its headers, with or without a key, and never a removed (null) header", () => {
+  const headers = { "X-Team": "kernl", "X-Token": "tok", "x-api-key": null };
+  assert.deepEqual(keyRequest("openai-compatible", undefined, "https://gw.example/v1", headers), { url: "https://gw.example/v1/models", headers: { "X-Team": "kernl", "X-Token": "tok" } });
+  assert.deepEqual(keyRequest("openai-compatible", "sk-k", "https://gw.example/v1", headers)!.headers, { Authorization: "Bearer sk-k", "X-Team": "kernl", "X-Token": "tok" });
+  assert.deepEqual(keyRequest("anthropic", undefined, "https://gw.example/anthropic", headers), {
+    url: "https://gw.example/anthropic/v1/models",
+    headers: { "anthropic-version": "2023-06-01", "X-Team": "kernl", "X-Token": "tok" },
+  });
+});
+
 test("200 is accepted, 401/403 refused, 404 or no answer can't tell", async () => {
   const seen: { path?: string; auth?: string }[] = [];
   const server = createServer((req, res) => {

@@ -120,6 +120,19 @@ export interface WorkspaceView {
   modes: ModeView[];
   /** Why earlier turns can't be forked (this agent copies only its whole conversation); absent when any turn can. */
   forkLimit?: string;
+  /** A CLI agent's model, thinking, and fast-mode switches (its last session's, before the first message); absent for kernl. */
+  agentOptions?: AgentOptionView[];
+}
+
+/** A CLI agent's own switch shown as a chip (see src/acp/agentOptions.ts). Fast mode's value is on (true) or off. */
+export interface AgentOptionView {
+  id: string;
+  name: string;
+  kind: "model" | "thinking" | "fast";
+  type: "select" | "boolean";
+  value: string | boolean;
+  /** A select's choices; for fast mode sent as a select, "on" and "off". */
+  choices?: { value: string; name: string; description?: string }[];
 }
 
 export interface ModeView {
@@ -141,7 +154,7 @@ export interface QueuedView {
 export type SendMode = "now" | "queue" | "fork";
 
 /** Where an in-panel menu opens: next to this control (a message's Restore button is "restore:<message id>"). */
-export type MenuAnchor = "agent" | "model" | "workspace" | "attach" | "jobs" | "title" | `restore:${string}`;
+export type MenuAnchor = "agent" | "model" | "thinking" | "workspace" | "attach" | "jobs" | "title" | `restore:${string}`;
 
 /** One row of an in-panel menu (VS Code's "$(icon) " label prefixes already turned into icon and checked). */
 export interface MenuItemView {
@@ -156,7 +169,8 @@ export interface MenuItemView {
 }
 
 export type HostToPanel =
-  | { type: "status"; ready: boolean; problem?: string; provider: string; model: string; restricted: boolean; thinkingDisplay: "auto" | "collapsed" | "expanded"; previewBase?: string }
+  /** `thinking`: the kernl agent's thinking level for the current model; absent when the provider has no thinking control (deepseek) or the settings have a problem. */
+  | { type: "status"; ready: boolean; problem?: string; provider: string; model: string; thinking?: "off" | "low" | "medium" | "high"; restricted: boolean; thinkingDisplay: "auto" | "collapsed" | "expanded"; previewBase?: string }
   /** The full workspace list and run state; sent on ready and whenever it changes. */
   | { type: "workspaces"; items: WorkspaceView[]; harnesses: HarnessView[]; focus?: string; problem?: string }
   /** Sent whenever a webview becomes ready: every open approval card. */
@@ -167,6 +181,8 @@ export type HostToPanel =
   | { type: "checkpoint"; workspace: string; messageId: string; checkpoint: string }
   /** Puts text back in the composer (after a restore cut the conversation at that message). */
   | { type: "setInput"; workspace: string; text: string }
+  /** The unsent message saved before the panel last closed (VS Code restarted, the window reloaded); filled in only when the box is empty. */
+  | { type: "restoreDraft"; text: string; attachments: Attachment[] }
   /** Attachments to add to the composer (from the + menu, the Explorer, or a drop). */
   | { type: "addAttachments"; items: Attachment[] }
   /** Answer to searchFiles: workspace paths matching the "@" query. */
@@ -247,12 +263,19 @@ export type PanelToHost =
   | { type: "pickWorkspace" }
   /** The composer's model chip: Deep Agents provider and model. */
   | { type: "pickModel" }
+  | { type: "pickThinking" }
   /** The composer's agent chip: pick the harness for the shown workspace. */
   | { type: "pickHarness" }
   /** The answer to an in-panel menu: the chosen row's index, or none when it was dismissed. */
   | { type: "menuPick"; id: string; index?: number }
   /** The mode chip's menu: switch this workspace's permission mode. */
   | { type: "setMode"; workspace: string; mode: string }
+  /** The message box's text and attachments, a moment after they change ("" once sent): kept so a restart doesn't lose them. */
+  | { type: "draft"; text: string; attachments: Attachment[] }
+  /** A CLI agent's model or thinking chip: open its choices. */
+  | { type: "pickAgentOption"; workspace: string; id: string }
+  /** A CLI agent's fast-mode chip: turn it on or off. */
+  | { type: "setAgentOption"; workspace: string; id: string; value: boolean }
   /** The empty panel's Open Folder button (shown when the window has no usable folder). */
   | { type: "openFolder" }
   /** A link in a reply; the host opens it in the browser if httpUrl() accepts it. */
@@ -260,7 +283,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

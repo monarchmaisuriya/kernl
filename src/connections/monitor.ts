@@ -22,6 +22,8 @@ export class ConnectionMonitor {
   private outdated = new Set<string>();
   /** Ids a run reported as failing; routine checks leave them as they are. */
   private fromRuns = new Set<string>();
+  /** Groups with no answer that still holds: never checked yet, or checking again after a change. */
+  private unanswered = new Set<string>();
   private listeners = new Set<Listener>();
 
   constructor(private now: () => number = Date.now) {}
@@ -58,6 +60,7 @@ export class ConnectionMonitor {
       if (!options.force && !options.changed) return current;
       if (options.changed) {
         this.outdated.add(group);
+        this.unanswered.add(group);
         this.mark(group, true);
       }
       const waiting = this.queued.get(group);
@@ -75,6 +78,7 @@ export class ConnectionMonitor {
       return entry.promise;
     }
     const force = options.force === true || options.changed === true;
+    if (options.changed || !this.rows(group).length) this.unanswered.add(group);
     const run = (async () => {
       this.mark(group, options.changed === true);
       let result: ConnectionStatus[];
@@ -88,6 +92,20 @@ export class ConnectionMonitor {
     })().finally(() => this.running.delete(group));
     this.running.set(group, run);
     return run;
+  }
+
+  /**
+   * Resolves once `group` has an answer that holds, or after `timeoutMs`, whichever comes first. Waits only
+   * while its first check, or a check after a change, is under way; a routine recheck keeps the last answer,
+   * so it resolves at once (even when that answer is "unknown").
+   */
+  whenAnswered(group: string, timeoutMs: number): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const cap = new Promise<void>((r) => (timer = setTimeout(r, timeoutMs)));
+    const done = (async () => {
+      for (let pending; this.unanswered.has(group) && (pending = this.queued.get(group)?.promise ?? this.running.get(group)); ) await pending;
+    })();
+    return Promise.race([done, cap]).finally(() => clearTimeout(timer));
   }
 
   /** A real run's signal (auth required, an MCP server that failed to start): applied at once. */
@@ -129,6 +147,7 @@ export class ConnectionMonitor {
   }
 
   private replace(group: string, result: ConnectionStatus[], force: boolean) {
+    this.unanswered.delete(group);
     const kept = new Map<string, ConnectionStatus>();
     for (const s of this.rows(group)) {
       if (this.fromRuns.has(s.id) && !force) kept.set(s.id, s);

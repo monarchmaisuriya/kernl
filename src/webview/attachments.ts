@@ -293,6 +293,10 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
       activeFile = path;
       renderSuggestion();
     },
+    /** The attachments now (mentions still in the text, then text chips), without clearing them: for the saved draft. */
+    current(): Attachment[] {
+      return [...present().map((t) => known.get(t)!), ...texts];
+    },
     /** The attachments to send (mentions still in the text, then text chips), and clears them. */
     take(): Attachment[] {
       const out = [...present().map((t) => known.get(t)!), ...texts];

@@ -14,8 +14,14 @@
 //   auth-required      answers the prompt with ACP's "authentication required" (-32000), as Claude Code and OpenCode do when logged out
 //   auth-status        pushes `_auth/status_update` (kind none), as claude-agent-acp and codex-acp do, then replies
 //   mcp-startup-failed reports an MCP server that didn't start as codex-acp does (tool call mcp__docs__startup, failed)
+//   options      offers a model (small, big, big[1m]), an effort (thought_level: small low/medium, big low/medium/high), and
+//                for big models a fast mode (boolean when the client declared boolean options, else an on/off select);
+//                a model change rebuilds effort and fast, as claude-agent-acp and codex-acp do
 // FAKE_MCP_HTTP=1 advertises HTTP MCP servers. Every new, loaded, or forked session logs the MCP servers and _meta it got.
-// FAKE_LOAD=1 advertises session/load; loading replays one old message (the client must drop it).
+// FAKE_LOAD=1 advertises session/load; loading replays an old question and its answer (dropped for kernl's own conversations, shown for one opened from the list).
+// FAKE_NEW_DELAY=<ms> answers session/new that much later (after logging it), so a test can act while a session opens.
+// FAKE_REPLAY=<JSON [["user"|"agent", text], ...]> replaces what loading replays.
+// FAKE_LIST=1 advertises session/list: two stored sessions for the folder, over two pages (the first ends with a cursor).
 // FAKE_FORK=1 advertises session/fork (unstable); a fork is "<id>-fork".
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -39,11 +45,37 @@ const setupLog = (what: string, p: any) => {
 
 const modeOption = () => ({ id: "mode", name: "Mode", type: "select", currentValue: mode, options: [{ value: "default", name: "Manual" }, { value: "auto", name: "Auto" }] });
 
+// The "options" scenario's model, effort, and fast mode.
+let model = "small";
+let effort = "medium";
+let fast = false;
+let booleanOptions = false;
+const efforts = () => (model === "small" ? ["low", "medium"] : ["low", "medium", "high"]);
+const title = (v: string) => v[0].toUpperCase() + v.slice(1);
+const sessionOptions = () => {
+  if (scenario !== "options") return [modeOption()];
+  const fastOption = booleanOptions
+    ? { id: "fast", name: "Fast mode", category: "model_config", type: "boolean", currentValue: fast }
+    : { id: "fast", name: "Fast mode", category: "model_config", type: "select", currentValue: fast ? "on" : "off", options: [{ value: "on", name: "On" }, { value: "off", name: "Off" }] };
+  return [
+    modeOption(),
+    { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: [{ group: "small", name: "Small", options: [{ value: "small", name: "Small" }] }, { group: "big", name: "Big", options: [{ value: "big", name: "Big" }, { value: "big[1m]", name: "Big" }] }] },
+    { id: "effort", name: "Effort", category: "thought_level", type: "select", currentValue: effort, options: efforts().map((v) => ({ value: v, name: title(v) })) },
+    ...(model === "small" ? [] : [fastOption]),
+  ];
+};
+
 new acp.AgentSideConnection((conn) => ({
-  async initialize() {
+  async initialize(p: any) {
+    booleanOptions = !!p?.clientCapabilities?.session?.configOptions?.boolean;
+    if (scenario === "options") log(`initialize booleanOptions=${booleanOptions}`);
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
-      agentCapabilities: { loadSession: process.env.FAKE_LOAD === "1", sessionCapabilities: process.env.FAKE_FORK === "1" ? { fork: {} } : {}, mcpCapabilities: { http: process.env.FAKE_MCP_HTTP === "1" } },
+      agentCapabilities: {
+        loadSession: process.env.FAKE_LOAD === "1",
+        sessionCapabilities: { ...(process.env.FAKE_FORK === "1" ? { fork: {} } : {}), ...(process.env.FAKE_LIST === "1" ? { list: {} } : {}) },
+        mcpCapabilities: { http: process.env.FAKE_MCP_HTTP === "1" },
+      },
       authMethods: [],
     };
   },
@@ -52,27 +84,46 @@ new acp.AgentSideConnection((conn) => ({
     log(`newSession cwd=${cwd}`);
     setupLog("setup new", p);
     sessionCount++;
+    if (process.env.FAKE_NEW_DELAY) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_NEW_DELAY)));
     if (scenario === "session-mode") return { sessionId: `s${sessionCount}`, modes: { currentModeId: "auto", availableModes: [{ id: "auto", name: "Auto" }, { id: "read-only", name: "Read-only" }] } };
-    return { sessionId: `s${sessionCount}`, configOptions: [modeOption()] } as any;
+    return { sessionId: `s${sessionCount}`, configOptions: sessionOptions() } as any;
+  },
+  async listSessions(p: any) {
+    log(`listSessions cwd=${p.cwd} cursor=${p.cursor ?? "none"}`);
+    if (!p.cursor) return { sessions: [{ sessionId: "stored-1", cwd: p.cwd, title: "Fix the flaky test", updatedAt: new Date(Date.now() - 3_600_000).toISOString() }], nextCursor: "page-2" };
+    return { sessions: [{ sessionId: "stored-2", cwd: p.cwd, title: "Add a changelog" }] };
   },
   async unstable_forkSession(p: any) {
     log(`forkSession ${p.sessionId}`);
     setupLog("setup fork", p);
-    return { sessionId: `${p.sessionId}-fork`, configOptions: [modeOption()] } as any;
+    return { sessionId: `${p.sessionId}-fork`, configOptions: sessionOptions() } as any;
   },
   async loadSession(p: any) {
     cwd = p.cwd;
     log(`loadSession ${p.sessionId}`);
     setupLog("setup load", p);
-    await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-OLD-MESSAGE" } } as any });
-    return { configOptions: [modeOption()] } as any;
+    const replay: [string, string][] = process.env.FAKE_REPLAY ? JSON.parse(process.env.FAKE_REPLAY) : [["user", "REPLAYED-OLD-QUESTION"], ["agent", "REPLAYED-OLD-MESSAGE"]];
+    for (const [role, text] of replay) {
+      await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: role === "user" ? "user_message_chunk" : "agent_message_chunk", content: { type: "text", text } } as any });
+    }
+    return { configOptions: sessionOptions() } as any;
   },
   async setSessionConfigOption(p: any) {
     log(`setConfig ${p.configId}=${p.value}`);
+    if (scenario === "options" && p.configId !== "mode") {
+      if (p.configId === "model") {
+        model = p.value;
+        if (!efforts().includes(effort)) effort = "medium";
+        if (model === "small") fast = false;
+      }
+      if (p.configId === "effort") effort = p.value;
+      if (p.configId === "fast") fast = p.type === "boolean" ? p.value : p.value === "on";
+      return { configOptions: sessionOptions() } as any;
+    }
     const previous = mode;
     if (scenario !== "stuck-mode") mode = p.value;
     if (scenario === "lagging-mode") return { configOptions: [{ ...modeOption(), currentValue: previous }] } as any;
-    return { configOptions: [modeOption()] } as any;
+    return { configOptions: sessionOptions() } as any;
   },
   async setSessionMode(p: any) {
     log(`setMode ${p.modeId}`);
@@ -141,7 +192,9 @@ new acp.AgentSideConnection((conn) => ({
         const headers = Object.fromEntries((kernl.headers ?? []).map((h: any) => [h.name, h.value]));
         const client = new MultiServerMCPClient({ mcpServers: { kernl: { transport: "http", url: kernl.url, headers } }, throwOnLoadError: true, prefixToolNameWithServerName: false } as any);
         const [first] = await client.getTools();
-        await send({ sessionUpdate: "tool_call", toolCallId: "k1", title: `mcp.kernl.${first.name}`, kind: "other", status: "pending", rawInput: { command: "echo from agent" } });
+        // FAKE_KERNL_INPUT: the call's input as JSON (default: a command for run_in_terminal).
+        const input = process.env.FAKE_KERNL_INPUT ? JSON.parse(process.env.FAKE_KERNL_INPUT) : { command: "echo from agent" };
+        await send({ sessionUpdate: "tool_call", toolCallId: "k1", title: `mcp.kernl.${first.name}`, kind: "other", status: "pending", rawInput: input });
         const answer: any = await conn.requestPermission({
           sessionId,
           toolCall: { toolCallId: "k1", title: "MCP tool call approval", kind: "other" } as any,
@@ -151,7 +204,7 @@ new acp.AgentSideConnection((conn) => ({
           ],
         });
         log(`kernl tool permission ${answer.outcome.optionId ?? answer.outcome.outcome}`);
-        const out = await first.invoke({ command: "echo from agent" });
+        const out = await first.invoke(input);
         await client.close();
         await send({ sessionUpdate: "tool_call_update", toolCallId: "k1", status: "completed", content: [{ type: "content", content: { type: "text", text: String(typeof out === "string" ? out : JSON.stringify(out)) } }] });
       }

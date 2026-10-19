@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AIMessageChunk, type BaseMessage, mapChatMessagesToStoredMessages, mapStoredMessagesToChatMessages, type StoredMessage, ToolMessage } from "@langchain/core/messages";
-import { type Attachment, attachmentNote, type PlanEntryView, type SkillView, type ToolInfo } from "../ui/protocol";
+import { type AgentOptionView, type Attachment, attachmentNote, type PlanEntryView, type SkillView, type ToolInfo } from "../ui/protocol";
 import type { BuiltAgent } from "./createAgent";
 import type { Runner } from "./runner";
 import { untracedRunConfig } from "./tracing";
@@ -23,6 +23,10 @@ export interface SessionEvents {
   title?(title: string): void;
   /** The agent changed its own config options (e.g. left plan mode): option id -> current value. */
   configChanged?(values: Record<string, string>): void;
+  /** A user message in an agent's replay of a stored session (ACP session/load), in order with the replayed replies. */
+  replayedUserMessage?(text: string): void;
+  /** A CLI agent's model, thinking, and fast-mode switches, whenever the session reports them (see src/acp/agentOptions.ts). */
+  agentOptions?(options: AgentOptionView[]): void;
   /** `failed`: the tool reported an error (LangChain status "error", ACP status "failed"). */
   toolResult(id: string, name: string, output: string, failed?: boolean): void;
   /** An image a tool returned (a read image, a browser screenshot), base64, for the panel's preview. */

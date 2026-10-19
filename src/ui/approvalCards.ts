@@ -1,3 +1,4 @@
+import { browserCardTitle, describeBrowserCall } from "../browser/describe";
 import type { GateRequest } from "../gate/approvalGate";
 import type { ApprovalCard, HostToPanel } from "./protocol";
 
@@ -17,8 +18,12 @@ export function toApprovalCard(id: string, ws: { id: string; label: string }, r:
       return card({ title: "Read a credential-like file (its contents go to your model provider)", detail: r.path, hasDiff: false });
     case "execute":
       return card({ title: "Run command in the kernl terminal", detail: r.command, hasDiff: false });
-    case "tool":
+    case "tool": {
+      // kernl's own browser tools in plain words; any other tool (an MCP server's) shows its name and arguments.
+      const browser = describeBrowserCall(r.tool, r.args);
+      if (browser) return card({ title: browserCardTitle(browser), detail: clip(browser.detail), hasDiff: false });
       return card({ title: `Use tool ${r.tool}`, detail: clip(JSON.stringify(r.args, null, 2)), hasDiff: false });
+    }
     case "agent":
       return card({ title: `${r.agent}: ${r.title}`, detail: clip(r.detail), hasDiff: r.diff !== undefined, ...(r.alwaysLabel ? { always: r.alwaysLabel } : {}) });
   }

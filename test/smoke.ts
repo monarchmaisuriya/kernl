@@ -27,7 +27,7 @@ async function smoke({ settings, key }: (typeof candidates)[number]) {
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "smoke-target-4471" }));
   const gate = new ApprovalGate({ ask: async (_id, r) => (console.log(`    gate asked: ${r.kind} (rejected)`), false) }, { rules: () => [] });
   const backend = new GatedBackend(root, gate, new NodeWorkspaceFiles(), async () => ({ output: "", exitCode: 0, truncated: false }));
-  const agent = buildAgent({ model: createChatModel(settings, key), workspaceBackend: backend, tools: [], loadProjectRules: false });
+  const agent = buildAgent({ model: createChatModel(settings, { apiKey: key }), workspaceBackend: backend, tools: [], loadProjectRules: false });
   let answer = "";
   const calls: string[] = [];
   let outcome = "";

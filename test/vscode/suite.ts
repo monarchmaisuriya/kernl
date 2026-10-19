@@ -26,7 +26,9 @@ import { SessionStore } from "../../src/sessions";
 import { emptyImports } from "../../src/sources";
 import { KernlToolServer } from "../../src/mcp/kernlServer";
 import { SignInRequired } from "../../src/mcp/servers";
+import { agentCommands } from "../support/noRealAgents";
 import { outsideMessage } from "../../src/attachmentSearch";
+import { type CommandTarget, runStatusCommand, type StatusCommand } from "../../src/connections/statusCommands";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { messageText, toolCall } from "../support/harness";
@@ -43,12 +45,20 @@ const at = () => String(Date.now() - started).padStart(7);
 async function check(name: string, fn: () => Promise<void>) {
   const from = timeline.length;
   timeline.push(`${at()} --- check: ${name.slice(0, 80)}`);
+  // Each check reports as it runs, so a check that never ends is named in the log; after 2 minutes
+  // it also prints its timeline so far (what it's waiting on).
+  console.log(`[check] start: ${name}`);
+  const stuck = setTimeout(() => console.log(`[check] still running after 120 s: ${name}\n  ${timeline.slice(from).slice(-40).join("\n  ")}`), 120_000);
   try {
     await fn();
     results.push(`PASS  ${name}`);
+    console.log(`[check] PASS: ${name}`);
   } catch (e: any) {
     const lines = timeline.slice(from).slice(-40);
     results.push(`FAIL  ${name}\n      ${String(e?.message ?? e).split("\n").filter((l) => l.trim()).slice(0, 8).join("\n      ")}\n      timeline (ms):\n        ${lines.join("\n        ")}`);
+    console.log(`[check] FAIL: ${name}`);
+  } finally {
+    clearTimeout(stuck);
   }
 }
 
@@ -69,6 +79,8 @@ const unusedRunner = async () => ({ output: "", exitCode: 0, truncated: false })
 export async function run() {
   const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
   const ext = vscode.extensions.getExtension("local.kernl")!;
+  // Before anything can start an agent: no real one, ever (see noRealAgents.ts).
+  await vscode.workspace.getConfiguration("kernl").update("agentCommands", agentCommands(), vscode.ConfigurationTarget.Global);
 
   await check("extension activates and registers its commands", async () => {
     await ext.activate();
@@ -88,16 +100,78 @@ export async function run() {
     const { keys, testing } = await ext.activate();
     const config = () => vscode.workspace.getConfiguration("kernl");
     const answers = ["openrouter-test", "OpenRouter", "https://openrouter.ai/api/v1", "some/model", "sk-test-custom-key-456"];
-    testing.usePrompts({ input: async () => answers.shift(), pick: async () => undefined, confirm: async () => true });
+    const picks = ["OpenAI API", "No custom headers"];
+    testing.usePrompts({ input: async () => answers.shift(), pick: async (items: any[]) => ((want) => items.find((i) => i.label === want))(picks.shift()), confirm: async () => true });
     try {
       await vscode.commands.executeCommand("kernl.addCustomProvider");
-      assert.deepEqual(config().get("customProviders"), [{ id: "openrouter-test", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "some/model" }]);
+      assert.deepEqual(config().get("customProviders"), [{ id: "openrouter-test", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "some/model", protocol: "openai" }]);
       assert.equal(config().get("provider"), "custom:openrouter-test");
       assert.equal(await keys.get("custom:openrouter-test"), "sk-test-custom-key-456");
       assert.ok(!JSON.stringify(config().inspect("customProviders")).includes("sk-test-custom-key-456"), "the key never lands in settings");
     } finally {
       await config().update("customProviders", undefined, vscode.ConfigurationTarget.Global);
       await config().update("provider", undefined, vscode.ConfigurationTarget.Global);
+      await keys.clearAll();
+    }
+  });
+
+  await check("Add custom provider with headers: secret header values go to SecretStorage, settings get only their names, and no key is needed", async () => {
+    const { keys, testing } = await ext.activate();
+    const config = () => vscode.workspace.getConfiguration("kernl");
+    const answers = ["gateway-test", "Gateway", "https://gw.example/anthropic", "team/model", "X-Token", "tok-test-secret-789", "X-Team", "kernl", ""];
+    const picks = ["Anthropic API", "Add a secret header", "Add a header", "Done adding headers"];
+    testing.usePrompts({ input: async () => answers.shift(), pick: async (items: any[]) => ((want) => items.find((i) => i.label === want))(picks.shift()), confirm: async () => true });
+    try {
+      await vscode.commands.executeCommand("kernl.addCustomProvider");
+      assert.deepEqual(config().get("customProviders"), [
+        { id: "gateway-test", label: "Gateway", baseUrl: "https://gw.example/anthropic", model: "team/model", protocol: "anthropic", headers: { "X-Team": "kernl" }, secretHeaders: ["X-Token"] },
+      ]);
+      assert.equal(await keys.get("custom:gateway-test"), undefined, "an empty key isn't stored");
+      assert.deepEqual(await keys.headers("custom:gateway-test", ["X-Token"]), { "X-Token": "tok-test-secret-789" });
+      assert.ok(!JSON.stringify(config().inspect("customProviders")).includes("tok-test-secret-789"), "the secret header's value never lands in settings");
+    } finally {
+      await config().update("customProviders", undefined, vscode.ConfigurationTarget.Global);
+      await config().update("provider", undefined, vscode.ConfigurationTarget.Global);
+      await keys.clearAll();
+    }
+  });
+
+  await check("model picker lists the provider's models from its /models endpoint (with its secret header); the thinking chip writes the model's profile", async () => {
+    const { keys, testing } = await ext.activate();
+    const config = () => vscode.workspace.getConfiguration("kernl");
+    const seen: Record<string, unknown>[] = [];
+    const server = createServer((req, res) => {
+      seen.push({ url: req.url, token: req.headers["x-token"], auth: req.headers.authorization });
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: [{ id: "list-model-a" }, { id: "list-model-b" }] }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
+    let offered: string[] = [];
+    try {
+      await config().update("customProviders", [{ id: "list-test", baseUrl: url, model: "list-model-a", secretHeaders: ["X-Token"] }], vscode.ConfigurationTarget.Global);
+      await keys.storeHeader("custom:list-test", "X-Token", "tok-list-1");
+      testing.usePrompts({
+        input: async () => assert.fail("the model list is offered, not a text box"),
+        pick: async (items: any[], o: any) => {
+          if (/model provider/.test(o.title)) return items.find((i) => i.provider?.id === "custom:list-test");
+          offered = items.map((i) => i.label);
+          return items.find((i) => i.label === "list-model-b");
+        },
+        confirm: async () => true,
+      });
+      await testing.receive({ type: "pickModel" });
+      assert.deepEqual(offered, ["list-model-a", "list-model-b", "Type a model id..."]);
+      // The Connections key check asks the same endpoint, so there may be more than one request; each must look the same.
+      assert.ok(seen.length >= 1);
+      for (const r of seen) assert.deepEqual(r, { url: "/v1/models", token: "tok-list-1", auth: undefined }, "the secret header is sent, and no placeholder key");
+      assert.equal(config().get("provider"), "custom:list-test");
+      assert.equal(config().get("model"), "list-model-b");
+      testing.usePrompts({ input: async () => undefined, pick: async (items: any[]) => items.find((i) => i.label === "High"), confirm: async () => true });
+      await testing.receive({ type: "pickThinking" });
+      assert.deepEqual(config().inspect("modelProfiles")?.globalValue, { "custom:list-test/list-model-b": { reasoningEffort: "high" } });
+    } finally {
+      server.close();
+      for (const k of ["customProviders", "provider", "model", "modelProfiles"]) await config().update(k, undefined, vscode.ConfigurationTarget.Global);
       await keys.clearAll();
     }
   });
@@ -114,7 +188,7 @@ export async function run() {
       }
       const config = vscode.workspace.getConfiguration("kernl");
       assert.deepEqual(config.get("commandAllowList"), []);
-      assert.deepEqual(config.get("agentCommands"), {});
+      assert.deepEqual(config.get("agentCommands"), agentCommands(), "the user's value; the workspace's command is ignored");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -346,7 +420,9 @@ export async function run() {
   const fakeAgent = { command: process.execPath, args: [join(__dirname, "fakeAcpAgent.cjs")], env: { FAKE_SCENARIO: "write", FAKE_FORK: "1", FAKE_LOAD: "1" } };
   const toolServer = new KernlToolServer();
   function runtimeHost(trusted: boolean, decide: (ws: WorkspaceRuntime, r: GateRequest) => boolean, posted: any[]): RuntimeHost {
+    const state = new Map<string, unknown>();
     return {
+      state: { get: (key: string) => state.get(key), update: async (key: string, value: unknown) => void state.set(key, value) } as RuntimeHost["state"],
       log: new Logger({ appendLine() {} }, new Redactor()),
       post: (m) => posted.push(m),
       showApproval: (ws, id, r) => void setTimeout(() => ws.approvals.answer(id, decide(ws, r)), 50),
@@ -363,7 +439,7 @@ export async function run() {
       connectionSignal() {},
       sessions: new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))),
       checkpoints: new Checkpoints(mkdtempSync(join(tmpdir(), "kernl-checkpoints-"))),
-      apiKey: async () => undefined,
+      providerAuth: async () => ({}),
       agentEnv: async () => ({}),
       trusted: () => trusted,
       browser: () => browser,
@@ -435,6 +511,100 @@ export async function run() {
       assert.ok((record.history as any)?.sessionId, "the agent's own session, so it can continue");
     } finally {
       ws.dispose();
+    }
+  });
+
+  await check("CLI agent options: the session's model, thinking, and fast mode show as chips; a pick is set on the live session and remembered, so a new session for the folder starts with it", async () => {
+    const base = runtimeHost(true, () => true, []);
+    const options = { ...fakeAgent, env: { ...fakeAgent.env, FAKE_SCENARIO: "options" } };
+    const host: RuntimeHost = { ...base, providerSettings: () => ({ ...base.providerSettings(), agentCommands: { "claude-code": options } }) };
+    const chips = (ws: WorkspaceRuntime) => ws.view().agentOptions?.map((o) => `${o.id}=${o.value}`).join(",");
+    const ws = new WorkspaceRuntime("main", "Main", root, "claude-code", host);
+    try {
+      assert.equal(chips(ws), undefined, "nothing reported yet");
+      await ws.send("hello options");
+      assert.equal(chips(ws), "model=small,effort=medium");
+      await ws.setAgentOption("model", "big");
+      assert.equal(chips(ws), "model=big,effort=medium,fast=false", "the live session changed, and fast mode appeared for the big model");
+      await ws.setAgentOption("fast", true);
+      assert.equal(chips(ws), "model=big,effort=medium,fast=true");
+    } finally {
+      ws.dispose();
+    }
+    // A new runtime for the folder: a fresh agent process (it starts on the small model).
+    const again = new WorkspaceRuntime("main", "Main", root, "claude-code", host);
+    try {
+      assert.equal(chips(again), "model=big,effort=medium,fast=true", "before the first message: the last session's chips with the user's choices");
+      await again.send("hello after a reload");
+      assert.equal(chips(again), "model=big,effort=medium,fast=true", "the agent reports the remembered choices applied");
+    } finally {
+      again.dispose();
+    }
+  });
+
+  await check("Auto mode: a CLI agent's call to kernl's tools asks once, as the agent's own request; Ask mode asks once, as kernl's command card", async () => {
+    for (const [mode, kind] of [["auto", "agent"], ["ask", "execute"]] as const) {
+      const kinds: string[] = [];
+      const base = runtimeHost(true, (_ws, r) => (kinds.push(r.kind), true), []);
+      const tools = { ...fakeAgent, env: { ...fakeAgent.env, FAKE_SCENARIO: "kernl-tools", FAKE_MCP_HTTP: "1" } };
+      const host: RuntimeHost = { ...base, providerSettings: () => ({ ...base.providerSettings(), agentCommands: { "claude-code": tools } }) };
+      const ws = new WorkspaceRuntime("main", "Main", root, "claude-code", host);
+      try {
+        await ws.setMode(mode);
+        await ws.send(`kernl's tools in ${mode} mode`);
+        assert.deepEqual(kinds, [kind], `${mode}: ${JSON.stringify(kinds)}`);
+      } finally {
+        ws.dispose();
+      }
+    }
+  });
+
+  await check("reopening kernl's own CLI conversation adds the turns the agent has after kernl's last message, keeping kernl's turns and their Restore points", async () => {
+    const replay = [["user", "write hello.txt\n\nAttached: README.md"], ["agent", "done"], ["user", "added in a terminal"], ["agent", "terminal reply"]];
+    const loading = { ...fakeAgent, env: { ...fakeAgent.env, FAKE_LOAD: "1", FAKE_REPLAY: JSON.stringify(replay) } };
+    const posted: any[] = [];
+    const base = runtimeHost(true, () => true, posted);
+    const host: RuntimeHost = { ...base, providerSettings: () => ({ ...base.providerSettings(), agentCommands: { "claude-code": loading } }) };
+    const ws = new WorkspaceRuntime("main", "Main", root, "claude-code", host);
+    try {
+      const record = host.sessions.create("claude-code");
+      record.events = [
+        { type: "userMessage", workspace: "main", text: "write hello.txt", id: "u1", turn: 0, checkpoint: "cp-1" },
+        { type: "text", workspace: "main", delta: "done" },
+        { type: "finished", workspace: "main", reason: "done" },
+      ];
+      record.history = { sessionId: "s-kernl" };
+      await ws.openSession(record);
+      const users = posted.filter((m) => m.type === "userMessage").map((m) => [m.text, m.checkpoint]);
+      assert.deepEqual(users, [["write hello.txt", "cp-1"], ["added in a terminal", undefined]], "kernl's turn (with its Restore point), then the one added elsewhere");
+      assert.ok(posted.some((m) => m.type === "notice" && /Added in another app/.test(m.text)));
+      assert.ok(posted.some((m) => m.type === "text" && m.delta === "terminal reply"));
+      assert.equal(posted.filter((m) => m.type === "text" && m.delta === "done").length, 1, "kernl's own turn isn't repeated");
+      assert.equal(ws.running, false, "and the workspace is free again");
+    } finally {
+      ws.dispose();
+    }
+  });
+
+  await check("a message sent while the agent starts early (before the first message) is sent on the session being opened, not left queued", async () => {
+    const base = runtimeHost(true, () => true, []);
+    const fakeLog = join(mkdtempSync(join(tmpdir(), "kernl-early-")), "fake.log");
+    const slow = { ...fakeAgent, env: { ...fakeAgent.env, FAKE_SCENARIO: "options", FAKE_NEW_DELAY: "500", FAKE_LOG: fakeLog } };
+    const posted: any[] = [];
+    const host: RuntimeHost = { ...base, post: (m) => posted.push(m), providerSettings: () => ({ ...base.providerSettings(), agentCommands: { "claude-code": slow } }) };
+    const ws = new WorkspaceRuntime("main", "Main", root, "claude-code", host);
+    try {
+      const preparing = ws.prepareAgent();
+      assert.equal(ws.running, false, "starting early isn't a run");
+      await ws.submit("hello while the agent starts", []);
+      await preparing;
+      assert.deepEqual(ws.view().queue, [], "not left in the queue");
+      assert.equal(posted.filter((m) => m.type === "finished").at(-1)?.reason, "done");
+      const log = readFileSync(fakeLog, "utf8").split("\n");
+      assert.equal(log.filter((l) => l.startsWith("newSession")).length, 1, "one session: the early one");
+    } finally {
+      ws.dispose();
+      rmSync(join(root, "hello.txt"), { force: true });
     }
   });
 
@@ -699,6 +869,36 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await testing.setHarness("main", "opencode");
   });
 
+  await check("a message sent while the agent's login is checked again after a change waits for the answer, then stops with the fix", async () => {
+    const codex = (await waitFor("the harness list", (m) => m.type === "workspaces", 0)).harnesses.find((h: any) => h.id === "codex");
+    if (codex?.ready) return void results.push("      (skipped: Codex is logged in on this machine)");
+    const codexConfig = join(process.env.CODEX_HOME!, "config.toml");
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    // Codex's login check answers only once released, so the message arrives while the check is under way.
+    testing.useStatusCommands(async (name: StatusCommand, target: CommandTarget) => (name === "codexLoginStatus" && (await held), runStatusCommand(name, target)));
+    try {
+      await testing.setHarness("main", "codex");
+      let from = delivered.length;
+      writeFileSync(codexConfig, "# kernl test\n");
+      await waitFor("Codex checked again after its config changed", (m) => m.type === "connections" && m.items.some((i: any) => i.id === "agent:codex" && i.state === "unknown"), from, 5_000);
+      from = delivered.length;
+      const sending = testing.receive({ type: "send", workspace: "main", text: "hello" });
+      await new Promise((r) => setTimeout(r, 300));
+      assert.ok(!delivered.slice(from).some((m) => m.type === "finished" || m.type === "userMessage"), "nothing is decided while the check is under way");
+      release();
+      await sending;
+      const finished = await waitFor("the refusal", (m) => m.type === "finished" && m.workspace === "main", from, 5_000);
+      assert.equal(finished.reason, "error");
+      assert.match(finished.message, /Codex isn't logged in/);
+    } finally {
+      release();
+      testing.useStatusCommands(runStatusCommand);
+      rmSync(codexConfig, { force: true });
+      await testing.setHarness("main", "opencode");
+    }
+  });
+
   await check("Manage providers: shows each provider's key status, stores and removes a key", async () => {
     const { keys } = await ext.activate();
     scripted = { ...scripted, menu: /^DeepSeek$|^Set key/, name: "sk-test-manage-providers-1" };
@@ -746,7 +946,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       { mode: 0o755 },
     );
     const codexRow = (state: string) => (m: any) => m.type === "connections" && m.items.some((i: any) => i.id === "agent:codex" && i.state === state && !i.checking);
-    await config.update("agentCommands", { codex: { command: cli, args: [] } }, vscode.ConfigurationTarget.Global);
+    await config.update("agentCommands", agentCommands({ codex: { command: cli, args: [] } }), vscode.ConfigurationTarget.Global);
     try {
       let from = delivered.length;
       await vscode.commands.executeCommand("kernl.showConnections");
@@ -767,17 +967,17 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       results.push(`      ready ${Date.now() - started} ms after Log in`);
     } finally {
       for (const t of vscode.window.terminals) if (t.name === "kernl: log in to Codex") t.dispose();
-      await config.update("agentCommands", undefined, vscode.ConfigurationTarget.Global);
+      await config.update("agentCommands", agentCommands(), vscode.ConfigurationTarget.Global);
     }
   });
 
-  await config.update("agentCommands", { "claude-code": fakeAgent }, vscode.ConfigurationTarget.Global);
+  await config.update("agentCommands", agentCommands({ "claude-code": fakeAgent }), vscode.ConfigurationTarget.Global);
   await testing.setHarness("main", "claude-code");
 
   await check("panel: a full agent's work reaches the panel: thinking, tool rows by kind with an edit's size, the plan, context, commands, the title, and its own mode switch", async () => {
     // Its own conversation: the agent titles it, and later checks find theirs by first message.
     await vscode.commands.executeCommand("kernl.newChat");
-    await config.update("agentCommands", { "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_SCENARIO: "rich" } } }, vscode.ConfigurationTarget.Global);
+    await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_SCENARIO: "rich" } } }), vscode.ConfigurationTarget.Global);
     await new Promise((r) => setTimeout(r, 300)); // the settings change rebuilds the runner
     try {
       const from = delivered.length;
@@ -806,9 +1006,54 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       assert.equal(view.mode, "plan");
       await testing.receive({ type: "setMode", workspace: "main", mode: "ask" });
     } finally {
-      await config.update("agentCommands", { "claude-code": fakeAgent }, vscode.ConfigurationTarget.Global);
+      await config.update("agentCommands", agentCommands({ "claude-code": fakeAgent }), vscode.ConfigurationTarget.Global);
       await new Promise((r) => setTimeout(r, 300));
       await vscode.commands.executeCommand("kernl.newChat");
+    }
+  });
+
+  await check("kernl menu: Ask kernl sends to the shown workspace through Send (an approval card, like typing it); a selection becomes an attachment", async () => {
+    await vscode.commands.executeCommand("kernl.open");
+    let from = delivered.length;
+    scripted = { ...scripted, inputs: ["write hello.txt from ask"] };
+    await vscode.commands.executeCommand("kernl.ask");
+    await waitFor("the asked message in the panel", (m) => m.type === "userMessage" && m.workspace === "main" && m.text === "write hello.txt from ask", from);
+    const card = (await waitFor("its approval card", (m) => m.type === "approval" && m.card.workspaceId === "main", from)).card;
+    await testing.receive({ type: "answer", id: card.id, approved: false });
+    await waitFor("the run finishing", (m) => m.type === "finished" && m.workspace === "main", from);
+    const doc = await vscode.workspace.openTextDocument({ language: "plaintext", content: "first line\nsecond line\nthird line\n" });
+    const editor = await vscode.window.showTextDocument(doc);
+    editor.selection = new vscode.Selection(0, 0, 1, 11);
+    from = delivered.length;
+    await vscode.commands.executeCommand("kernl.askAboutSelection");
+    const added = await waitFor("the selection attached", (m) => m.type === "addAttachments", from);
+    assert.equal(added.items.length, 1);
+    assert.equal(added.items[0].kind, "text");
+    assert.match(added.items[0].path, /:1-2$/);
+    assert.equal(added.items[0].text, "first line\nsecond line");
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+    const outside = await testing.sendFromOutside("   ");
+    assert.ok(!("error" in outside), "a blank message is ignored by Send, without an error");
+    await vscode.commands.executeCommand("kernl.newChat");
+  });
+
+  await check("replace option: turning kernl.replaceChatButton on hides VS Code's chat button (its own setting), and off puts back what was there", async () => {
+    const chat = () => vscode.workspace.getConfiguration().inspect("chat.agentsControl.enabled");
+    if (chat()?.defaultValue === undefined) return void results.push("      (skipped: this VS Code has no chat.agentsControl.enabled)");
+    const before = chat()?.globalValue;
+    const until = async (what: string, ok: () => boolean) => {
+      for (const deadline = Date.now() + 5_000; !ok(); ) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    };
+    try {
+      await config.update("replaceChatButton", true, vscode.ConfigurationTarget.Global);
+      await until("VS Code's chat button hidden", () => chat()?.globalValue === "hidden");
+      await config.update("replaceChatButton", undefined, vscode.ConfigurationTarget.Global);
+      await until("VS Code's chat button back as it was", () => chat()?.globalValue === before);
+    } finally {
+      await config.update("replaceChatButton", undefined, vscode.ConfigurationTarget.Global);
     }
   });
 
@@ -989,6 +1234,57 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     from = delivered.length;
     await vscode.commands.executeCommand("kernl.newChat");
     await waitFor("a fresh view", (m) => m.type === "cleared" && m.workspace === "main", from);
+  });
+
+  await check("conversations: the CLI agent's own sessions for the folder are listed once, and opening one shows its history from the agent", async () => {
+    await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_LIST: "1" } } }), vscode.ConfigurationTarget.Global);
+    try {
+      await vscode.commands.executeCommand("kernl.newChat");
+      const from = delivered.length;
+      scripted = { ...scripted, menu: /^Fix the flaky test$/ };
+      await vscode.commands.executeCommand("kernl.sessions");
+      const shown = menusShown.at(-1)!.map((i: any) => [i.label, i.description]);
+      assert.ok(shown.some(([l, d]: string[]) => l === "Fix the flaky test" && d === "Claude Code session · 1 h ago"), JSON.stringify(shown));
+      assert.ok(shown.some(([l, d]: string[]) => l === "Add a changelog" && d === "Claude Code session"), "the second page is listed too");
+      await waitFor("the question, replayed by the agent", (m) => m.type === "userMessage" && m.text === "REPLAYED-OLD-QUESTION", from);
+      await waitFor("its answer", (m) => m.type === "text" && m.delta === "REPLAYED-OLD-MESSAGE", from);
+      scripted = { ...scripted, menu: undefined, pickFirst: false };
+      await vscode.commands.executeCommand("kernl.sessions");
+      scripted = { ...scripted, pickFirst: true };
+      // The open conversation's row carries "$(check) "; a duplicate agent row would make this 2.
+      const again = menusShown.at(-1)!.filter((i: any) => /^(\$\(check\) )?Fix the flaky test$/.test(i.label));
+      assert.equal(again.length, 1, "opened once, it's a kernl conversation linked to the session: listed once");
+      assert.match(again[0].description, /1 message · Claude Code/);
+    } finally {
+      scripted = { ...scripted, menu: undefined, pickFirst: true };
+      await config.update("agentCommands", agentCommands({ "claude-code": fakeAgent }), vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  await check("before the first message: the shown workspace's CLI agent starts its session, so its model and thinking chips can be chosen first", async () => {
+    const from = delivered.length;
+    await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_SCENARIO: "options" } } }), vscode.ConfigurationTarget.Global);
+    try {
+      const shown = await waitFor("the agent's chips", (m) => m.type === "workspaces" && m.items.find((w: any) => w.id === "main")?.agentOptions?.some((o: any) => o.kind === "model"), from);
+      const options = shown.items.find((w: any) => w.id === "main").agentOptions.map((o: any) => `${o.id}=${o.value}`);
+      assert.deepEqual(options, ["model=small", "effort=medium"]);
+      assert.ok(!delivered.slice(from).some((m) => m.type === "userMessage"), "no message was sent");
+    } finally {
+      await config.update("agentCommands", agentCommands({ "claude-code": fakeAgent }), vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  await check("drafts: the unsent message is kept for the window, given back when the panel loads again, and cleared once sent", async () => {
+    let from = delivered.length;
+    await testing.receive({ type: "draft", text: "open browser and look for brevo loyalty apis", attachments: [{ path: "README.md", kind: "file" }] });
+    await testing.receive({ type: "ready" });
+    const back = await waitFor("the draft given back", (m) => m.type === "restoreDraft", from);
+    assert.deepEqual([back.text, back.attachments], ["open browser and look for brevo loyalty apis", [{ path: "README.md", kind: "file" }]]);
+    await testing.receive({ type: "draft", text: "", attachments: [] });
+    from = delivered.length;
+    await testing.receive({ type: "ready" });
+    await waitFor("the panel ready again", (m) => m.type === "workspaces", from);
+    assert.ok(!delivered.slice(from).some((m) => m.type === "restoreDraft"), "nothing to give back once sent");
   });
 
   await check("fork: a CLI agent with session/fork forks its whole conversation from the last message; an earlier message is refused", async () => {

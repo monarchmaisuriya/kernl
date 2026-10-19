@@ -17,6 +17,8 @@ process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "kernl-vscode-clauded
 // Codex's and OpenCode's config folders (MCP servers, skills, instructions are imported from them).
 process.env.CODEX_HOME = mkdtempSync(join(tmpdir(), "kernl-vscode-codexdir-"));
 process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "kernl-vscode-configdir-"));
+// OpenCode's data (its sessions), so listing the agents' sessions never reaches the real one.
+process.env.XDG_DATA_HOME = mkdtempSync(join(tmpdir(), "kernl-vscode-datadir-"));
 
 // The workspace is a git repo with one commit, so the panel tests can create worktree workspaces from Main.
 const git = (...args: string[]) => execFileSync("git", args, { cwd: workspace, stdio: "ignore" });

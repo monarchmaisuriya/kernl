@@ -9,15 +9,32 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - **kernl: Show connections**: every agent login, stored key, MCP server (claude.ai connectors included), and Claude Code plugin, with its state, what its source said, when it was checked, and a fix (Log in, Set key, Check now). Also in the panel's `...` menu, and as a warning button beside the agent chip.
 - Statuses stay current: at startup, when you come back to VS Code, when a login file or key changes, every 60 s while the panel is visible (`kernl.connections.pollSeconds`), and at once when a run hits a login error, a refused key, or an MCP server that didn't start.
 - Stored keys are checked with the provider's model list (`kernl.connections.checkKeys`); no tokens are spent.
+- kernl from anywhere:
+  - a kernl button in the editor toolbar and `kernl` in the status bar, both opening the kernl menu (Open kernl, Ask kernl…, Ask about this file or selection, New chat, New workspace, Conversations, Choose agent, Agent logins, Show connections, settings);
+  - `Ctrl+Alt+K` opens kernl, and `Ctrl+Alt+Shift+K` asks kernl;
+  - `@kernl` in VS Code's chat sends the request to the kernl panel.
+- `kernl.replaceChatButton`: hide VS Code's chat button in the Command Center in favor of kernl's (reversible).
+- Custom providers speak the OpenAI or the Anthropic API (`protocol`) and send your headers (`headers`); secret header values (`secretHeaders`) stay in SecretStorage, and a provider with one needs no API key.
+- The model chip lists the provider's own models; type an id when it has no list.
+- A thinking chip for kernl's agent, and `kernl.modelProfiles` for options per model, including its context window (kernl compacts at 85% of it).
+- Claude Code's, Codex's, and OpenCode's own model, thinking, and fast-mode switches as chips, remembered per folder and agent. The shown workspace's agent starts its session as soon as it's shown, so you can choose them before the first message.
+- Conversations lists the CLI agents' own sessions for the folder (started in a terminal or another app); opening one shows its history and continues it (`kernl.sessions.importFromAgents`).
+- Reopening a kernl conversation with a CLI agent shows the turns added to its session elsewhere since, below kernl's own.
+- Unsent messages (and their attachments) are kept for the window and come back after a reload or restart.
+- kernl's browser actions read in plain words: "Open developers.brevo.com in kernl's browser" on cards, "Browser: open developers.brevo.com" on rows.
 
 ### Changed
 
 - Agent logins are checked the way kernl launches each agent (its binary and environment). Claude Code's expired login now reads "Login expired" instead of "not logged in".
 - Log in (Connections and Agent logins) runs the agent's own login command in a terminal and checks again every 5 s while it's open.
+- One color system in the panel: the theme's button color marks everything primary or in progress (Send, Approve, the working mark, running workspaces, the plan step, the context ring, waiting cards); links, warnings, errors, and success each have one color.
+- The agent chip moved to the bottom row (workspace, agent, mode); the chips have icons; Send and its options are one pill, off while the box is empty.
 
 ### Fixed
 
 - An agent's status no longer flips to usable while it's being rechecked.
+- A message sent while a CLI agent's login is being rechecked (after a login, key, or setting change) waits for the answer, so an agent that can't start is stopped with the fix instead of starting and failing.
+- Auto mode now applies to kernl's own tools too: a CLI agent in Auto calling kernl's terminal or browser no longer gets a kernl card on top of its own judgment.
 
 ## [0.2.0] - 2026-10-19
 

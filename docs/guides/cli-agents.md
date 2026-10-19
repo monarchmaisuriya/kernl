@@ -29,6 +29,30 @@ storing or clearing it restarts only workspaces running that agent. OpenCode kee
 
 Whether each agent is installed and logged in, and its MCP servers and plugins, are listed in [Connections](connections.md), with a Log in button that runs the agent's own login in a terminal.
 
+## Model, thinking, and fast mode
+
+The composer shows the agent's own switches as chips, from what the agent reports for your account (kernl keeps no model list):
+
+| | Claude Code | Codex | OpenCode |
+| --- | --- | --- | --- |
+| Model | its models; 1M-context models are their own rows, marked "1M context" | its models | `provider/model` |
+| Thinking | effort levels the model supports | reasoning effort | the model's variants |
+| Fast | models that support it | models that support it | none |
+
+When the panel shows a workspace whose agent is a CLI agent, kernl starts that agent's session right away, before you send anything, so the chips appear within the agent's start time (a few seconds for Claude Code) and you can choose the model and thinking first. Your first message uses that session. Only the shown workspace starts, only while the panel is visible, and never in Restricted Mode; New chat or a different agent closes it and starts a fresh one. An agent that can't start (not logged in) shows no chips: [Connections](connections.md) says why, and sending says it too.
+
+A pick applies to the session at once (a model change can change the thinking levels and fast mode). It's also remembered for this folder and agent: a new chat, or a new window, starts with it. While the agent starts, the chips show its last session in this folder. A choice the agent no longer offers is skipped (logged).
+
+## Sessions started outside kernl
+
+**Conversations** (the clock icon) also lists each ready agent's own sessions for this folder, for example ones started with `claude` in a terminal or in the Claude app. kernl asks the agent for its list (ACP `session/list`); it doesn't read the agents' files. A session already opened in kernl shows once.
+
+Opening one switches the workspace to that agent and shows its history as the agent replays it (a very long one shows its latest turns). Sending continues that session. Opening it again later loads it from the agent again, so turns added elsewhere show up. If Claude Code has the session open in another app right now, kernl says so: reading is safe, and sending continues it in kernl, apart from that app.
+
+Reopening one of kernl's own conversations with a CLI agent loads its session from the agent too: turns added since in a terminal or another app appear below kernl's own turns (which keep their Restore points), under "Added in another app since this conversation was last open in kernl". If the agent can't load it then, it loads on your next message, as before.
+
+Lists refresh when an agent's session store changes on disk (watched only as a signal). Turn this off with `kernl.sessions.importFromAgents`.
+
 ## Terminal and browser
 
 CLI agents use kernl's own tools through a small MCP server kernl runs on this machine (only on `127.0.0.1`, with a token per workspace; a web page can't reach it). The tools are `run_in_terminal`, the background job tools, and the browser tools. They ask through kernl's approvals like the kernl agent's tools, so your approval rules apply. Settings:

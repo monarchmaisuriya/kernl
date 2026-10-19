@@ -123,6 +123,60 @@ test("the model chip shows the Deep Agents model, opens the model menu, and hide
   assert.equal(chip.hidden, true, "a CLI agent picks its own model");
 });
 
+test("a CLI agent's own model, thinking, and fast mode are chips: model and thinking open its choices, fast toggles; all wait while it runs", () => {
+  const p = loadPanel();
+  p.host(STATUS);
+  const agentOptions: WorkspaceView["agentOptions"] = [
+    { id: "model", name: "Model", kind: "model", type: "select", value: "opus[1m]", choices: [{ value: "opus", name: "Opus" }, { value: "opus[1m]", name: "Opus", description: "1M context" }] },
+    { id: "effort", name: "Effort", kind: "thinking", type: "select", value: "high", choices: [{ value: "high", name: "High" }] },
+    { id: "fast", name: "Fast mode", kind: "fast", type: "boolean", value: false },
+  ];
+  p.host(workspaces([MAIN, { ...WT, agentOptions }], "wt:fix"));
+  const model = p.doc.querySelector<HTMLButtonElement>(".model")!;
+  const thinking = p.doc.querySelector<HTMLButtonElement>(".chip.reasoning")!;
+  const fast = p.doc.querySelector<HTMLButtonElement>(".chip.fast")!;
+  assert.deepEqual([model.hidden, thinking.hidden, fast.hidden], [false, false, false]);
+  assert.deepEqual([model.textContent, thinking.textContent, fast.textContent], ["Opus", "High", "Fast"]);
+  assert.ok([model, thinking, fast].every((c) => c.firstElementChild?.classList.contains("icon")), "each chip leads with an icon");
+  assert.match(thinking.getAttribute("aria-label")!, /^Thinking: High/, "the full label stays for screen readers");
+  assert.equal(fast.querySelector("path")!.getAttribute("fill"), null, "an outline bolt when off");
+  model.click();
+  thinking.click();
+  fast.click();
+  assert.deepEqual(p.sent.slice(-3), [
+    { type: "pickAgentOption", workspace: "wt:fix", id: "model" },
+    { type: "pickAgentOption", workspace: "wt:fix", id: "effort" },
+    { type: "setAgentOption", workspace: "wt:fix", id: "fast", value: true },
+  ]);
+  p.host(workspaces([MAIN, { ...WT, agentOptions: [agentOptions[0], { ...agentOptions[2], value: true }], running: true }], "wt:fix"));
+  assert.equal(fast.textContent, "Fast");
+  assert.equal(fast.querySelector("path")!.getAttribute("fill"), "currentColor", "a filled bolt when on");
+  assert.equal(fast.getAttribute("aria-pressed"), "true");
+  assert.equal(thinking.hidden, true, "no thinking option, no chip");
+  assert.deepEqual([model.disabled, fast.disabled], [true, true]);
+  p.host(workspaces([MAIN, WT], "wt:fix"));
+  assert.deepEqual([model.hidden, thinking.hidden, fast.hidden], [true, true, true], "an agent that reported nothing yet shows no chips");
+});
+
+test("the thinking chip shows the model's thinking level, opens its menu, and hides without a thinking control or for CLI agents", () => {
+  const p = loadPanel();
+  p.host({ ...STATUS, provider: "anthropic", model: "claude-x", thinking: "medium" });
+  p.host(workspaces([MAIN, WT]));
+  const chip = p.doc.querySelector<HTMLButtonElement>(".chip.reasoning")!;
+  assert.equal(chip.hidden, false);
+  assert.equal(chip.textContent, "Medium");
+  assert.match(chip.getAttribute("aria-label")!, /Change how much claude-x thinks/);
+  chip.click();
+  assert.deepEqual(p.sent.at(-1), { type: "pickThinking" });
+  p.host({ ...STATUS, provider: "anthropic", model: "claude-x", thinking: "off" });
+  assert.equal(chip.textContent, "Off");
+  p.host(STATUS);
+  assert.equal(chip.hidden, true, "deepseek has no thinking control");
+  p.host({ ...STATUS, thinking: "low" });
+  p.host(workspaces([MAIN, WT], "wt:fix"));
+  assert.equal(chip.hidden, true, "a CLI agent has its own");
+});
+
 test("approval cards show their workspace and detail; Approve, Reject, and View diff answer the host", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN, WT]));
@@ -479,23 +533,26 @@ test("send options: Cmd/Ctrl+Enter queues, Option/Alt+Cmd/Ctrl+Enter sends in a 
   assert.equal(input.value, "fork while running", "and the text stays");
 });
 
-test("send options: the menu lists the three actions with shortcuts; forking is disabled while running; picking one sends with that mode", () => {
+test("send options: the arrow is off with nothing to send; the menu lists the three actions with shortcuts; forking is disabled while running; picking one sends with that mode", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
   const input = p.doc.querySelector<HTMLTextAreaElement>(".input")!;
   const menu = p.doc.querySelector<HTMLElement>(".send-menu")!;
+  const arrow = p.button("More send options")!;
+  assert.equal(arrow.disabled, true, "nothing to send yet: the arrow is off, like Send");
+  arrow.click();
   assert.equal(menu.hidden, true);
-  p.button("More send options")!.click();
+  input.value = "fork this";
+  input.dispatchEvent(new p.window.Event("input"));
+  assert.equal(arrow.disabled, false, "typing turns it on");
+  arrow.click();
   assert.equal(menu.hidden, false);
   const options = p.all(".send-option");
   assert.deepEqual(options.map((o) => o.querySelector(".send-option-label")!.textContent), ["Send", "Queue for later", "Send in a forked session"]);
   assert.ok(options.every((o) => o.querySelector("kbd")!.textContent!.length > 0), "each shows its shortcut");
-  assert.ok(options.every((o) => (o as HTMLButtonElement).disabled), "nothing to send yet");
   p.doc.body.click();
   assert.equal(menu.hidden, true, "a click elsewhere closes it");
-  input.value = "fork this";
-  input.dispatchEvent(new p.window.Event("input"));
-  p.button("More send options")!.click();
+  arrow.click();
   (options[2] as HTMLButtonElement).click();
   assert.deepEqual(p.sent.at(-1), { type: "send", workspace: "main", text: "fork this", mode: "fork" });
   assert.equal(menu.hidden, true);
@@ -1284,4 +1341,63 @@ test("Connections text from the host is never HTML", () => {
   p.host({ type: "connections", open: true, items: [{ id: "mcp:x:<img>", kind: "mcp", owner: "x", label: "<img src=x onerror=alert(1)>", state: "failed", detail: "<b>bold</b>", source: "s", checkedAt: Date.now() }] } as HostToPanel);
   assert.equal(p.doc.querySelectorAll(".connections img, .connections b").length, 0);
   assert.equal(p.doc.querySelector(".connection-label")!.textContent, "<img src=x onerror=alert(1)>");
+});
+
+test("the agent chip and its setup warning sit in the bottom row between the workspace and mode chips, not in the toolbar", () => {
+  const p = loadPanel();
+  p.host(STATUS);
+  p.host(workspaces([MAIN]));
+  const footer = [...p.doc.querySelector(".footer")!.children].map((c) => c.className);
+  const at = (cls: string) => footer.findIndex((c) => c.split(" ").includes(cls));
+  assert.ok(at("workspace") < at("setup") && at("setup") < at("harness") && at("harness") < at("mode"), footer.join(" | "));
+  assert.equal(p.doc.querySelector(".toolbar .harness"), null);
+  assert.equal(p.doc.querySelector(".toolbar .setup"), null);
+});
+
+test("the agent chip shows the kernl mark for kernl and a terminal for a CLI agent; the model chip shows the model's name without its provider prefix", () => {
+  const p = loadPanel();
+  p.host({ ...STATUS, provider: "custom:gateway", model: "litellm/GPT-5.6 Sol" });
+  p.host(workspaces([MAIN, WT]));
+  const agent = p.doc.querySelector<HTMLButtonElement>(".harness")!;
+  const model = p.doc.querySelector<HTMLButtonElement>(".model")!;
+  assert.ok(agent.firstElementChild!.classList.contains("kernl-mark"), "kernl's own agent");
+  assert.equal(model.textContent, "GPT-5.6 Sol");
+  assert.match(model.title, /custom:gateway · litellm\/GPT-5.6 Sol/, "the full id stays in the tooltip");
+  p.host(workspaces([MAIN, WT], "wt:fix"));
+  assert.equal(agent.firstElementChild!.tagName.toLowerCase(), "svg", "a CLI agent: the terminal icon");
+});
+
+test("send and its options are one pill: muted with nothing to send, the button color with text, the secondary colors while the agent runs", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const group = p.doc.querySelector<HTMLElement>(".send-group")!;
+  const input = p.doc.querySelector<HTMLTextAreaElement>(".input")!;
+  assert.deepEqual([group.classList.contains("off"), group.classList.contains("stop")], [true, false], "empty: muted");
+  input.value = "hi";
+  input.dispatchEvent(new p.window.Event("input"));
+  assert.deepEqual([group.classList.contains("off"), group.classList.contains("stop")], [false, false], "text: the button color");
+  input.value = "";
+  input.dispatchEvent(new p.window.Event("input"));
+  p.host(workspaces([{ ...MAIN, running: true }]));
+  assert.deepEqual([group.classList.contains("off"), group.classList.contains("stop")], [false, true], "running: Stop, never muted");
+  assert.deepEqual([...group.children].map((c) => c.className), ["send stop", "send-more"], "Send, then the options, inside the pill");
+});
+
+test("the unsent message is sent to the host a moment after it changes and cleared on send; a saved draft fills only an empty box", async () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const input = p.doc.querySelector<HTMLTextAreaElement>(".input")!;
+  input.value = "open browser and look for brevo loyalty apis";
+  input.dispatchEvent(new p.window.Event("input"));
+  assert.ok(!p.sent.some((m) => m.type === "draft"), "not on every keystroke");
+  await tick(450);
+  assert.deepEqual(p.sent.filter((m) => m.type === "draft").at(-1), { type: "draft", text: "open browser and look for brevo loyalty apis", attachments: [] });
+  input.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+  assert.deepEqual(p.sent.filter((m) => m.type === "draft").at(-1), { type: "draft", text: "", attachments: [] }, "sent: the draft is cleared at once");
+  p.host({ type: "restoreDraft", text: "look at @src/a.ts", attachments: [{ path: "src/a.ts", kind: "file" }] });
+  assert.equal(input.value, "look at @src/a.ts");
+  assert.ok(p.doc.querySelector(".input-layer .mention"), "the file is recognized again");
+  input.value = "typed since";
+  p.host({ type: "restoreDraft", text: "older draft", attachments: [] });
+  assert.equal(input.value, "typed since", "never over what was typed");
 });

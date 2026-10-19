@@ -2,8 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import type * as acp from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import { CLI_AGENT_IDS, type CliAgentId, isCliAgentId, resolveLaunch } from "./acp/agents";
+import { claudeSessionOpenElsewhere, sessionStore } from "./acp/sessionStores";
+import type { Attachment } from "./ui/protocol";
+import { DRAFT_TEXT_LIMIT, type Draft, draftToKeep } from "./ui/draft";
 import { resolveCommand } from "./acp/commands";
 import { AgentCredentials, CREDENTIAL_ENV, credentialEnv } from "./acp/credentials";
 import type { FixAction } from "./connections/types";
@@ -21,16 +25,18 @@ import { Logger, Redactor } from "./log";
 import { isPermissionMode } from "./modes";
 import { agentLogins, manageProviders, pickModel } from "./providerManager";
 import { KeyStore } from "./providers/keys";
-import { createChatModel, customProviders, isProviderId, type ProviderId, resolveProvider, settingsProblem } from "./providers/registry";
-import { SessionStore, transcriptText } from "./sessions";
+import { type CustomProvider, createChatModel, customProviders, effectiveModelOptions, isProviderId, missingSecretHeader, type ProviderId, profileKey, providerApi, resolveProvider, settingsProblem, THINKING_LEVELS, type ThinkingLevel } from "./providers/registry";
+import { type SessionRecord, SessionStore, transcriptText } from "./sessions";
 import { loadSources, sourceRoots, sourceSettings, sourcesReport } from "./sources";
 import { KernlToolServer } from "./mcp/kernlServer";
 import { type AgentCheckDeps, agentBinary, agentLabel, agentProblem, checkAgent, LOGIN_ARGS } from "./connections/agentChecks";
-import { checkKey, keyRequest } from "./connections/keyCheck";
+import { checkKey, keyRequest, modelsRequest } from "./connections/keyCheck";
 import { checkAgentMcp, checkClaudePlugins } from "./connections/listChecks";
 import { ConnectionMonitor } from "./connections/monitor";
 import { applySignal } from "./connections/signals";
-import { runStatusCommand } from "./connections/statusCommands";
+import { applyChatButtonReplacement, CHAT_BUTTON_SETTING, QUICK_ACTIONS, statusBarText } from "./quickAccess";
+import type { ChatForwarding } from "./chatParticipant";
+import { runStatusCommand, STATUS_TIMEOUT_MS } from "./connections/statusCommands";
 import { blocks, type ConnectionStatus } from "./connections/types";
 import { type McpServer, SIGN_IN_REASON, SignInRequired, settingServers } from "./mcp/servers";
 import { panelSnapshot, toApprovalCard } from "./ui/approvalCards";
@@ -60,6 +66,12 @@ function hostOf(url: string) {
   }
 }
 
+/** Where the unsent message is kept (per window). */
+const DRAFT_KEY = "kernl.draft";
+
+/** How long an agent's session list is reused when its store hasn't changed (a change empties it at once). */
+const AGENT_SESSIONS_TTL_MS = 5 * 60_000;
+
 function approvalRules() {
   const s = readSettings();
   return parseRules(s.approvals, s.allowList);
@@ -74,6 +86,7 @@ function readSettings() {
     baseUrl: c.get<string>("baseUrl", ""),
     customProviders: c.get<unknown>("customProviders", []),
     modelOptions: c.get<unknown>("modelOptions", {}),
+    modelProfiles: c.get<unknown>("modelProfiles", {}),
     sequentialThinking: c.get<boolean>("sequentialThinking", true),
     allowList: c.get<unknown>("commandAllowList", []),
     approvals: { allow: c.get<unknown>("approvals.allow", []), ask: c.get<unknown>("approvals.ask", []), deny: c.get<unknown>("approvals.deny", []) },
@@ -103,10 +116,14 @@ export class Controller implements vscode.Disposable {
   private sharedBrowser: IntegratedBrowser | undefined;
   /** Every connection's status (agents, keys, MCP servers, plugins); the agent chip, menu, and Connections view read it. */
   readonly connections = new ConnectionMonitor();
+  /** "kernl" in the status bar: opens the kernl menu, and warns when a connection needs the user. */
+  private statusItem = vscode.window.createStatusBarItem("kernl.status", vscode.StatusBarAlignment.Right, 100);
   /** kernl's tools for the CLI agents (one MCP server for the window, one token per workspace). */
   private toolServer = new KernlToolServer((line) => this.log.info(line));
   /** Remote MCP servers that wanted a sign-in in this window (OAuth): kernl's agent skips them. */
   private signInRequired = new SignInRequired();
+  /** The CLI agents' session lists, per agent and folder (`<agent>\n<root>`); dropped when the agent's store changes. */
+  private agentSessionLists = new Map<string, { at: number; sessions: acp.SessionInfo[] }>();
   /** Project MCP servers the user said "not now" to in this window (by fingerprint). */
   private declinedServers = new Set<string>();
   private disposables: vscode.Disposable[] = [];
@@ -117,6 +134,8 @@ export class Controller implements vscode.Disposable {
   private prompts: Prompts;
   /** Issue and pull request source; the integration tests swap in a stub. */
   private github: GitHubSource | undefined;
+  /** Runs the agents' read-only status commands; the integration tests wrap it to hold a check open. */
+  private statusCommands: AgentCheckDeps["run"] = runStatusCommand;
   /** The workspace the panel shows (reported by the panel); title-bar commands act on it. */
   private active = MAIN;
   /** True when the window has several folders: each is a top-level workspace that remembers its own agent. */
@@ -152,7 +171,7 @@ export class Controller implements vscode.Disposable {
       connectionSignal: (signal, harness) =>
         applySignal(this.connections, signal, harness, { now: Date.now, provider: readSettings().provider, recheck: (id) => void this.refreshReadiness({ only: id }) }),
       signInRequired: this.signInRequired,
-      apiKey: (provider) => (isProviderId(provider) ? this.keys.get(provider) : Promise.resolve(undefined)),
+      providerAuth: (provider) => this.keys.auth(provider, readSettings().customProviders),
       agentEnv: async (id) => {
         const env = credentialEnv(id, await this.agentCredentials.get(id), join(context.globalStorageUri.fsPath, "agent-config"));
         if (env.CLAUDE_CONFIG_DIR) await mkdir(env.CLAUDE_CONFIG_DIR, { recursive: true });
@@ -161,6 +180,7 @@ export class Controller implements vscode.Disposable {
       trusted: () => vscode.workspace.isTrusted,
       browser: () => (this.sharedBrowser ??= new IntegratedBrowser(() => readSettings().browser.timeoutSeconds * 1000)),
       workspacesChanged: () => this.postWorkspaces(),
+      state: context.workspaceState,
     };
     this.commands = new WorkspaceCommands({
       log: this.log,
@@ -185,6 +205,7 @@ export class Controller implements vscode.Disposable {
       context.secrets.onDidChange(() => void Promise.all([this.refreshReadiness({ changed: true }), this.checkKeys({ changed: true })])),
       this.connections.onDidChange(() => this.connectionsChanged()),
       ...this.watchCredentialFiles(),
+      ...this.watchSessionStores(),
       this.pollConnections(),
       vscode.window.onDidChangeActiveTextEditor(() => this.postActiveFile()),
       ...this.watchCustomisationFiles(),
@@ -192,8 +213,149 @@ export class Controller implements vscode.Disposable {
       this.diffs,
       this.output,
     );
+    this.statusItem.name = "kernl";
+    this.statusItem.command = "kernl.quickMenu";
+    this.updateStatusItem();
+    this.disposables.push(
+      this.statusItem,
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration("kernl.statusBar.show") || e.affectsConfiguration("kernl.replaceChatButton")) this.updateStatusItem();
+        if (e.affectsConfiguration("kernl.replaceChatButton")) void this.replaceChatButton(true);
+      }),
+    );
+    void this.replaceChatButton(false);
     void this.loadWorkspaces();
     this.reportRuleProblems();
+  }
+
+  /**
+   * What stops the agents actually in use: the login of each open workspace's agent and its key (kernl's
+   * provider key, or a CLI agent's stored key). Agents nobody uses and MCP servers kernl can't sign in to
+   * don't count; the Connections view lists those.
+   */
+  private connectionsNeedingYou() {
+    const ids = new Set<string>();
+    for (const ws of this.workspaces.values()) {
+      const harness = ws.harness.startsWith(NAMED_AGENT_PREFIX) ? "deepagents" : ws.harness;
+      ids.add(`agent:${harness}`);
+      ids.add(harness === "deepagents" ? `key:${readSettings().provider}` : `agentKey:${harness}`);
+    }
+    return this.connections.list().filter((s) => ids.has(s.id) && blocks(s));
+  }
+
+  /** The status bar item follows the connections: "kernl", or a warning with how many need the user. */
+  private updateStatusItem() {
+    const c = vscode.workspace.getConfiguration("kernl");
+    const { text, tooltip } = statusBarText(this.connectionsNeedingYou().length);
+    this.statusItem.text = text;
+    this.statusItem.tooltip = tooltip;
+    if (c.get<boolean>("statusBar.show", true) || c.get<boolean>("replaceChatButton", false)) this.statusItem.show();
+    else this.statusItem.hide();
+  }
+
+  /**
+   * kernl.replaceChatButton: hide VS Code's chat button in the Command Center (its own setting, in user
+   * settings) and use kernl's; off puts back what was there. `toggled`: the user changed the option now
+   * (always apply, and say what happened). At startup it applies only when the saved state disagrees
+   * with the option, so a button the user showed again by hand isn't hidden again behind their back.
+   */
+  private async replaceChatButton(toggled: boolean) {
+    const on = vscode.workspace.getConfiguration("kernl").get<boolean>("replaceChatButton", false);
+    const key = "kernl.savedChatButtonSetting";
+    const saved = {
+      get: () => this.context.globalState.get<{ value: unknown }>(key),
+      set: (v: { value: unknown } | undefined) => Promise.resolve(this.context.globalState.update(key, v)),
+    };
+    if (!toggled && on === !!saved.get()) return;
+    const config = () => vscode.workspace.getConfiguration();
+    const setting = {
+      exists: () => config().inspect(CHAT_BUTTON_SETTING)?.defaultValue !== undefined,
+      get: () => config().inspect(CHAT_BUTTON_SETTING)?.globalValue,
+      set: (value: unknown) => Promise.resolve(config().update(CHAT_BUTTON_SETTING, value, vscode.ConfigurationTarget.Global)),
+    };
+    let result: Awaited<ReturnType<typeof applyChatButtonReplacement>>;
+    try {
+      result = await applyChatButtonReplacement(on, setting, saved);
+    } catch (err) {
+      return this.fail("Couldn't change VS Code's chat button", err);
+    }
+    this.log.info(`kernl.replaceChatButton ${on ? "on" : "off"}: ${result}`);
+    if (!toggled) return;
+    const messages: Record<typeof result, string | undefined> = {
+      hidden: "kernl hid VS Code's chat button (chat.agentsControl.enabled is now \"hidden\"). Use the kernl button in the editor toolbar, \"kernl\" in the status bar, or Ctrl+Alt+K. Turn kernl.replaceChatButton off to bring VS Code's back.",
+      restored: "VS Code's chat button is back (kernl put chat.agentsControl.enabled back as it was).",
+      kept: "You changed VS Code's chat button setting yourself, so kernl left it as it is.",
+      unsupported: "This VS Code has no chat.agentsControl.enabled setting, so kernl can't hide its chat button.",
+      unchanged: undefined,
+    };
+    const text = messages[result];
+    if (text) void (result === "unsupported" ? vscode.window.showWarningMessage(text) : vscode.window.showInformationMessage(text));
+  }
+
+  /** Open kernl: the panel. */
+  async open() {
+    await this.panel.reveal();
+  }
+
+  /** The kernl menu (status bar, kernl.quickMenu): the same actions as the editor toolbar's kernl button. */
+  async quickMenu() {
+    const needYou = this.connectionsNeedingYou().length;
+    const items = QUICK_ACTIONS.map((a) => ({
+      label: a.label,
+      detail: a.command === "kernl.showConnections" && needYou ? `${needYou} need${needYou === 1 ? "s" : ""} you` : a.detail || undefined,
+      command: a.command,
+    }));
+    const picked = await vscode.window.showQuickPick(items, { title: "kernl", placeHolder: "kernl" });
+    if (picked) await vscode.commands.executeCommand(picked.command);
+  }
+
+  /** Ask kernl…: a one-line request for the shown workspace, sent the way the panel's Send does. */
+  async ask() {
+    const ws = this.workspace(this.active);
+    if (!ws) return void vscode.window.showWarningMessage(this.noWorkspaceReason() ?? "kernl has no workspace to send to yet.");
+    const agent = this.harnessList().find((h) => h.id === ws.harness)?.label ?? ws.harness;
+    const text = await this.prompts.input({ title: "Ask kernl", prompt: `Goes to ${agent} in ${ws.label}${ws.running ? " (queued: it's working)" : ""}`, placeHolder: "What should kernl do?", ignoreFocusOut: true });
+    if (!text?.trim()) return;
+    const result = await this.sendFromOutside(text, []);
+    if ("error" in result) void vscode.window.showWarningMessage(result.error);
+  }
+
+  /** Ask kernl about this file or selection: the active editor's selection (or its file) goes into the message box. */
+  async askAboutSelection() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return void vscode.window.showInformationMessage("Open a file first; kernl attaches it, or the lines you select.");
+    const doc = editor.document;
+    if (editor.selection.isEmpty) return this.attachUris([doc.uri.toString()]);
+    const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+    const name = folder ? vscode.workspace.asRelativePath(doc.uri, false) : doc.uri.fsPath;
+    const { start, end } = editor.selection;
+    const lines = start.line === end.line ? `${start.line + 1}` : `${start.line + 1}-${end.line + 1}`;
+    const attachment: Attachment = { kind: "text", path: `${name}:${lines}`, text: doc.getText(editor.selection) };
+    await this.panel.reveal();
+    this.panel.post({ type: "addAttachments", items: [attachment] });
+  }
+
+  /**
+   * A message from outside the panel (Ask kernl, @kernl in VS Code's chat) to the shown workspace,
+   * through the panel's own Send: the same checks, and queued while the agent runs.
+   */
+  async sendFromOutside(text: string, files: readonly string[]): Promise<{ workspace: string; agent: string; queued: boolean } | { error: string }> {
+    const ws = this.workspace(this.active);
+    if (!ws) return { error: this.noWorkspaceReason() ?? "kernl has no workspace to send to yet." };
+    const { attachments, outside, unusable } = files.length ? await resolveUris(ws.root, [...files]) : { attachments: [], outside: [], unusable: [] };
+    const skipped = outside.length + unusable.length;
+    if (skipped) this.log.info(`a message from outside the panel referenced ${skipped} file(s) outside ${ws.label}; not attached`);
+    const queued = ws.running;
+    await this.panel.reveal();
+    // Handed over like the panel's Send, which never waits for the run: awaiting it would hold Ask
+    // kernl's box and an @kernl reply open until the agent finished (or forever, behind an approval).
+    void this.onPanelMessage({ type: "send", workspace: ws.id, text, attachments }).catch((err) => this.fail("Couldn't send to kernl", err));
+    return { workspace: ws.label, agent: this.harnessList().find((h) => h.id === ws.harness)?.label ?? ws.harness, queued };
+  }
+
+  /** What @kernl in VS Code's chat calls. */
+  chatForwarding(): ChatForwarding {
+    return { forward: (text, files) => this.sendFromOutside(text, files) };
   }
 
   /** Instruction and agent files: in every workspace folder, and the user's own folder. One save can fire several events; they become one rebuild. */
@@ -299,6 +461,31 @@ export class Controller implements vscode.Disposable {
   }
 
   /** The mode chip's menu. Bypass asks first; a mode the agent can't confirm leaves the old one in place. */
+  /** The unsent message, kept for this window (VS Code's workspaceState) until it's sent or cleared. */
+  private async keepDraft(text: string, attachments: Attachment[]) {
+    const { draft, dropped } = draftToKeep(String(text ?? ""), Array.isArray(attachments) ? attachments : []);
+    if (dropped) this.log.info(`draft: ${dropped} long text attachment(s) not kept (over ${DRAFT_TEXT_LIMIT} characters in total)`);
+    await this.context.workspaceState.update(DRAFT_KEY, draft);
+  }
+
+  /** The panel loaded (after a restart or reload): it gets the unsent message back. */
+  private restoreDraft() {
+    const draft = this.context.workspaceState.get<Draft>(DRAFT_KEY);
+    if (draft) this.panel.post({ type: "restoreDraft", text: draft.text, attachments: draft.attachments });
+  }
+
+  /** A CLI agent's model or thinking chip: its own choices (from the agent), the current one marked. */
+  private async pickAgentOption(workspaceId: string, id: string) {
+    const ws = this.workspace(workspaceId);
+    const option = ws?.view().agentOptions?.find((o) => o.id === id && o.kind !== "fast");
+    if (!ws || !option?.choices) return;
+    const picked = await this.prompts.pick(
+      option.choices.map((c) => ({ label: c.name, description: [c.value === option.value ? "current" : undefined, c.description].filter(Boolean).join(" · ") || undefined, value: c.value })),
+      { title: `${option.name}: ${ws.view().label}` },
+    );
+    if (picked && picked.value !== option.value) await ws.setAgentOption(id, picked.value);
+  }
+
   private async setMode(id: string, mode: string) {
     const ws = this.workspace(id);
     if (!ws || !isPermissionMode(mode)) return;
@@ -360,7 +547,7 @@ export class Controller implements vscode.Disposable {
       hasStoredKey: async (id: CliAgentId) => !!(await this.agentCredentials.get(id)),
       launchOverride: (id: CliAgentId) => (typeof overrides?.[id]?.command === "string" ? { command: overrides[id].command as string } : undefined),
       find: (c: string, env: Record<string, string | undefined>) => resolveCommand(c, env as NodeJS.ProcessEnv),
-      run: runStatusCommand,
+      run: this.statusCommands,
       cwd: this.activeFolder()?.root,
       now: Date.now,
     };
@@ -386,10 +573,10 @@ export class Controller implements vscode.Disposable {
     if (!vscode.workspace.getConfiguration("kernl").get<boolean>("connections.checkKeys", true)) return;
     const s = readSettings();
     const custom = customProviders(s.customProviders);
-    const providers: { id: ProviderId; baseUrl?: string }[] = [
+    const providers: { id: ProviderId; baseUrl?: string; custom?: CustomProvider }[] = [
       ...(["anthropic", "openai", "google", "deepseek"] as const).map((id) => ({ id })),
       { id: "openai-compatible" as const, baseUrl: s.baseUrl || undefined },
-      ...("error" in custom ? [] : custom.map((c) => ({ id: `custom:${c.id}` as ProviderId, baseUrl: c.baseUrl }))),
+      ...("error" in custom ? [] : custom.map((c) => ({ id: `custom:${c.id}` as ProviderId, baseUrl: c.baseUrl, custom: c }))),
     ];
     const status = (id: string, kind: ConnectionStatus["kind"], owner: string, label: string, p: { state: ConnectionStatus["state"]; detail: string }, target: string): ConnectionStatus => ({
       id,
@@ -404,9 +591,12 @@ export class Controller implements vscode.Disposable {
     await Promise.all([
       ...providers.map((p) =>
         this.connections.check(`key:${p.id}`, async () => {
-          const key = await this.keys.get(p.id);
-          const req = key && keyRequest(p.id, key, p.baseUrl);
-          if (!key) return [];
+          const auth = await this.keys.auth(p.id, s.customProviders);
+          // A custom provider may authenticate with a secret header instead of a key; one whose secret
+          // header isn't stored yet (it's being added) isn't asked, so it's never sent incomplete.
+          if (!auth.apiKey && !p.custom?.secretHeaders.length) return [];
+          if (p.custom && missingSecretHeader(p.custom, auth)) return [];
+          const req = modelsRequest(p, auth);
           if (!req) return [status(`key:${p.id}`, "providerKey", "kernl", `${p.id} key`, { state: "unknown", detail: "Stored; no URL to check it against" }, p.id)];
           return [status(`key:${p.id}`, "providerKey", "kernl", `${p.id} key`, await checkKey(req, p.id), p.id)];
         }, options),
@@ -554,6 +744,41 @@ export class Controller implements vscode.Disposable {
   }
 
   /** The CLIs' own login and config files: a change (a login, a logout, a profile switch) is checked at once. */
+  /** A CLI agent's session store changed on disk: its cached list (per folder) is stale. The stores are never read. */
+  private watchSessionStores(): vscode.Disposable[] {
+    return CLI_AGENT_IDS.flatMap((agent) => {
+      const { base, pattern } = sessionStore(agent);
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(base), pattern));
+      const stale = () => {
+        for (const key of this.agentSessionLists.keys()) if (key.startsWith(`${agent}\n`)) this.agentSessionLists.delete(key);
+      };
+      watcher.onDidChange(stale), watcher.onDidCreate(stale), watcher.onDidDelete(stale);
+      return [watcher];
+    });
+  }
+
+  /**
+   * The ready CLI agents' stored sessions for a workspace's folder, each agent asked in parallel
+   * (ACP session/list) unless its list is cached and its store hasn't changed since. An agent that
+   * can't list is left out (logged).
+   */
+  private async agentSessions(ws: WorkspaceRuntime): Promise<{ agent: CliAgentId; session: acp.SessionInfo }[]> {
+    if (!vscode.workspace.getConfiguration("kernl").get<boolean>("sessions.importFromAgents", true)) return [];
+    const lists = await Promise.all(
+      CLI_AGENT_IDS.map(async (agent) => {
+        if (!(await this.readiness(agent)).ready) return [];
+        const key = `${agent}\n${ws.root}`;
+        const cached = this.agentSessionLists.get(key);
+        if (cached && Date.now() - cached.at < AGENT_SESSIONS_TTL_MS) return cached.sessions.map((session) => ({ agent, session }));
+        const sessions = await ws.listAgentSessions(agent);
+        if (!sessions) return [];
+        this.agentSessionLists.set(key, { at: Date.now(), sessions });
+        return sessions.map((session) => ({ agent, session }));
+      }),
+    );
+    return lists.flat();
+  }
+
   private watchCredentialFiles(): vscode.Disposable[] {
     const roots = sourceRoots();
     let timer: NodeJS.Timeout | undefined;
@@ -643,29 +868,58 @@ export class Controller implements vscode.Disposable {
     });
   }
 
-  /** The history button: this workspace's conversations, newest first. */
+  /**
+   * The history button: this workspace's conversations, newest first, then the CLI agents' own
+   * sessions in this folder that kernl hasn't opened yet (started in a terminal or another app).
+   */
   async showSessions() {
     const ws = this.workspace(this.active);
     if (!ws || ws.running) return;
     await ws.saveSession();
-    const sessions = await this.host.sessions.list(ws.sessionKey);
+    const [sessions, agentSessions] = await Promise.all([this.host.sessions.list(ws.sessionKey), this.agentSessions(ws)]);
     const label = (h: string) => this.harnessList().find((x) => x.id === h)?.label ?? h;
     const ago = (t: number) => {
       const m = Math.round((Date.now() - t) / 60000);
       return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
     };
-    type Item = vscode.QuickPickItem & { id?: string };
+    const linked = new Set(sessions.map((s) => s.agentSessionId).filter(Boolean));
+    type Item = vscode.QuickPickItem & { id?: string; agent?: CliAgentId; session?: acp.SessionInfo };
     const items: Item[] = [
       { label: "$(add) New conversation" },
       ...sessions.map((s) => ({ label: `${s.id === ws.sessionId ? "$(check) " : ""}${s.title}`, description: `${messages(s.messages)} · ${label(s.harness)} · ${ago(s.updatedAt)}`, id: s.id })),
+      ...agentSessions
+        .filter(({ session }) => !linked.has(session.sessionId))
+        .map(({ agent, session }) => ({
+          label: session.title?.trim() || "Untitled session",
+          description: [`${label(agent)} session`, session.updatedAt ? ago(Date.parse(session.updatedAt)) : undefined].filter(Boolean).join(" · "),
+          agent,
+          session,
+        })),
     ];
     const picked = await this.prompts.pick(items, { title: `Conversations in ${ws.view().label}` });
     if (!picked) return;
+    if (picked.agent && picked.session) {
+      const record = this.host.sessions.create(picked.agent);
+      record.importedFrom = { agent: picked.agent, sessionId: picked.session.sessionId };
+      record.history = { sessionId: picked.session.sessionId };
+      if (picked.session.title?.trim()) record.agentTitle = picked.session.title.trim();
+      return this.openAgentSession(ws, record);
+    }
     if (!picked.id) return void ws.newThread();
     const record = await this.host.sessions.load(ws.sessionKey, picked.id);
     if (!record || record.id === ws.sessionId) return;
+    if (record.importedFrom) return this.openAgentSession(ws, record);
     if (record.harness !== ws.harness && isHarness(record.harness)) await this.setHarness(ws.id, record.harness);
     await ws.openSession(record);
+  }
+
+  /** Opens a CLI agent's session in a workspace, with a notice when Claude Code has it open in another app (sending here continues it). */
+  private async openAgentSession(ws: WorkspaceRuntime, record: SessionRecord) {
+    const { agent, sessionId } = record.importedFrom!;
+    if (ws.harness !== agent) await this.setHarness(ws.id, agent);
+    if (ws.harness !== agent) return;
+    const elsewhere = agent === "claude-code" && (await claudeSessionOpenElsewhere(sessionId));
+    await ws.openAgentSession(record, elsewhere ? "This session is open in another app. Read it here; sending a message continues it in kernl, apart from that app." : undefined);
   }
 
   async clearHistory() {
@@ -814,7 +1068,7 @@ export class Controller implements vscode.Disposable {
   private async testProvider(provider: ProviderId, model: string): Promise<string> {
     const s = { ...readSettings(), provider, model, modelOptions: { maxOutputTokens: 16 } };
     try {
-      const reply = await createChatModel(s, await this.keys.get(provider)).invoke("Reply with the single word: ok");
+      const reply = await createChatModel(s, await this.keys.auth(provider, s.customProviders)).invoke("Reply with the single word: ok");
       return `connected (the model replied "${String(reply.content).slice(0, 40)}")`;
     } catch (err: any) {
       return `failed: ${this.redactor.scrub(String(err?.message ?? err)).slice(0, 200)}`;
@@ -885,6 +1139,7 @@ export class Controller implements vscode.Disposable {
   }
 
   private postWorkspaces(focus?: string) {
+    this.updateStatusItem();
     const problem = this.workspaces.size ? undefined : this.noWorkspaceReason();
     this.panel.post({ type: "workspaces", items: [...this.workspaces.values()].map((w) => w.view()), harnesses: this.harnessList(), focus, problem });
   }
@@ -954,9 +1209,14 @@ export class Controller implements vscode.Disposable {
         await this.postStatus();
         this.postWorkspaces();
         this.panel.post(panelSnapshot([...this.requests].map(([id, r]) => [id, { workspace: r.workspace, request: r.request }])));
+        this.restoreDraft();
+        this.prepareShown();
         return;
       case "send": {
         const ws = this.workspace(m.workspace);
+        // A CLI agent's first check, or its check after a change, is about to answer: wait for it (capped) rather
+        // than read "unknown" as uncertain. A routine recheck keeps the last answer and isn't waited for.
+        if (ws && isCliAgentId(ws.harness)) await this.connections.whenAnswered(`agent:${ws.harness}`, STATUS_TIMEOUT_MS);
         // Only a definite "can't start" from a check stops a message here. Anything uncertain, and a failure an
         // earlier run reported (the user may have fixed it since), goes to the agent, which reports its own error.
         const checked = ws && this.connections.get(`agent:${ws.harness}`);
@@ -1026,6 +1286,7 @@ export class Controller implements vscode.Disposable {
         const folderBefore = this.folderIdOf(this.active);
         if (this.workspace(m.workspace)) this.active = m.workspace;
         this.postActiveFile();
+        this.prepareShown();
         // Skills and named agents come from the shown folder.
         if (this.folderIdOf(this.active) !== folderBefore) {
           await this.refreshNamedAgents();
@@ -1036,6 +1297,18 @@ export class Controller implements vscode.Disposable {
       }
       case "setMode":
         return this.setMode(m.workspace, m.mode);
+      case "draft":
+        return this.keepDraft(m.text, m.attachments);
+      case "pickAgentOption": {
+        const kind = this.workspace(m.workspace)?.view().agentOptions?.find((o) => o.id === m.id)?.kind;
+        return this.anchored(kind === "thinking" ? "thinking" : "model", () => this.pickAgentOption(m.workspace, m.id));
+      }
+      case "setAgentOption": {
+        // The panel only toggles fast mode; anything else it sends is ignored.
+        const option = this.workspace(m.workspace)?.view().agentOptions?.find((o) => o.id === m.id);
+        if (option?.kind === "fast" && typeof m.value === "boolean") await this.workspace(m.workspace)!.setAgentOption(m.id, m.value);
+        return;
+      }
       case "openFolder":
         return void vscode.commands.executeCommand("workbench.action.files.openFolder");
       case "pickWorkspace":
@@ -1052,6 +1325,8 @@ export class Controller implements vscode.Disposable {
         return;
       case "pickModel":
         return this.anchored("model", () => this.pickModel());
+      case "pickThinking":
+        return this.anchored("thinking", () => this.pickThinking());
       case "pickHarness":
         return this.anchored("agent", () => this.pickHarness());
     }
@@ -1070,6 +1345,7 @@ export class Controller implements vscode.Disposable {
     // A single folder's choice lives in settings; the resulting change event finds it already on this harness.
     else await vscode.workspace.getConfiguration("kernl").update("harness", harness, vscode.ConfigurationTarget.Workspace);
     this.postWorkspaces();
+    if (id === this.active) this.prepareShown();
   }
 
   async newWorkspace() {
@@ -1133,6 +1409,16 @@ export class Controller implements vscode.Disposable {
   /** New chat (title bar): clears the workspace the panel shows. */
   newChat() {
     this.workspace(this.active)?.newThread();
+    this.prepareShown();
+  }
+
+  /**
+   * The shown workspace's CLI agent starts its session now (while the panel is on screen), so its
+   * model, thinking, and fast chips can be chosen before the first message. Hidden workspaces don't start.
+   */
+  private prepareShown() {
+    const ws = this.workspace(this.active);
+    if (ws && this.panel.visible) void ws.prepareAgent();
   }
 
   async openSettings() {
@@ -1166,7 +1452,7 @@ export class Controller implements vscode.Disposable {
     const scope = currentWorkspaceScope();
     if (!scope.ok) return scope.reason;
     const s = readSettings();
-    return settingsProblem(s, isProviderId(s.provider) ? await this.keys.get(s.provider) : undefined);
+    return settingsProblem(s, await this.keys.auth(s.provider, s.customProviders));
   }
 
   async postStatus() {
@@ -1175,8 +1461,35 @@ export class Controller implements vscode.Disposable {
     const problem = await this.deepAgentsProblem();
     const resolved = resolveProvider(s);
     const model = "error" in resolved ? s.model : resolved.model;
+    const thinking = this.thinkingLevel(s);
     const thinkingDisplay = s.thinkingDisplay === "collapsed" || s.thinkingDisplay === "expanded" ? s.thinkingDisplay : "auto";
-    this.panel.post({ type: "status", ready: !problem, problem, provider: s.provider, model, restricted: scope.ok && !scope.trusted, thinkingDisplay, previewBase: this.panel.previewBase() });
+    this.panel.post({ type: "status", ready: !problem, problem, provider: s.provider, model, thinking, restricted: scope.ok && !scope.trusted, thinkingDisplay, previewBase: this.panel.previewBase() });
+  }
+
+  /** The current model's thinking level, or undefined when its provider has no thinking control or the settings can't build it. */
+  private thinkingLevel(s: ReturnType<typeof readSettings>): ThinkingLevel | undefined {
+    const r = resolveProvider(s);
+    if ("error" in r || providerApi(r) === "deepseek") return undefined;
+    const o = effectiveModelOptions(s, r);
+    return "error" in o ? undefined : (o.reasoningEffort ?? "off");
+  }
+
+  /** The thinking chip: sets reasoningEffort in the current model's kernl.modelProfiles entry (user settings); the agent rebuilds at the next message. */
+  private async pickThinking() {
+    const s = readSettings();
+    const r = resolveProvider(s);
+    const current = this.thinkingLevel(s);
+    if ("error" in r || !current) return;
+    const picked = await this.prompts.pick(
+      THINKING_LEVELS.map((level) => ({ label: level === "off" ? "Off" : level[0].toUpperCase() + level.slice(1), description: level === current ? "current" : undefined, level })),
+      { title: `Thinking for ${r.model}` },
+    );
+    if (!picked || picked.level === current) return;
+    const config = vscode.workspace.getConfiguration("kernl");
+    const key = profileKey(r.provider, r.model);
+    const profiles: Record<string, unknown> = { ...config.inspect<Record<string, unknown>>("modelProfiles")?.globalValue };
+    profiles[key] = { ...(profiles[key] as object | undefined), reasoningEffort: picked.level };
+    await config.update("modelProfiles", profiles, vscode.ConfigurationTarget.Global);
   }
 
   /** Each workspace decides whether the change concerns it; running ones rebuild after their run. */
@@ -1185,8 +1498,12 @@ export class Controller implements vscode.Disposable {
     for (const ws of this.workspaces.values()) ws.inputsChanged(change);
     this.postWorkspaces();
     void this.postStatus();
+    // An idle workspace just rebuilt (its agent's session closed): the shown one starts again.
+    this.prepareShown();
     // A change to how agents launch (kernl.agentCommands) or to their keys makes their last status stale.
     const launchChanged = change.kind === "keys" || (change.kind === "settings" && change.affects("kernl.agentCommands"));
+    // A different launch (or login) can mean a different list of the agent's own sessions.
+    if (launchChanged) this.agentSessionLists.clear();
     void this.refreshReadiness(launchChanged ? { changed: true } : {});
   }
 
@@ -1221,6 +1538,9 @@ export class Controller implements vscode.Disposable {
       approvalRules: () => approvalRules(),
       setHarness: (workspace: string, harness: string) => this.setHarness(workspace, harness),
       useGitHub: (source: GitHubSource) => (this.github = source),
+      useStatusCommands: (run: AgentCheckDeps["run"]) => (this.statusCommands = run),
+      /** Ask kernl and @kernl's path: a message from outside the panel to the shown workspace. */
+      sendFromOutside: (text: string, files: readonly string[] = []) => this.sendFromOutside(text, files),
     };
   }
 
