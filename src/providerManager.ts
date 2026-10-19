@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { CLI_AGENT_IDS, CLI_AGENTS, type CliAgentId } from "./acp/agents";
 import { CREDENTIAL_ENV, DEEPSEEK_ANTHROPIC_URL } from "./acp/credentials";
-import type { Readiness } from "./harnesses";
+import { loginCommand } from "./connections/agentChecks";
 import { addCustomProvider, type KeyTargets, keyStored, useProvider } from "./keyCommands";
 import { BUILT_IN_PROVIDERS, customProviders, type ProviderId, resolveProvider } from "./providers/registry";
 
@@ -120,14 +120,18 @@ export async function manageProviders(t: KeyTargets, test: (provider: ProviderId
   }
 }
 
-const LOGIN_COMMAND: Record<CliAgentId, string> = { "claude-code": "claude", codex: "codex login", opencode: "opencode auth login" };
 
 /**
  * "Agent logins": each CLI agent's status. A ready agent can be used in the shown workspace right
  * away (`use`, absent when there is no workspace); any agent can log in in a terminal or use a key
  * stored in kernl.
  */
-export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => Promise<Readiness>, use?: (id: CliAgentId) => Promise<void>): Promise<string[] | undefined> {
+export async function agentLogins(
+  t: KeyTargets,
+  readiness: (id: CliAgentId) => Promise<{ ready: boolean; problem?: string }>,
+  login: (id: CliAgentId) => Promise<void>,
+  use?: (id: CliAgentId) => Promise<void>,
+): Promise<string[] | undefined> {
   const rows = await Promise.all(
     CLI_AGENT_IDS.map(async (id) => {
       const r = await readiness(id);
@@ -141,7 +145,7 @@ export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => 
   type Action = "use" | "login" | "key" | "deepseek" | "remove";
   const actions: (vscode.QuickPickItem & { action: Action })[] = [
     ...(use && picked.ready ? [{ label: `Use ${picked.label} in this workspace`, description: "switch the agent now", action: "use" as const }] : []),
-    { label: "Log in in a terminal", description: picked.ready ? `already logged in; runs ${LOGIN_COMMAND[picked.id]}` : LOGIN_COMMAND[picked.id], action: "login" },
+    { label: "Log in in a terminal", description: picked.ready ? `already logged in; runs ${loginCommand(picked.id)}` : loginCommand(picked.id), action: "login" },
     ...(CREDENTIAL_ENV[picked.id] ? [{ label: "Use an API key instead...", description: CREDENTIAL_ENV[picked.id]!.apiKey, action: "key" as const }] : []),
     ...(picked.id === "claude-code" ? [{ label: "Use DeepSeek...", description: "Claude Code on a DeepSeek key", action: "deepseek" as const }] : []),
     ...(picked.stored ? [{ label: "Remove the stored key", description: "back to the agent's own login", action: "remove" as const }] : []),
@@ -152,13 +156,9 @@ export async function agentLogins(t: KeyTargets, readiness: (id: CliAgentId) => 
     case "use":
       await use!(picked.id);
       return undefined;
-    case "login": {
-      const terminal = vscode.window.createTerminal({ name: `${picked.label} login` });
-      terminal.show();
-      terminal.sendText(LOGIN_COMMAND[picked.id]);
-      if (picked.id === "claude-code") void vscode.window.showInformationMessage("In the terminal, type /login and follow the steps. kernl checks again when you come back.");
+    case "login":
+      await login(picked.id);
       return undefined;
-    }
     case "key": {
       const key = await t.prompts.input({ title: `API key for ${picked.label}`, password: true, ignoreFocusOut: true });
       if (!key) return undefined;

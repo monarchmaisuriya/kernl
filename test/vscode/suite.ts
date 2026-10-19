@@ -357,8 +357,10 @@ export async function run() {
       userDir: join(tmpdir(), "kernl-no-user-dir"),
       sources: async () => ({ imports: emptyImports() }),
       allowProjectServer: async () => false,
+      projectServerAllowed: () => false,
       kernlTools: (tools) => toolServer.register(tools),
       signInRequired: new SignInRequired(),
+      connectionSignal() {},
       sessions: new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))),
       checkpoints: new Checkpoints(mkdtempSync(join(tmpdir(), "kernl-checkpoints-"))),
       apiKey: async () => undefined,
@@ -722,6 +724,50 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       assert.ok(rows.every((r: any) => /ready|not ready|using/.test(r.description)));
     } finally {
       scripted = { ...scripted, pickFirst: true };
+    }
+  });
+
+  await check("Connections: Log in runs the CLI's own login in a terminal, and the agent's row turns ready within seconds, with no reload", async () => {
+    // A fake codex CLI: "Not logged in" until its own `codex login` runs (which only creates a marker file).
+    const bin = mkdtempSync(join(tmpdir(), "kernl-fake-codex-"));
+    const marker = join(bin, "logged-in");
+    const cli = join(bin, "codex");
+    // A shell script: inside VS Code, process.execPath is VS Code's own helper, not Node.
+    writeFileSync(
+      cli,
+      [
+        "#!/bin/sh",
+        `if [ "$*" = "login status" ]; then if [ -f '${marker}' ]; then echo "Logged in using ChatGPT"; exit 0; else echo "Not logged in"; exit 1; fi; fi`,
+        `if [ "$*" = "login" ]; then touch '${marker}'; echo "Logged in."; exit 0; fi`,
+        `if [ "$*" = "mcp list --json" ]; then echo "[]"; exit 0; fi`,
+        "exit 2",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const codexRow = (state: string) => (m: any) => m.type === "connections" && m.items.some((i: any) => i.id === "agent:codex" && i.state === state && !i.checking);
+    await config.update("agentCommands", { codex: { command: cli, args: [] } }, vscode.ConfigurationTarget.Global);
+    try {
+      let from = delivered.length;
+      await vscode.commands.executeCommand("kernl.showConnections");
+      const opened = await waitFor("the Connections view opening", (m) => m.type === "connections" && m.open === true, from);
+      assert.ok(Array.isArray(opened.items));
+      from = delivered.length;
+      await testing.receive({ type: "connectionAction", action: "check", target: "all" });
+      const before = await waitFor("Codex needing a login", codexRow("needsAction"), from, 20_000);
+      const row = before.items.find((i: any) => i.id === "agent:codex");
+      assert.equal(row.source, "codex login status");
+      assert.deepEqual(row.fix, { label: "Log in", action: "login", target: "codex" });
+      from = delivered.length;
+      const started = Date.now();
+      await testing.receive({ type: "connectionAction", action: "login", target: "codex" });
+      assert.ok(vscode.window.terminals.some((t) => t.name === "kernl: log in to Codex"), "the login runs in a visible terminal");
+      await waitFor("Codex ready after the login", codexRow("ready"), from, 20_000);
+      assert.ok(existsSync(marker), "the CLI's own login ran");
+      results.push(`      ready ${Date.now() - started} ms after Log in`);
+    } finally {
+      for (const t of vscode.window.terminals) if (t.name === "kernl: log in to Codex") t.dispose();
+      await config.update("agentCommands", undefined, vscode.ConfigurationTarget.Global);
     }
   });
 

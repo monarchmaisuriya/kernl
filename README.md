@@ -44,7 +44,7 @@ For Ollama or another OpenAI-compatible server, use provider `openai-compatible`
 
 ## Docs
 
-- **Using kernl:** [the panel](docs/guides/panel.md), [permission modes](docs/guides/permission-modes.md), [model providers](docs/guides/providers.md), [approvals](docs/guides/approvals.md), [customisation files](docs/guides/customisation.md), [CLI agents](docs/guides/cli-agents.md), [workspaces](docs/guides/workspaces.md)
+- **Using kernl:** [the panel](docs/guides/panel.md), [permission modes](docs/guides/permission-modes.md), [model providers](docs/guides/providers.md), [approvals](docs/guides/approvals.md), [customisation files](docs/guides/customisation.md), [CLI agents](docs/guides/cli-agents.md), [connections](docs/guides/connections.md), [workspaces](docs/guides/workspaces.md)
 - **How it's built:** [architecture](docs/architecture/overview.md)
 - **Working on kernl:** [building](docs/development/building.md), [testing](docs/development/testing.md), [upgrading](docs/development/upgrading.md), [releasing](docs/development/releasing.md)
 - **Limits:** [known issues](docs/known-issues/README.md)

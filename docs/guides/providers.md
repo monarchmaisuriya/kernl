@@ -22,5 +22,5 @@ Requires VS Code 1.140 or newer. The integrated-browser tools are verified on VS
 
 Anything a provider can't take is named in the panel instead of being silently dropped.
 
-API keys live only in VS Code SecretStorage and are scrubbed from logs and panel messages.
+API keys live only in VS Code SecretStorage and are scrubbed from logs and panel messages. [Connections](connections.md) checks each stored key with the provider's model list (no tokens spent): a refused key shows there and on the agent chip.
 LangSmith tracing is forced off for every run, even if `LANGSMITH_TRACING` is set in your environment.

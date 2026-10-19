@@ -27,6 +27,8 @@ storing or clearing it restarts only workspaces running that agent. OpenCode kee
   `npm run test:live` checks against a localhost server that only the stored key is sent.
 - **Codex keys are unverified:** Codex with its own login was checked against adapter 2.2.2 (Read-only confirmed, a reply received); a stored `CODEX_API_KEY` wasn't tested, and Codex may prefer its own login over it.
 
+Whether each agent is installed and logged in, and its MCP servers and plugins, are listed in [Connections](connections.md), with a Log in button that runs the agent's own login in a terminal.
+
 ## Terminal and browser
 
 CLI agents use kernl's own tools through a small MCP server kernl runs on this machine (only on `127.0.0.1`, with a token per workspace; a web page can't reach it). The tools are `run_in_terminal`, the background job tools, and the browser tools. They ask through kernl's approvals like the kernl agent's tools, so your approval rules apply. Settings:

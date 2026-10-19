@@ -15,7 +15,7 @@ import { PendingApprovals } from "../../src/gate/pendingApprovals";
 const fake = resolve(__dirname, "fakeAcpAgent.cjs");
 const MANUAL: AskMode = { kind: "configOption", optionId: "mode", value: "default" };
 
-function harness(scenario: string, answer: boolean | "never", askMode: AskMode | (() => AskMode) = MANUAL, extraEnv: Record<string, string> = {}, more: Pick<AcpRunnerOptions, "sessionSetup" | "commandOutput"> = {}) {
+function harness(scenario: string, answer: boolean | "never", askMode: AskMode | (() => AskMode) = MANUAL, extraEnv: Record<string, string> = {}, more: Pick<AcpRunnerOptions, "sessionSetup" | "commandOutput" | "connection" | "loginHint"> = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "kernl-acp-"));
   const logFile = join(cwd, "..", `fake-${Math.random().toString(36).slice(2)}.log`);
   const asked: GateRequest[] = [];
@@ -343,4 +343,29 @@ test("a command the agent runs in its own shell: streamed output fills its row a
 test("kernl's own tools are recognised by each agent's naming, and nothing else is", () => {
   for (const name of ["mcp__kernl__run_in_terminal", "mcp.kernl.browser_click", "kernl_run_in_terminal"]) assert.equal(isKernlTool(name), true, name);
   for (const name of ["Bash", "mcp__kernel__x", "mcp.notion.search", "Write kernl_notes.md", undefined]) assert.equal(isKernlTool(name), false, String(name));
+});
+
+test("an agent that answers 'authentication required' is a login signal, and the error says how to log in", async () => {
+  const signals: unknown[] = [];
+  const h = harness("auth-required", true, MANUAL, {}, { connection: (s) => signals.push(s), loginHint: "Run `claude auth login` in a terminal." });
+  await h.runner.send("go");
+  h.runner.dispose();
+  assert.deepEqual(signals, [{ type: "authRequired", message: "Authentication required: Please run /login" }]);
+  assert.equal(h.events.at(-1), "finished:error:Fake Agent needs you to log in (Authentication required: Please run /login). Run `claude auth login` in a terminal.");
+});
+
+test("the adapters' login status push, a Codex MCP server that didn't start, and a run that worked are reported", async () => {
+  const pushed: unknown[] = [];
+  const status = harness("auth-status", true, MANUAL, {}, { connection: (s) => pushed.push(s) });
+  await status.runner.send("go");
+  // The push is a notification: it can be handled just after the prompt's reply.
+  for (const deadline = Date.now() + 2_000; pushed.length < 2 && Date.now() < deadline; ) await new Promise((r) => setTimeout(r, 10));
+  status.runner.dispose();
+  // A notification and the prompt's reply may arrive in either order.
+  assert.deepEqual(pushed.map((p) => JSON.stringify(p)).sort(), [{ type: "authStatus", kind: "none", label: "Not logged in" }, { type: "runSucceeded" }].map((p) => JSON.stringify(p)).sort());
+  const mcp: unknown[] = [];
+  const failed = harness("mcp-startup-failed", true, MANUAL, {}, { connection: (s) => mcp.push(s) });
+  await failed.runner.send("go");
+  failed.runner.dispose();
+  assert.deepEqual(mcp[0], { type: "mcpStartupFailed", server: "docs", error: "MCP server `docs` failed to start: connection refused" });
 });

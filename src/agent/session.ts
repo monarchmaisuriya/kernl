@@ -31,6 +31,18 @@ export interface SessionEvents {
   subagentText?(taskId: string, delta: string): void;
   usage(inputTokens: number, outputTokens: number): void;
   finished(reason: "done" | "stopped" | "error", message?: string): void;
+  /** The model provider answered the run: `rejected` with the HTTP status when it refused the key (401 or 403). */
+  providerAnswered?(result: { rejected?: number }): void;
+}
+
+/** The HTTP status of a provider error, from the error or its cause (LangChain wraps the SDKs' errors). */
+export function httpStatusOf(err: unknown): number | undefined {
+  let current: any = err;
+  for (let depth = 0; depth < 4 && current; depth++, current = current.cause) {
+    const status = current.status ?? current.statusCode ?? current.response?.status;
+    if (typeof status === "number") return status;
+  }
+  return undefined;
 }
 
 /** An image a tool read or produced (base64), as agents send it. */
@@ -183,8 +195,11 @@ export class AgentSession implements Runner {
       this.events.usage(inputTokens, outputTokens);
       // Our controller, not the library, says whether the user stopped the run: an abort that
       // lands as the graph is finishing can complete without throwing.
+      if (!controller.signal.aborted) this.events.providerAnswered?.({});
       this.events.finished(controller.signal.aborted ? "stopped" : "done");
     } catch (err: any) {
+      const status = httpStatusOf(err);
+      if (!controller.signal.aborted && (status === 401 || status === 403)) this.events.providerAnswered?.({ rejected: status });
       if (controller.signal.aborted) this.events.finished("stopped");
       else this.events.finished("error", err?.message ?? String(err));
     } finally {

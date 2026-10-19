@@ -23,6 +23,8 @@ function loadPanel() {
   const sent: PanelToHost[] = [];
   // Like the real webview bridge, messages are serialized on the way out (and leave jsdom's realm).
   (window as any).acquireVsCodeApi = () => ({ postMessage: (m: PanelToHost) => sent.push(JSON.parse(JSON.stringify(m))) });
+  // jsdom has no layout, so no scrollIntoView (the Connections view scrolls a focused row into view).
+  (window as any).Element.prototype.scrollIntoView = () => {};
   window.eval(script);
   const doc = window.document;
   const host = (m: HostToPanel) => window.dispatchEvent(new window.MessageEvent("message", { data: m }));
@@ -1224,4 +1226,62 @@ test("a failed row keeps 'Failed:' when the agent updates it after the result", 
   const row = p.doc.querySelector<HTMLElement>(".tool")!;
   assert.equal(row.querySelector(".tool-action")!.textContent, "Failed: Find usages of x");
   assert.equal(row.dataset.status, "failed");
+});
+
+const connections = (): HostToPanel & { type: "connections" } => ({
+  type: "connections",
+  items: [
+    { id: "agent:codex", kind: "agent", owner: "Codex", label: "Codex", state: "needsAction", detail: "Codex isn't logged in", source: "codex login status", checkedAt: Date.now() - 12_000, fix: { label: "Log in", action: "login", target: "codex" } },
+    { id: "agent:claude-code", kind: "agent", owner: "Claude Code", label: "Claude Code", state: "ready", detail: "Logged in: claude.ai login (max)", source: "claude auth status", checkedAt: Date.now(), checking: true },
+    { id: "key:anthropic", kind: "providerKey", owner: "kernl", label: "anthropic key", state: "needsAction", detail: "anthropic refused the key (HTTP 401)", source: "key check (GET /models)", checkedAt: Date.now(), fix: { label: "Set key", action: "setKey", target: "anthropic" } },
+    { id: "mcp:claude-code:notion", kind: "mcp", owner: "Claude Code", label: "notion", state: "needsAction", detail: "Needs authentication", source: "claude mcp list", checkedAt: Date.now() },
+    { id: "mcp:kernl:docs", kind: "mcp", owner: "kernl", label: "docs", state: "failed", detail: "connection refused", source: "kernl agent", checkedAt: Date.now() },
+    { id: "plugin:claude-code:render@m", kind: "plugin", owner: "Claude Code", label: "render", state: "off", detail: "Installed, turned off", source: "claude plugin list", checkedAt: Date.now() },
+  ],
+});
+
+test("Connections: groups rows by kind and agent, with state, what the source said, when, and a fix button that asks the host", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  p.host(connections());
+  const view = p.doc.querySelector<HTMLElement>(".connections")!;
+  assert.equal(view.hidden, true, "updates don't open it");
+  p.host({ ...connections(), open: true });
+  assert.equal(view.hidden, false);
+  assert.deepEqual(p.sent.at(-1), { type: "showConnections" }, "opening asks the host to check everything");
+  assert.deepEqual(p.all(".connections-group-title").map((t) => t.textContent), ["Agents", "Keys", "MCP servers: Claude Code", "MCP servers: kernl", "Plugins: Claude Code"]);
+  const codex = p.doc.querySelector<HTMLElement>('[data-id="agent:codex"]')!;
+  assert.equal(codex.querySelector(".connection-state")!.textContent, "Needs you");
+  assert.equal(codex.querySelector(".connection-meta")!.textContent, "codex login status · 12 s ago");
+  p.button("Log in", codex)!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "connectionAction", action: "login", target: "codex" });
+  const claude = p.doc.querySelector<HTMLElement>('[data-id="agent:claude-code"]')!;
+  assert.equal(claude.dataset.checking, "true");
+  assert.equal(claude.querySelector(".connection-state")!.textContent, "Checking…");
+  p.button("Check now")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "connectionAction", action: "check", target: "all" });
+  view.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.equal(view.hidden, true);
+});
+
+test("an agent that needs setup gets a warning button beside the chip that opens Connections at that agent", () => {
+  const p = loadPanel();
+  p.host(workspaces([{ ...MAIN, harness: "codex" }]));
+  p.host(connections());
+  const setup = p.doc.querySelector<HTMLButtonElement>(".chip.setup")!;
+  assert.equal(setup.hidden, false);
+  assert.match(setup.title, /codex login/);
+  setup.click();
+  assert.equal(p.doc.querySelector<HTMLElement>(".connections")!.hidden, false);
+  assert.deepEqual(p.sent.at(-1), { type: "showConnections", focus: "agent:codex" });
+  assert.ok(p.doc.querySelector('[data-id="agent:codex"]')!.classList.contains("focused"));
+  p.host(workspaces([MAIN]));
+  assert.equal(setup.hidden, true, "a ready agent has no warning button");
+});
+
+test("Connections text from the host is never HTML", () => {
+  const p = loadPanel();
+  p.host({ type: "connections", open: true, items: [{ id: "mcp:x:<img>", kind: "mcp", owner: "x", label: "<img src=x onerror=alert(1)>", state: "failed", detail: "<b>bold</b>", source: "s", checkedAt: Date.now() }] } as HostToPanel);
+  assert.equal(p.doc.querySelectorAll(".connections img, .connections b").length, 0);
+  assert.equal(p.doc.querySelector(".connection-label")!.textContent, "<img src=x onerror=alert(1)>");
 });

@@ -5,6 +5,7 @@
 import { type ApprovalCard, type HarnessView, type HostToPanel, type PanelToHost, type PlanEntryView, PREVIEW_FILE, type SendMode, type SkillView, type WorkspaceView } from "../ui/protocol";
 import { icon } from "./icons";
 import { attachmentChip, createAttachments } from "./attachments";
+import { createConnectionsView } from "./connections";
 import { MarkdownView } from "./markdown";
 import { createMenu } from "./menu";
 import { isPanelDrop } from "./dropData";
@@ -149,7 +150,11 @@ const sendMenu = createSendMenu((mode) => submit(mode));
 const sendGroup = el("div", "send-group");
 sendGroup.append(sendButton, sendMenu.button);
 const toolbar = el("div", "toolbar");
-toolbar.append(attachButton, agentChip, modelChip, el("span", "spacer"), sendGroup);
+// Shown next to the agent chip when the agent needs setup: opens Connections at that agent (the chip itself still switches agents).
+const setupButton = el("button", "chip setup");
+setupButton.hidden = true;
+setupButton.append(icon("warning", 14));
+toolbar.append(attachButton, setupButton, agentChip, modelChip, el("span", "spacer"), sendGroup);
 const context = el("div", "context-row");
 context.append(attachments.suggestion, attachments.chips);
 const inputWrap = el("div", "input-wrap");
@@ -185,7 +190,8 @@ const usage = el("span", "usage");
 const contextRing = createContextRing();
 const planBar = createPlanBar();
 footer.append(modeMenu.menu, workspaceChip, modeChip, jobsChip, el("span", "spacer"), contextRing.ring, usage);
-app.append(banner, logs, planBar.bar, composer, footer, anchoredMenu.menu, politeAnnouncer, urgentAnnouncer);
+const connectionsView = createConnectionsView(send);
+app.append(banner, logs, planBar.bar, composer, footer, anchoredMenu.menu, connectionsView.view, politeAnnouncer, urgentAnnouncer);
 
 const markdownActions = { openLink: (url: string) => send({ type: "openLink", url }), copy: (text: string) => send({ type: "copy", text }) };
 const panes = new Map<string, Pane>();
@@ -264,7 +270,11 @@ function render() {
   renderQueue(p);
 
   const harness = harnesses.find((h) => h.id === p?.view.harness);
-  agentChip.replaceChildren(...(harness && !harness.ready ? [icon("warning", 14)] : []), el("span", "chip-text", harness?.label ?? p?.view.harness ?? "Agent"), icon("chevron", 14));
+  agentChip.replaceChildren(el("span", "chip-text", harness?.label ?? p?.view.harness ?? "Agent"), icon("chevron", 14));
+  setupButton.hidden = !harness || harness.ready;
+  setupButton.title = harness?.problem ? `${harness.problem}\nOpen Connections` : "Open Connections";
+  setupButton.setAttribute("aria-label", `${harness?.label ?? "Agent"} needs setup: ${harness?.problem ?? ""}. Open Connections`);
+  setupButton.dataset.connection = `agent:${harness?.id.startsWith("deepagents") ? "deepagents" : (harness?.id ?? "")}`;
   agentChip.classList.toggle("not-ready", !!harness && !harness.ready);
   agentChip.setAttribute("aria-label", `Agent: ${harness?.label ?? ""}${harness?.problem ? `. ${harness.problem}` : ""}. Change agent`);
   agentChip.title = harness?.problem ?? "Change the agent for this workspace";
@@ -518,6 +528,7 @@ app.addEventListener("drop", (e) => {
   void attachments.onDrop(e);
 });
 agentChip.addEventListener("click", () => send({ type: "pickHarness" }));
+setupButton.addEventListener("click", () => connectionsView.show(setupButton.dataset.connection));
 modelChip.addEventListener("click", () => send({ type: "pickModel" }));
 workspaceChip.addEventListener("click", () => send({ type: "pickWorkspace" }));
 
@@ -606,6 +617,10 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       return;
     case "menuClosed":
       anchoredMenu.closed(m.id);
+      return;
+    case "connections":
+      connectionsView.update(m.items);
+      if (m.open || m.focus) connectionsView.show(m.focus);
       return;
   }
   const p = pane(m.workspace);

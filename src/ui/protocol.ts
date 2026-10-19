@@ -1,4 +1,5 @@
 // The only contract between the extension host and the panel webview. Both sides import this file.
+import type { ConnectionStatus, FixAction } from "../connections/types";
 
 export interface ApprovalCard {
   id: string;
@@ -201,6 +202,8 @@ export type HostToPanel =
   | { type: "menu"; id: string; title: string; anchor: MenuAnchor; items: MenuItemView[]; search: boolean }
   /** The host no longer needs an answer to this menu (another menu replaced it). */
   | { type: "menuClosed"; id: string }
+  /** Every connection's status (the Connections view); `focus`: open the view at this row. */
+  | { type: "connections"; items: ConnectionStatus[]; focus?: string; open?: boolean }
   /** A one-line note in the transcript, e.g. "Settings changed: the next message starts a new conversation." */
   | { type: "notice"; workspace: string; text: string };
 
@@ -231,6 +234,10 @@ export type PanelToHost =
   | { type: "showToolDiff"; workspace: string; id: string }
   /** A tool row's location: open that file (at that line). */
   | { type: "openLocation"; workspace: string; path: string; line?: number }
+  /** The Connections view opened (check everything now); `focus`: a row to show. */
+  | { type: "showConnections"; focus?: string }
+  /** A row's fix button: log in, set a key, check again, open settings, show sources. */
+  | { type: "connectionAction"; action: FixAction; target: string }
   | { type: "showDiff"; id: string }
   | { type: "setKey" }
   | { type: "openSettings" }
@@ -253,7 +260,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "menuPick", "showToolDiff", "openLocation"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

@@ -95,6 +95,7 @@ export async function loadMcpTools(servers: readonly McpServer[], gate: Approval
   const clients: MultiServerMCPClient[] = [];
   const tools: ReturnType<typeof gatedTool>[] = [];
   const failures: { server: McpServer; reason: string; signIn: boolean }[] = [];
+  const connected: { server: McpServer; tools: number }[] = [];
   for (const server of servers) {
     if (server.project && !(await opts.allowProjectServer(server))) {
       failures.push({ server, reason: "not allowed to start in this workspace", signIn: false });
@@ -113,6 +114,7 @@ export async function loadMcpTools(servers: readonly McpServer[], gate: Approval
       });
       const loaded = await Promise.race([client.getTools(), timeout]);
       tools.push(...loaded.map((t) => gatedTool(t, gate, "ask")));
+      connected.push({ server, tools: loaded.length });
       clients.push(client);
     } catch (err: any) {
       const signIn = needsSignIn(err);
@@ -124,5 +126,5 @@ export async function loadMcpTools(servers: readonly McpServer[], gate: Approval
       clearTimeout(timer);
     }
   }
-  return { tools, failures, close: async () => void (await Promise.all(clients.map((c) => c.close()))) };
+  return { tools, failures, connected, close: async () => void (await Promise.all(clients.map((c) => c.close()))) };
 }

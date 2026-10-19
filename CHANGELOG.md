@@ -4,6 +4,21 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- **kernl: Show connections**: every agent login, stored key, MCP server (claude.ai connectors included), and Claude Code plugin, with its state, what its source said, when it was checked, and a fix (Log in, Set key, Check now). Also in the panel's `...` menu, and as a warning button beside the agent chip.
+- Statuses stay current: at startup, when you come back to VS Code, when a login file or key changes, every 60 s while the panel is visible (`kernl.connections.pollSeconds`), and at once when a run hits a login error, a refused key, or an MCP server that didn't start.
+- Stored keys are checked with the provider's model list (`kernl.connections.checkKeys`); no tokens are spent.
+
+### Changed
+
+- Agent logins are checked the way kernl launches each agent (its binary and environment). Claude Code's expired login now reads "Login expired" instead of "not logged in".
+- Log in (Connections and Agent logins) runs the agent's own login command in a terminal and checks again every 5 s while it's open.
+
+### Fixed
+
+- An agent's status no longer flips to usable while it's being rechecked.
+
 ## [0.2.0] - 2026-10-19
 
 ### Added

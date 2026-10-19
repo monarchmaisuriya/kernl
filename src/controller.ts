@@ -3,9 +3,10 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import * as vscode from "vscode";
-import { CLI_AGENT_IDS, type CliAgentId, isCliAgentId } from "./acp/agents";
+import { CLI_AGENT_IDS, type CliAgentId, isCliAgentId, resolveLaunch } from "./acp/agents";
 import { resolveCommand } from "./acp/commands";
 import { AgentCredentials, CREDENTIAL_ENV, credentialEnv } from "./acp/credentials";
+import type { FixAction } from "./connections/types";
 import { loadNamedAgents } from "./agent/namedAgents";
 import type { InputChange } from "./agent/rebuildPolicy";
 import { listSkills } from "./agent/skills";
@@ -15,16 +16,22 @@ import { Checkpoints } from "./checkpoints";
 import type { GateRequest } from "./gate/approvalGate";
 import { parseRules } from "./gate/rules";
 import { GitHubApi, type GitHubKind, type GitHubSource, parseGitHubRemote } from "./github";
-import { cliReadiness, type Readiness, runQuiet } from "./harnesses";
 import { addCustomProvider, type KeyTargets, promptForApiKey, useDeepSeekForClaudeCode } from "./keyCommands";
 import { Logger, Redactor } from "./log";
 import { isPermissionMode } from "./modes";
 import { agentLogins, manageProviders, pickModel } from "./providerManager";
 import { KeyStore } from "./providers/keys";
-import { createChatModel, isProviderId, type ProviderId, resolveProvider, settingsProblem } from "./providers/registry";
+import { createChatModel, customProviders, isProviderId, type ProviderId, resolveProvider, settingsProblem } from "./providers/registry";
 import { SessionStore, transcriptText } from "./sessions";
 import { loadSources, sourceRoots, sourceSettings, sourcesReport } from "./sources";
 import { KernlToolServer } from "./mcp/kernlServer";
+import { type AgentCheckDeps, agentBinary, agentLabel, agentProblem, checkAgent, LOGIN_ARGS } from "./connections/agentChecks";
+import { checkKey, keyRequest } from "./connections/keyCheck";
+import { checkAgentMcp, checkClaudePlugins } from "./connections/listChecks";
+import { ConnectionMonitor } from "./connections/monitor";
+import { applySignal } from "./connections/signals";
+import { runStatusCommand } from "./connections/statusCommands";
+import { blocks, type ConnectionStatus } from "./connections/types";
 import { type McpServer, SIGN_IN_REASON, SignInRequired, settingServers } from "./mcp/servers";
 import { panelSnapshot, toApprovalCard } from "./ui/approvalCards";
 import { AgentPanel } from "./ui/panel";
@@ -94,6 +101,8 @@ export class Controller implements vscode.Disposable {
   private requests = new Map<string, { workspace: WorkspaceRuntime; request: GateRequest }>();
   private workspaces = new Map<string, WorkspaceRuntime>();
   private sharedBrowser: IntegratedBrowser | undefined;
+  /** Every connection's status (agents, keys, MCP servers, plugins); the agent chip, menu, and Connections view read it. */
+  readonly connections = new ConnectionMonitor();
   /** kernl's tools for the CLI agents (one MCP server for the window, one token per workspace). */
   private toolServer = new KernlToolServer((line) => this.log.info(line));
   /** Remote MCP servers that wanted a sign-in in this window (OAuth): kernl's agent skips them. */
@@ -138,7 +147,10 @@ export class Controller implements vscode.Disposable {
       userDir: userCustomisationDir(),
       sources: (root, trusted) => this.loadSources(root, trusted),
       allowProjectServer: (server) => this.allowProjectServer(server),
+      projectServerAllowed: (server) => this.projectServerAllowed(server),
       kernlTools: (tools) => this.toolServer.register(tools),
+      connectionSignal: (signal, harness) =>
+        applySignal(this.connections, signal, harness, { now: Date.now, provider: readSettings().provider, recheck: (id) => void this.refreshReadiness({ only: id }) }),
       signInRequired: this.signInRequired,
       apiKey: (provider) => (isProviderId(provider) ? this.keys.get(provider) : Promise.resolve(undefined)),
       agentEnv: async (id) => {
@@ -166,8 +178,14 @@ export class Controller implements vscode.Disposable {
         if (e.affectsConfiguration("kernl")) this.inputsChanged({ kind: "settings", affects: (s) => e.affectsConfiguration(s), mainHarness: readSettings().harness });
       }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => this.inputsChanged({ kind: "trust" })),
-      // Coming back to VS Code (e.g. after logging in to a CLI in a terminal): check again.
-      vscode.window.onDidChangeWindowState((s) => s.focused && void this.refreshReadiness()),
+      // Coming back to VS Code (e.g. after logging in to a CLI in a terminal elsewhere): check again, and
+      // believe the result over an earlier run's failure, since the user may have just fixed it.
+      vscode.window.onDidChangeWindowState((s) => s.focused && this.staleConnections(30_000) && void this.refreshReadiness({ force: true })),
+      // A key stored, changed, or removed in kernl: check logins and keys again.
+      context.secrets.onDidChange(() => void Promise.all([this.refreshReadiness({ changed: true }), this.checkKeys({ changed: true })])),
+      this.connections.onDidChange(() => this.connectionsChanged()),
+      ...this.watchCredentialFiles(),
+      this.pollConnections(),
       vscode.window.onDidChangeActiveTextEditor(() => this.postActiveFile()),
       ...this.watchCustomisationFiles(),
       vscode.workspace.onDidChangeWorkspaceFolders(() => void this.reloadWorkspaces()),
@@ -304,33 +322,261 @@ export class Controller implements vscode.Disposable {
 
   private harnessList(): HarnessView[] {
     const view = (h: { id: string; label: string }, group: HarnessView["group"]): HarnessView => {
-      const r = this.readiness.get(h.id.startsWith(NAMED_AGENT_PREFIX) ? "deepagents" : h.id) ?? { ready: true };
+      const r = this.readiness(h.id.startsWith(NAMED_AGENT_PREFIX) ? "deepagents" : h.id);
       return { ...h, group, ready: r.ready, problem: r.problem };
     };
     return [view(HARNESSES[0], "kernl"), ...this.namedHarnesses.map((h) => view(h, "kernl")), ...HARNESSES.slice(1).map((h) => view(h, "agents"))];
   }
 
-  /** Readiness of every harness, from the CLIs' own status commands and kernl's provider setup. */
-  private readiness = new Map<string, Readiness>();
+  /** Whether a harness can start, from its connection status: not ready only when it definitely can't. */
+  private readiness(harness: string): { ready: boolean; problem?: string } {
+    // kernl's agent also can't run when its provider refused the stored key.
+    const key = harness === "deepagents" ? this.connections.get(`key:${readSettings().provider}`) : undefined;
+    if (key && blocks(key)) return { ready: false, problem: `${key.detail}. Set a new key with Choose provider and model.` };
+    const s = this.connections.get(`agent:${harness}`);
+    if (!s || !blocks(s)) return { ready: true };
+    return { ready: false, problem: isCliAgentId(harness) ? agentProblem(harness, s) : s.detail };
+  }
 
-  private async refreshReadiness() {
-    const overrides = readSettings().agentCommands as Record<string, unknown>;
-    const deps = {
-      find: (c: string) => resolveCommand(c),
-      run: runQuiet,
+  /**
+   * Checks every agent's connection: kernl's provider setup, and each CLI agent's install and login,
+   * run the way kernl launches it. `force`: credentials changed, so a failure an earlier run reported
+   * no longer holds.
+   */
+  private async refreshReadiness(options: { force?: boolean; changed?: boolean; only?: CliAgentId } = {}) {
+    this.lastConnectionCheck = Date.now();
+    const deps = this.agentCheckDeps();
+    await Promise.all([
+      ...(options.only ? [] : [this.connections.check("agent:deepagents", async () => [await this.kernlAgentStatus()], options)]),
+      ...CLI_AGENT_IDS.filter((id) => !options.only || id === options.only).map((id) => this.connections.check(`agent:${id}`, async () => [await checkAgent(id, deps)], options)),
+    ]);
+  }
+
+  /** How the agents' status commands run: the agent's own binary and launch environment, in the shown folder. */
+  private agentCheckDeps(): AgentCheckDeps {
+    const overrides = readSettings().agentCommands as Record<string, any>;
+    return {
+      launch: async (id: CliAgentId) => resolveLaunch(id, overrides, await this.host.agentEnv(id)),
       hasStoredKey: async (id: CliAgentId) => !!(await this.agentCredentials.get(id)),
-      hasLaunchOverride: (id: CliAgentId) => overrides?.[id] !== undefined,
+      launchOverride: (id: CliAgentId) => (typeof overrides?.[id]?.command === "string" ? { command: overrides[id].command as string } : undefined),
+      find: (c: string, env: Record<string, string | undefined>) => resolveCommand(c, env as NodeJS.ProcessEnv),
+      run: runStatusCommand,
+      cwd: this.activeFolder()?.root,
+      now: Date.now,
     };
+  }
+
+  /**
+   * Everything the Connections view shows, checked now: logins, stored keys, every agent's MCP servers
+   * (this connects to them), and Claude Code's plugins. Run when the view opens and on Check now.
+   */
+  async checkConnections(options: { force?: boolean } = {}) {
+    const deps = this.agentCheckDeps();
+    await Promise.all([
+      this.refreshReadiness(options),
+      this.checkKeys(options),
+      ...CLI_AGENT_IDS.map((id) => this.connections.check(`mcp:${id}`, () => checkAgentMcp(id, deps), options)),
+      this.connections.check("plugin:claude-code", () => checkClaudePlugins(deps), options),
+      this.workspace(this.active)?.checkMcp() ?? Promise.resolve(),
+    ]);
+  }
+
+  /** Stored keys, asked of each provider's model list (no tokens spent); kernl.connections.checkKeys turns it off. */
+  private async checkKeys(options: { force?: boolean; changed?: boolean } = {}) {
+    if (!vscode.workspace.getConfiguration("kernl").get<boolean>("connections.checkKeys", true)) return;
+    const s = readSettings();
+    const custom = customProviders(s.customProviders);
+    const providers: { id: ProviderId; baseUrl?: string }[] = [
+      ...(["anthropic", "openai", "google", "deepseek"] as const).map((id) => ({ id })),
+      { id: "openai-compatible" as const, baseUrl: s.baseUrl || undefined },
+      ...("error" in custom ? [] : custom.map((c) => ({ id: `custom:${c.id}` as ProviderId, baseUrl: c.baseUrl }))),
+    ];
+    const status = (id: string, kind: ConnectionStatus["kind"], owner: string, label: string, p: { state: ConnectionStatus["state"]; detail: string }, target: string): ConnectionStatus => ({
+      id,
+      kind,
+      owner,
+      label,
+      ...p,
+      source: "key check (GET /models)",
+      checkedAt: Date.now(),
+      ...(p.state === "needsAction" ? { fix: { label: "Set key", action: "setKey" as const, target } } : {}),
+    });
+    await Promise.all([
+      ...providers.map((p) =>
+        this.connections.check(`key:${p.id}`, async () => {
+          const key = await this.keys.get(p.id);
+          const req = key && keyRequest(p.id, key, p.baseUrl);
+          if (!key) return [];
+          if (!req) return [status(`key:${p.id}`, "providerKey", "kernl", `${p.id} key`, { state: "unknown", detail: "Stored; no URL to check it against" }, p.id)];
+          return [status(`key:${p.id}`, "providerKey", "kernl", `${p.id} key`, await checkKey(req, p.id), p.id)];
+        }, options),
+      ),
+      ...(["claude-code", "codex"] as const).map((id) =>
+        this.connections.check(`agentKey:${id}`, async () => {
+          const stored = await this.agentCredentials.get(id);
+          if (!stored) return [];
+          const req = keyRequest(id === "claude-code" ? "anthropic" : "openai", stored.apiKey, stored.baseUrl);
+          const label = agentLabel(id);
+          return [status(`agentKey:${id}`, "agentKey", label, `${label} key`, req ? await checkKey(req, stored.baseUrl ? hostOf(stored.baseUrl) : label) : { state: "unknown", detail: "Stored" }, id)];
+        }, options),
+      ),
+    ]);
+  }
+
+  /** kernl's own agent: its provider settings and stored key. */
+  private async kernlAgentStatus(): Promise<ConnectionStatus> {
     const problem = await this.deepAgentsProblem();
-    this.readiness.set("deepagents", problem ? { ready: false, problem } : { ready: true });
-    for (const id of CLI_AGENT_IDS) this.readiness.set(id, await cliReadiness(id, deps));
-    this.postWorkspaces();
+    const s = readSettings();
+    return {
+      id: "agent:deepagents",
+      kind: "agent",
+      owner: "kernl",
+      label: "kernl",
+      state: problem ? "needsAction" : "ready",
+      detail: problem ?? `Uses ${s.provider}${s.model ? ` (${s.model})` : ""}`,
+      source: "kernl settings",
+      checkedAt: Date.now(),
+      ...(problem ? { fix: { label: "Choose provider and model", action: "setKey" as const, target: "deepagents" } } : {}),
+    };
+  }
+
+  private lastConnectionCheck = 0;
+  private staleConnections(ms: number) {
+    return Date.now() - this.lastConnectionCheck > ms;
+  }
+
+  /** Statuses changed: the agent chip and menu follow at once (several changes in a row are sent once). */
+  private connectionsTimer: NodeJS.Timeout | undefined;
+  private connectionsChanged() {
+    clearTimeout(this.connectionsTimer);
+    this.connectionsTimer = setTimeout(() => {
+      this.postWorkspaces();
+      this.panel.post({ type: "connections", items: this.connections.list() });
+    }, 50);
+  }
+
+  /** "kernl: Show connections": the panel, with the Connections view open (at `focus`, a row id). */
+  async showConnections(focus?: string) {
+    await this.panel.reveal();
+    this.panel.post({ type: "connections", items: this.connections.list(), open: true, focus });
+  }
+
+  /** A row's fix button in the Connections view. */
+  private async connectionAction(action: FixAction, target: string) {
+    switch (action) {
+      case "check":
+        return this.checkConnections({ force: true });
+      case "login":
+        if (target.startsWith("mcp:claude-code:")) return this.signInToClaudeMcp(target.slice("mcp:claude-code:".length));
+        return isCliAgentId(target) ? this.openLoginTerminal(target) : undefined;
+      case "setKey":
+        if (target === "deepagents") return this.pickModel();
+        if (isCliAgentId(target)) return this.agentLogins();
+        if (isProviderId(target)) {
+          const changed = await promptForApiKey(this.keyTargets(), target);
+          if (changed) this.inputsChanged({ kind: "keys", harnesses: changed });
+        }
+        return;
+      case "openSettings":
+        return this.openSettings();
+      case "showSources":
+        return this.showSources();
+    }
+  }
+
+  /**
+   * Log in: a terminal running the agent's own login (`claude auth login`, `codex login`, `opencode auth
+   * login`) with the binary and folder kernl launches, and never kernl's stored keys. kernl never sees
+   * the login. While the terminal is open the login is checked every 5 s (a keychain login changes no
+   * file kernl could watch), and once more when it closes.
+   */
+  private async openLoginTerminal(id: CliAgentId) {
+    const deps = this.agentCheckDeps();
+    const launch = await deps.launch(id);
+    if ("error" in launch) return void vscode.window.showWarningMessage(launch.error);
+    const binary = agentBinary(id, launch, deps.launchOverride(id), deps.find);
+    if (!binary) return void vscode.window.showWarningMessage(`${agentLabel(id)} starts with your own command (kernl.agentCommands); log it in the way that command expects.`);
+    const env = { ...launch.env };
+    for (const name of [CREDENTIAL_ENV[id]?.apiKey, CREDENTIAL_ENV[id]?.baseUrl]) if (name) delete env[name];
+    const terminal = vscode.window.createTerminal({ name: `kernl: log in to ${agentLabel(id)}`, shellPath: binary, shellArgs: LOGIN_ARGS[id], env, cwd: this.activeFolder()?.root });
+    terminal.show();
+    const started = Date.now();
+    const poll = setInterval(() => {
+      if (Date.now() - started > 5 * 60_000) return clearInterval(poll);
+      void this.refreshReadiness({ force: true, only: id }).then(() => {
+        if (this.connections.get(`agent:${id}`)?.state === "ready") clearInterval(poll);
+      });
+    }, 5_000);
+    const closed = vscode.window.onDidCloseTerminal((t) => {
+      if (t !== terminal) return;
+      closed.dispose();
+      clearInterval(poll);
+      void this.refreshReadiness({ changed: true, only: id });
+    });
+    this.disposables.push(closed, { dispose: () => clearInterval(poll) });
+  }
+
+  /** A Claude Code MCP server that needs a sign-in signs in inside Claude Code: open it, and say how. */
+  private async signInToClaudeMcp(server: string) {
+    const deps = this.agentCheckDeps();
+    const launch = await deps.launch("claude-code");
+    const binary = "error" in launch ? undefined : agentBinary("claude-code", launch, deps.launchOverride("claude-code"), deps.find);
+    if (!binary || "error" in launch) return void vscode.window.showWarningMessage("Claude Code isn't available to sign in from; check Agents in Connections.");
+    const terminal = vscode.window.createTerminal({ name: `kernl: sign in to ${server}`, shellPath: binary, env: launch.env, cwd: this.activeFolder()?.root });
+    terminal.show();
+    void vscode.window.showInformationMessage(`In Claude Code, type /mcp, choose "${server}", then Authenticate. kernl checks again when you close the terminal.`);
+    const closed = vscode.window.onDidCloseTerminal((t) => {
+      if (t !== terminal) return;
+      closed.dispose();
+      void this.checkConnections({ force: true });
+    });
+    this.disposables.push(closed);
+  }
+
+  /**
+   * Logins can change without any file kernl can watch (Claude Code keeps them in the macOS keychain),
+   * so logins are checked again every kernl.connections.pollSeconds while the panel is visible.
+   */
+  private pollConnections(): vscode.Disposable {
+    let timer: NodeJS.Timeout | undefined;
+    const schedule = () => {
+      clearTimeout(timer);
+      const seconds = vscode.workspace.getConfiguration("kernl").get<number>("connections.pollSeconds", 60);
+      if (!(seconds > 0)) return;
+      timer = setTimeout(() => {
+        if (this.panel.visible && this.staleConnections(seconds * 1000 - 1000)) void this.refreshReadiness();
+        schedule();
+      }, seconds * 1000);
+    };
+    schedule();
+    const settings = vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration("kernl.connections.pollSeconds") && schedule());
+    return { dispose: () => (clearTimeout(timer), settings.dispose()) };
+  }
+
+  /** The CLIs' own login and config files: a change (a login, a logout, a profile switch) is checked at once. */
+  private watchCredentialFiles(): vscode.Disposable[] {
+    const roots = sourceRoots();
+    let timer: NodeJS.Timeout | undefined;
+    const changed = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void this.refreshReadiness({ changed: true }), 500);
+    };
+    const watched: [string, string][] = [
+      [roots.claudeDir, "{.credentials.json,settings.json}"],
+      [dirname(roots.claudeJson), basename(roots.claudeJson)],
+      [roots.codexDir, "{auth.json,config.toml}"],
+      [join(roots.home, ".local", "share", "opencode"), "{auth.json,opencode.db}"],
+      [roots.opencodeDir, "{opencode.json,opencode.jsonc}"],
+    ];
+    const watchers = watched.map(([dir, glob]) => vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(dir), glob)));
+    for (const w of watchers) w.onDidChange(changed), w.onDidCreate(changed), w.onDidDelete(changed);
+    return [...watchers, { dispose: () => clearTimeout(timer) }];
   }
 
   /** The agent chip: kernl and its named agents first, then the CLI agents, each with what it needs. */
   private async pickHarness() {
-    // Readiness is kept current (startup, window focus, key and login changes); only the first menu waits for it.
-    if (this.readiness.size) void this.refreshReadiness();
+    // Statuses are kept current (startup, focus, the poll, file and key changes); only the first menu waits for them.
+    if (this.connections.get("agent:deepagents")) void this.refreshReadiness();
     else await this.refreshReadiness();
     const ws = this.workspace(this.active);
     if (!ws) return void vscode.window.showWarningMessage(this.noWorkspaceReason() ?? "kernl is still loading this window's folders.");
@@ -548,11 +794,12 @@ export class Controller implements vscode.Disposable {
   }
 
   async agentLogins() {
-    const overrides = readSettings().agentCommands as Record<string, unknown>;
     const shown = this.workspace(this.active);
+    await this.refreshReadiness({ force: true });
     const changed = await agentLogins(
       this.keyTargets(),
-      (id) => cliReadiness(id, { find: (c) => resolveCommand(c), run: runQuiet, hasStoredKey: async (a) => !!(await this.agentCredentials.get(a)), hasLaunchOverride: (a) => overrides?.[a] !== undefined }),
+      async (id) => this.readiness(id),
+      (id) => this.openLoginTerminal(id),
       shown ? (id) => this.setHarness(shown.id, id) : undefined,
     );
     if (changed) this.inputsChanged({ kind: "keys", harnesses: changed });
@@ -592,10 +839,15 @@ export class Controller implements vscode.Disposable {
    * once in this workspace. The answer is kept for that exact server: if its command or URL changes, kernl asks again.
    * "Not now" is kept until the window closes.
    */
+  private projectServerAllowed(server: McpServer): boolean {
+    const fingerprint = createHash("sha256").update(JSON.stringify(server.connection)).digest("hex");
+    return this.context.workspaceState.get(`kernl.allowedMcpServer.${server.name}`) === fingerprint;
+  }
+
   private async allowProjectServer(server: McpServer): Promise<boolean> {
     const key = `kernl.allowedMcpServer.${server.name}`;
     const fingerprint = createHash("sha256").update(JSON.stringify(server.connection)).digest("hex");
-    if (this.context.workspaceState.get(key) === fingerprint) return true;
+    if (this.projectServerAllowed(server)) return true;
     if (this.declinedServers.has(fingerprint)) return false;
     const c = server.connection;
     const what = "command" in c ? `runs the program ${c.command}` : `connects to ${hostOf(c.url)}`;
@@ -705,8 +957,10 @@ export class Controller implements vscode.Disposable {
         return;
       case "send": {
         const ws = this.workspace(m.workspace);
-        const r = ws && this.readiness.get(ws.harness);
-        // Only a definite "can't start" stops a message here; anything uncertain goes to the agent, which reports its own error.
+        // Only a definite "can't start" from a check stops a message here. Anything uncertain, and a failure an
+        // earlier run reported (the user may have fixed it since), goes to the agent, which reports its own error.
+        const checked = ws && this.connections.get(`agent:${ws.harness}`);
+        const r = ws && checked && checked.source !== "last run" ? this.readiness(ws.harness) : undefined;
         if (ws && r && !r.ready && isCliAgentId(ws.harness)) {
           this.panel.post({ type: "userMessage", workspace: ws.id, text: m.text });
           this.panel.post({ type: "finished", workspace: ws.id, reason: "error", message: `${r.problem} (Agent logins in the ... menu can help.)` });
@@ -761,6 +1015,11 @@ export class Controller implements vscode.Disposable {
         return this.openLocation(m.workspace, m.path, m.line);
       case "setKey":
         return this.setApiKey();
+      case "showConnections":
+        this.panel.post({ type: "connections", items: this.connections.list() });
+        return this.checkConnections();
+      case "connectionAction":
+        return this.connectionAction(m.action, m.target);
       case "openSettings":
         return this.openSettings();
       case "focus": {
@@ -926,7 +1185,9 @@ export class Controller implements vscode.Disposable {
     for (const ws of this.workspaces.values()) ws.inputsChanged(change);
     this.postWorkspaces();
     void this.postStatus();
-    void this.refreshReadiness();
+    // A change to how agents launch (kernl.agentCommands) or to their keys makes their last status stale.
+    const launchChanged = change.kind === "keys" || (change.kind === "settings" && change.affects("kernl.agentCommands"));
+    void this.refreshReadiness(launchChanged ? { changed: true } : {});
   }
 
   /** A different folder is open: start over with that folder's workspaces. */

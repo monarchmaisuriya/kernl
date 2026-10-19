@@ -4,7 +4,7 @@
   - `+` starts a new chat in the workspace you're looking at;
   - the branch icon creates a workspace;
   - the clock icon lists the workspace's conversations, kept across restarts;
-  - `...` holds Choose agent, Manage providers, Agent logins, settings, and Show loaded sources.
+  - `...` holds Choose agent, Manage providers, Agent logins, settings, Show connections, and Show loaded sources.
   - Every list (agent, model, workspace, attach, conversations, setup steps) opens in the panel next to the button that opened it, with a search box for long lists; Escape or a click outside closes it. From the Command Palette, with the panel hidden, VS Code's own list is used. Typed answers (keys, names) still use VS Code's input box.
 - **Composer:**
   - `+` attaches Files & Folders, another Conversation, a GitHub Issue, or a Pull Request;

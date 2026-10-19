@@ -13,6 +13,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("kernl.newWorkspace", () => controller.newWorkspace()),
     vscode.commands.registerCommand("kernl.openSettings", () => controller.openSettings()),
     vscode.commands.registerCommand("kernl.showSources", () => controller.showSources()),
+    vscode.commands.registerCommand("kernl.showConnections", () => controller.showConnections()),
     vscode.commands.registerCommand("kernl.manageProviders", () => controller.manageProviders()),
     vscode.commands.registerCommand("kernl.agentLogins", () => controller.agentLogins()),
     vscode.commands.registerCommand("kernl.pickHarness", () => controller.pickHarnessCommand()),

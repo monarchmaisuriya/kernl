@@ -30,7 +30,22 @@ export interface AcpRunnerOptions {
   sessionSetup?: () => Promise<SessionSetup>;
   /** A command the agent ran in its own shell (Codex), as its output streams: shown in a kernl terminal. */
   commandOutput?: (event: CommandOutputEvent) => void;
+  /** What a run learned about the agent's connections: a login it needs, its login status, an MCP server that failed to start, a run that worked. */
+  connection?: (signal: ConnectionSignal) => void;
+  /** How to log the agent in, said when it answers "authentication required" ("Run `claude auth login` in a terminal"). */
+  loginHint?: string;
 }
+
+/** ACP's "authentication required" (RequestError.authRequired): the agent can't run until the user logs in. */
+export const AUTH_REQUIRED = -32000;
+
+export type ConnectionSignal =
+  | { type: "authRequired"; message: string }
+  /** The adapter's `_auth/status_update` (claude-agent-acp, codex-acp): kind none, account, api_key, gateway, or external. */
+  | { type: "authStatus"; kind: string; label?: string }
+  /** codex-acp's `mcp__<server>__startup` tool call that failed. */
+  | { type: "mcpStartupFailed"; server: string; error: string }
+  | { type: "runSucceeded" };
 
 export interface SessionSetup {
   mcpServers: acp.McpServer[];
@@ -166,10 +181,15 @@ export class AcpRunner implements Runner {
       // Only our own Stop means "stopped": some agents (OpenCode) end the turn as "cancelled"
       // after the user rejects a permission request, which is a finished turn, not a Stop.
       if (result.stopReason === "cancelled" && !run.stopped) this.o.log?.(`${this.o.agentLabel}: turn ended as cancelled after a rejection`);
+      if (!run.stopped) this.o.connection?.({ type: "runSucceeded" });
       this.o.events.finished(run.stopped ? "stopped" : "done");
     } catch (err: any) {
       if (run.stopped) this.o.events.finished("stopped");
-      else this.o.events.finished("error", (await this.crashCause(err)) ?? `${this.o.agentLabel}: ${err?.message ?? String(err)}`);
+      else if (err?.code === AUTH_REQUIRED) {
+        const message = String(err?.message ?? "Authentication required");
+        this.o.connection?.({ type: "authRequired", message });
+        this.o.events.finished("error", `${this.o.agentLabel} needs you to log in (${message}).${this.o.loginHint ? ` ${this.o.loginHint}` : ""}`);
+      } else this.o.events.finished("error", (await this.crashCause(err)) ?? `${this.o.agentLabel}: ${err?.message ?? String(err)}`);
     } finally {
       this.active = undefined;
     }
@@ -388,6 +408,12 @@ export class AcpRunner implements Runner {
     if (u.status && !ended) call.status = String(u.status);
     if (Array.isArray(u.locations)) call.locations = u.locations.filter((l: any) => l?.path).map((l: any) => ({ path: String(l.path), line: typeof l.line === "number" ? l.line : undefined }));
     if (u.rawInput !== undefined) call.rawInput = u.rawInput;
+    // codex-acp reports an MCP server that failed to start as a tool call `mcp__<server>__startup`.
+    const startup = /^mcp__(.+)__startup$/.exec(call.title);
+    if (startup && u.status === "failed") {
+      const error = (u.content ?? []).map((c: any) => textOf(c)).filter(Boolean).join(" ").replace(/^\[codex-acp forwarded startup error\]\s*/, "");
+      this.o.connection?.({ type: "mcpStartupFailed", server: startup[1], error: error || "failed to start" });
+    }
     if (typeof u._meta?.claudeCode?.toolName === "string") call.toolName = u._meta.claudeCode.toolName;
     // kernl's own terminal tools are commands: the row shows the command like the agent's own shell.
     if ([call.toolName, call.title].some((n) => isKernlTool(n) && /(run_in_terminal|start_background_job)$/.test(n!))) call.kind = "execute";
@@ -484,6 +510,12 @@ export class AcpRunner implements Runner {
               this.o.log?.(`${this.o.agentLabel}: ignoring session update '${u.sessionUpdate}'`);
             }
         }
+      },
+      // The adapters' login status pushes (claude-agent-acp, codex-acp), sent as `_auth/status_update`.
+      extNotification: async (method, params) => {
+        if (method.replace(/^_/, "") !== "auth/status_update") return;
+        const status = (params as any)?.authStatus;
+        if (typeof status?.kind === "string") this.o.connection?.({ type: "authStatus", kind: status.kind, label: typeof status.label === "string" ? status.label : undefined });
       },
       readTextFile: async () => {
         throw new Error("This client does not provide file reads; the agent reads files itself");

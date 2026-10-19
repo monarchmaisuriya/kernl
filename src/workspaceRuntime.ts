@@ -22,8 +22,10 @@ import type { Rule } from "./gate/rules";
 import type { Logger } from "./log";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { KERNL_SERVER_NAME, type KernlServerAccess } from "./mcp/kernlServer";
-import { loadMcpTools, type McpServer, mergeServers, settingServers, type SignInRequired } from "./mcp/servers";
+import { loadMcpTools, type McpServer, mergeServers, SIGN_IN_REASON, settingServers, type SignInRequired } from "./mcp/servers";
 import type { LoadedSources } from "./sources";
+import { loginCommand } from "./connections/agentChecks";
+import type { RuntimeConnectionSignal } from "./connections/signals";
 import { createChatModel, type ProviderSettings, type ResolvedProvider, resolveProvider } from "./providers/registry";
 import { jobTerminal } from "./terminal/jobTerminal";
 import { CommandMirror } from "./terminal/mirror";
@@ -77,8 +79,12 @@ export interface RuntimeHost {
   sources(root: string, trusted: boolean): Promise<LoadedSources>;
   /** Asked before a project's MCP server first starts. */
   allowProjectServer(server: McpServer): Promise<boolean>;
+  /** Whether the user already allowed this project server (never asks). */
+  projectServerAllowed(server: McpServer): boolean;
   /** Remote MCP servers that wanted a sign-in in this window: skipped, and listed in the Sources view. */
   signInRequired: SignInRequired;
+  /** What a run learned about a connection: an agent's login, a provider's answer, kernl's MCP servers (see src/connections). */
+  connectionSignal(signal: RuntimeConnectionSignal, harness: string): void;
   /** Makes a workspace's tools reachable by its CLI agents (kernl's MCP server); the access holds until unregister. */
   kernlTools(tools: () => readonly StructuredToolInterface[]): Promise<KernlServerAccess & { unregister: () => void }>;
   /** The user's approval rules (user settings only), read on every gate decision. */
@@ -682,6 +688,7 @@ export class WorkspaceRuntime {
       toolImage: (id, image) => void this.savePreview(id, image),
       usage: (inputTokens, outputTokens) => this.post({ type: "usage", workspace: ws, inputTokens, outputTokens }),
       subagentText: (id, delta) => this.post({ type: "subagentText", workspace: ws, id, delta }),
+      providerAnswered: (result) => this.host.connectionSignal({ type: "provider", rejected: result.rejected }, this.harness),
       finished: (reason, message) => {
         this.lastFinish = reason;
         if (message) this.host.log.error(`[${this.label}] run ${reason}`, message);
@@ -720,6 +727,8 @@ export class WorkspaceRuntime {
         const headers = Object.entries(access.headers).map(([name, value]) => ({ name, value }));
         return { mcpServers: [{ type: "http" as const, name: KERNL_SERVER_NAME, url: access.url, headers }], meta: sessionMeta(spec.id, use) };
       },
+      connection: (signal) => this.host.connectionSignal(signal, spec.id),
+      loginHint: `Run \`${loginCommand(spec.id)}\` in a terminal, or use Log in in kernl: Show connections.`,
       commandOutput: (event) => (this.mirror ??= new CommandMirror(`${spec.label.replace(/ \(.*\)$/, "")}: ${this.label}`)).show(event),
     }));
   }
@@ -759,18 +768,46 @@ export class WorkspaceRuntime {
   /**
    * kernl.mcpServers, then the imported servers; one that can't connect is a notice, and the rest
    * still load. One that wants a sign-in (OAuth) is a log line, remembered for the window, and listed
-   * in the Sources view instead.
+   * in the Sources view instead. Every server's outcome goes to the connection monitor.
+   * `check`: for the Connections view's Check now: never asks to start a project server (one not
+   * allowed yet is listed as such), and posts no notices.
    */
-  private async loadMcp(s: ReturnType<RuntimeHost["providerSettings"]>, imported: LoadedSources["imports"]["mcpServers"]) {
+  private async loadMcp(s: ReturnType<RuntimeHost["providerSettings"]>, imported: LoadedSources["imports"]["mcpServers"], options: { check?: boolean } = {}) {
     const { servers } = mergeServers(settingServers(s.mcpServers), imported);
     const signIn = this.host.signInRequired;
-    const mcp = await loadMcpTools(servers.filter((server) => !signIn.has(server)), this.gate, { timeoutMs: s.mcpToolTimeoutSeconds * 1000, allowProjectServer: (server) => this.host.allowProjectServer(server), log: (line) => this.host.log.info(`[${this.label}] ${line}`) });
+    const allow = options.check ? async (server: McpServer) => this.host.projectServerAllowed(server) : (server: McpServer) => this.host.allowProjectServer(server);
+    const mcp = await loadMcpTools(servers.filter((server) => !signIn.has(server)), this.gate, { timeoutMs: s.mcpToolTimeoutSeconds * 1000, allowProjectServer: allow, log: (line) => this.host.log.info(`[${this.label}] ${line}`) });
+    this.host.connectionSignal(
+      {
+        type: "kernlMcp",
+        servers: [
+          ...mcp.connected.map((c) => ({ name: c.server.name, origin: c.server.origin, state: "ready" as const, detail: `Connected · ${c.tools} tool${c.tools === 1 ? "" : "s"}` })),
+          ...mcp.failures.map((f) => ({
+            name: f.server.name,
+            origin: f.server.origin,
+            state: f.signIn ? ("needsAction" as const) : f.reason === "not allowed to start in this workspace" ? ("off" as const) : ("failed" as const),
+            detail: f.reason === "not allowed to start in this workspace" && options.check ? "A project server: asks before it first starts" : f.reason,
+          })),
+          // Servers that wanted a sign-in earlier in this window aren't tried again; they stay listed.
+          ...servers.filter((server) => signIn.has(server)).map((server) => ({ name: server.name, origin: server.origin, state: "needsAction" as const, detail: SIGN_IN_REASON })),
+        ],
+      },
+      "deepagents",
+    );
     for (const f of mcp.failures) {
       this.host.log.info(`[${this.label}] MCP server ${f.server.name} (${f.server.origin}) not loaded: ${f.reason}`);
       if (f.signIn) signIn.add(f.server);
-      else this.post({ type: "notice", workspace: this.id, text: `The MCP server ${f.server.name} (${f.server.origin}) isn't available: ${f.reason}` });
+      else if (!options.check) this.post({ type: "notice", workspace: this.id, text: `The MCP server ${f.server.name} (${f.server.origin}) isn't available: ${f.reason}` });
     }
     return mcp;
+  }
+
+  /** For the Connections view: connects to kernl's MCP servers, reports each one, and closes them again. */
+  async checkMcp() {
+    if (!this.host.trusted()) return this.host.connectionSignal({ type: "kernlMcp", servers: [] }, "deepagents");
+    const { imports } = await this.host.sources(this.root, true);
+    const mcp = await this.loadMcp(this.host.providerSettings(), imports.mcpServers, { check: true });
+    await mcp.close();
   }
 
   private async buildDeepAgent(): Promise<BuiltParts> {

@@ -112,6 +112,11 @@
         "category": "kernl"
       },
       {
+        "command": "kernl.showConnections",
+        "title": "Show connections",
+        "category": "kernl"
+      },
+      {
         "command": "kernl.pickHarness",
         "title": "Choose agent",
         "category": "kernl"
@@ -467,6 +472,23 @@
             "markdownDescription": "How long one browser action may take before it fails (the next action reconnects)."
           }
         }
+      },
+      {
+        "title": "Connections",
+        "order": 10,
+        "properties": {
+          "kernl.connections.pollSeconds": {
+            "type": "number",
+            "default": 60,
+            "minimum": 0,
+            "markdownDescription": "While the kernl panel is visible, check the agents' logins again every this many seconds (Claude Code keeps its login in the macOS keychain, which kernl can't watch). `0` checks only at startup, when you come back to VS Code, and when a login file or key changes."
+          },
+          "kernl.connections.checkKeys": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Check stored API keys with the provider's model list (`GET /models`: no tokens spent) when a key changes and when the Connections view opens."
+          }
+        }
       }
     ],
     "menus": {
@@ -507,9 +529,14 @@
           "group": "3_settings@1"
         },
         {
-          "command": "kernl.showSources",
+          "command": "kernl.showConnections",
           "when": "view == kernl.panel",
           "group": "3_settings@2"
+        },
+        {
+          "command": "kernl.showSources",
+          "when": "view == kernl.panel",
+          "group": "3_settings@3"
         }
       ],
       "explorer/context": [

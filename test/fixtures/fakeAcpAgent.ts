@@ -11,6 +11,9 @@
 //   kernl-tools  calls the first tool of the "kernl" MCP server it was given (over HTTP, with its headers),
 //                asks permission for that call the way Codex does (title mcp.kernl.<tool>), and runs a
 //                command in its own shell, streaming its output only as terminal_output_delta (Codex)
+//   auth-required      answers the prompt with ACP's "authentication required" (-32000), as Claude Code and OpenCode do when logged out
+//   auth-status        pushes `_auth/status_update` (kind none), as claude-agent-acp and codex-acp do, then replies
+//   mcp-startup-failed reports an MCP server that didn't start as codex-acp does (tool call mcp__docs__startup, failed)
 // FAKE_MCP_HTTP=1 advertises HTTP MCP servers. Every new, loaded, or forked session logs the MCP servers and _meta it got.
 // FAKE_LOAD=1 advertises session/load; loading replays one old message (the client must drop it).
 // FAKE_FORK=1 advertises session/fork (unstable); a fork is "<id>-fork".
@@ -120,6 +123,15 @@ new acp.AgentSideConnection((conn) => ({
       mode = "plan";
       await send({ sessionUpdate: "config_option_update", configOptions: [modeOption()] });
       await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } });
+      return { stopReason: "end_turn" };
+    }
+    if (scenario === "auth-required") throw acp.RequestError.authRequired(undefined, "Please run /login");
+    if (scenario === "auth-status") {
+      await conn.extNotification("_auth/status_update", { authStatus: { kind: "none", label: "Not logged in" } });
+      return { stopReason: "end_turn" };
+    }
+    if (scenario === "mcp-startup-failed") {
+      await conn.sessionUpdate({ sessionId, update: { sessionUpdate: "tool_call", toolCallId: "mcp_startup.docs.1", title: "mcp__docs__startup", kind: "other", status: "failed", content: [{ type: "content", content: { type: "text", text: "[codex-acp forwarded startup error] MCP server `docs` failed to start: connection refused" } }] } as any });
       return { stopReason: "end_turn" };
     }
     if (scenario === "kernl-tools") {
