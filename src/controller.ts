@@ -25,7 +25,7 @@ import { createChatModel, isProviderId, type ProviderId, resolveProvider, settin
 import { SessionStore, transcriptText } from "./sessions";
 import { loadSources, sourceRoots, sourceSettings, sourcesReport } from "./sources";
 import { KernlToolServer } from "./mcp/kernlServer";
-import { type McpServer, settingServers } from "./mcp/servers";
+import { type McpServer, SIGN_IN_REASON, SignInRequired, settingServers } from "./mcp/servers";
 import { panelSnapshot, toApprovalCard } from "./ui/approvalCards";
 import { AgentPanel } from "./ui/panel";
 import { PanelPrompts } from "./ui/panelPrompts";
@@ -96,6 +96,8 @@ export class Controller implements vscode.Disposable {
   private sharedBrowser: IntegratedBrowser | undefined;
   /** kernl's tools for the CLI agents (one MCP server for the window, one token per workspace). */
   private toolServer = new KernlToolServer((line) => this.log.info(line));
+  /** Remote MCP servers that wanted a sign-in in this window (OAuth): kernl's agent skips them. */
+  private signInRequired = new SignInRequired();
   /** Project MCP servers the user said "not now" to in this window (by fingerprint). */
   private declinedServers = new Set<string>();
   private disposables: vscode.Disposable[] = [];
@@ -137,6 +139,7 @@ export class Controller implements vscode.Disposable {
       sources: (root, trusted) => this.loadSources(root, trusted),
       allowProjectServer: (server) => this.allowProjectServer(server),
       kernlTools: (tools) => this.toolServer.register(tools),
+      signInRequired: this.signInRequired,
       apiKey: (provider) => (isProviderId(provider) ? this.keys.get(provider) : Promise.resolve(undefined)),
       agentEnv: async (id) => {
         const env = credentialEnv(id, await this.agentCredentials.get(id), join(context.globalStorageUri.fsPath, "agent-config"));
@@ -619,6 +622,11 @@ export class Controller implements vscode.Disposable {
       own = settingServers(readSettings().mcpServers).map((s) => s.name);
     } catch (err: any) {
       imports.skipped.push({ item: "kernl.mcpServers", origin: "Settings", reason: err?.message ?? String(err) });
+    }
+    // Servers that wanted a sign-in when kernl's agent connected (OAuth servers Claude Code signs in to itself).
+    for (const s of this.signInRequired.list()) {
+      imports.mcpServers = imports.mcpServers.filter((i) => i.name !== s.name);
+      imports.skipped.push({ item: `MCP server ${s.name}`, origin: s.origin, reason: SIGN_IN_REASON });
     }
     const doc = await vscode.workspace.openTextDocument({ language: "markdown", content: sourcesReport(imports, { mcpServers: own }) });
     await vscode.window.showTextDocument(doc, { preview: true });

@@ -22,7 +22,7 @@ import type { Rule } from "./gate/rules";
 import type { Logger } from "./log";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { KERNL_SERVER_NAME, type KernlServerAccess } from "./mcp/kernlServer";
-import { loadMcpTools, type McpServer, mergeServers, settingServers } from "./mcp/servers";
+import { loadMcpTools, type McpServer, mergeServers, settingServers, type SignInRequired } from "./mcp/servers";
 import type { LoadedSources } from "./sources";
 import { createChatModel, type ProviderSettings, type ResolvedProvider, resolveProvider } from "./providers/registry";
 import { jobTerminal } from "./terminal/jobTerminal";
@@ -77,6 +77,8 @@ export interface RuntimeHost {
   sources(root: string, trusted: boolean): Promise<LoadedSources>;
   /** Asked before a project's MCP server first starts. */
   allowProjectServer(server: McpServer): Promise<boolean>;
+  /** Remote MCP servers that wanted a sign-in in this window: skipped, and listed in the Sources view. */
+  signInRequired: SignInRequired;
   /** Makes a workspace's tools reachable by its CLI agents (kernl's MCP server); the access holds until unregister. */
   kernlTools(tools: () => readonly StructuredToolInterface[]): Promise<KernlServerAccess & { unregister: () => void }>;
   /** The user's approval rules (user settings only), read on every gate decision. */
@@ -754,13 +756,19 @@ export class WorkspaceRuntime {
     return runner;
   }
 
-  /** kernl.mcpServers, then the imported servers; one that can't connect is a notice, and the rest still load. */
+  /**
+   * kernl.mcpServers, then the imported servers; one that can't connect is a notice, and the rest
+   * still load. One that wants a sign-in (OAuth) is a log line, remembered for the window, and listed
+   * in the Sources view instead.
+   */
   private async loadMcp(s: ReturnType<RuntimeHost["providerSettings"]>, imported: LoadedSources["imports"]["mcpServers"]) {
     const { servers } = mergeServers(settingServers(s.mcpServers), imported);
-    const mcp = await loadMcpTools(servers, this.gate, { timeoutMs: s.mcpToolTimeoutSeconds * 1000, allowProjectServer: (server) => this.host.allowProjectServer(server), log: (line) => this.host.log.info(`[${this.label}] ${line}`) });
+    const signIn = this.host.signInRequired;
+    const mcp = await loadMcpTools(servers.filter((server) => !signIn.has(server)), this.gate, { timeoutMs: s.mcpToolTimeoutSeconds * 1000, allowProjectServer: (server) => this.host.allowProjectServer(server), log: (line) => this.host.log.info(`[${this.label}] ${line}`) });
     for (const f of mcp.failures) {
-      this.post({ type: "notice", workspace: this.id, text: `The MCP server ${f.server} (${f.origin}) isn't available: ${f.reason}` });
-      this.host.log.info(`[${this.label}] MCP server ${f.server} (${f.origin}) not loaded: ${f.reason}`);
+      this.host.log.info(`[${this.label}] MCP server ${f.server.name} (${f.server.origin}) not loaded: ${f.reason}`);
+      if (f.signIn) signIn.add(f.server);
+      else this.post({ type: "notice", workspace: this.id, text: `The MCP server ${f.server.name} (${f.server.origin}) isn't available: ${f.reason}` });
     }
     return mcp;
   }

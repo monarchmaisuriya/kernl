@@ -65,7 +65,7 @@ kernl's own agent also uses what you set up for Claude Code, Codex, and OpenCode
 
 - **Project files load only in trusted workspaces.** A project's MCP server (`.mcp.json`, `.codex/config.toml`, a project `opencode.json`) also asks once before it first starts; the answer is kept for that exact command or URL.
 - **On the same name,** `kernl.mcpServers` wins, then Claude Code, then Codex, then OpenCode. Your `~/.kernl` and `.kernl` skills and agents win over the other agents'.
-- **Not used, and listed with the reason:** MCP servers that sign in with OAuth (use them in their own agent), servers whose headers come from a program, servers turned off in their agent, plugin hooks, and OpenCode instruction globs.
+- **Not used, and listed with the reason:** MCP servers that sign in with OAuth (use them in their own agent), servers whose headers come from a program, servers turned off in their agent, plugin hooks, and OpenCode instruction globs. A server whose config doesn't say it uses OAuth (Claude Code signs in to Notion, Slack, and the like by itself) is found when kernl's agent first connects and gets "sign in first": it's skipped without a notice until the window reloads, and the Sources view lists it.
 - **Claude Code workflows** (`.claude/workflows/*.js`, plugins' `workflows/`) need Claude Code's runtime: they're listed as "run in Claude Code". Pick Claude Code in the panel and run them as `/name`.
 - **kernl: Show loaded sources** (also in the panel's `...` menu) shows what loaded from where, and what didn't and why. It shows names and places only, never a header or environment value.
 

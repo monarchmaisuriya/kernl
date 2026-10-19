@@ -9,12 +9,22 @@ import * as vscode from "vscode";
 import { git } from "../../src/workspaces/git";
 
 const results: string[] = [];
+/**
+ * What the panel received and what was sent to the controller, with times (ms since the suite
+ * started). A failing check prints its own part (the last 40 lines), so a failure shows its order of events.
+ */
+const timeline: string[] = [];
+const started = Date.now();
+const at = () => String(Date.now() - started).padStart(7);
 async function check(name: string, fn: () => Promise<void>) {
+  const from = timeline.length;
+  timeline.push(`${at()} --- check: ${name.slice(0, 80)}`);
   try {
     await fn();
     results.push(`PASS  ${name}`);
   } catch (e: any) {
-    results.push(`FAIL  ${name}\n      ${String(e?.message ?? e).split("\n").filter((l) => l.trim()).slice(0, 8).join("\n      ")}`);
+    const lines = timeline.slice(from).slice(-40);
+    results.push(`FAIL  ${name}\n      ${String(e?.message ?? e).split("\n").filter((l) => l.trim()).slice(0, 8).join("\n      ")}\n      timeline (ms):\n        ${lines.join("\n        ")}`);
   }
 }
 
@@ -24,7 +34,19 @@ export async function run() {
   const ext = vscode.extensions.getExtension("local.kernl")!;
   const { testing } = await ext.activate();
   const delivered: any[] = [];
-  testing.onDidDeliver((m: any) => delivered.push(m));
+  testing.onDidDeliver((m: any) => {
+    delivered.push(m);
+    const states = m.type === "workspaces" ? ` ${m.items.map((w: any) => `${w.id}: ${w.harness} running=${w.running}`).join("; ")}` : "";
+    const detail = m.type === "userMessage" ? ` "${m.text}"` : m.type === "finished" ? ` ${m.reason}${m.message ? `: ${m.message}` : ""}` : m.type === "approval" ? ` ${m.card.title}` : m.type === "notice" ? ` ${m.text}` : states;
+    if (m.type !== "text" && m.type !== "thinking") timeline.push(`${at()} panel <- ${m.type}${m.workspace ? `(${m.workspace})` : ""}${detail}`);
+  });
+  // Every message the tests send as the panel, with the workspace's run state at that moment.
+  const receive = testing.receive;
+  testing.receive = (m: any) => {
+    const state = m.workspace ? JSON.stringify(testing.runState(m.workspace)) : "";
+    timeline.push(`${at()} panel -> ${m.type}${m.type === "send" ? ` "${m.text}"` : ""} ${state}`);
+    return receive(m);
+  };
   const waitFor = async (what: string, pred: (m: any) => boolean, from = 0, timeoutMs = 20_000) => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -133,6 +155,10 @@ export async function run() {
   });
 
   await config.update("agentCommands", undefined, vscode.ConfigurationTarget.Global);
+  // The whole timeline, pass or fail, for comparing a failing run with a passing one.
+  const timelineFile = process.env.KERNL_TIMELINE ?? join(tmpdir(), `kernl-timeline-multi-${started}.txt`);
+  writeFileSync(timelineFile, timeline.join("\n") + "\n");
+  console.log(`timeline: ${timelineFile}`);
   console.log("\n===== VSCODE RESULTS (multi-root) =====\n" + results.join("\n") + "\n==========================\n");
   if (results.some((r) => r.startsWith("FAIL"))) throw new Error("integration checks failed");
 }

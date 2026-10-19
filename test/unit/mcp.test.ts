@@ -5,7 +5,8 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { ApprovalGate } from "../../src/gate/approvalGate";
 import { toolRule } from "../../src/gate/gatedTool";
-import { loadMcpTools, mergeServers, type McpServer, settingServers } from "../../src/mcp/servers";
+import { createServer } from "node:http";
+import { loadMcpTools, mergeServers, type McpServer, needsSignIn, SignInRequired, settingServers } from "../../src/mcp/servers";
 
 const serverScript = resolve(__dirname, "mcpShoutServer.mjs");
 
@@ -55,7 +56,7 @@ test("a server that can't start is reported with its reason, and the others stil
   const { tools, failures, close } = await loadMcpTools([broken, shoutServer("shout", false)], askNever, { timeoutMs: 30_000, allowProjectServer: async () => true });
   try {
     assert.ok(tools.some((t) => t.name.includes("shout")), `tools loaded: ${tools.map((t) => t.name)}`);
-    assert.deepEqual(failures.map((f) => [f.server, f.origin]), [["broken", "Codex: ~/.codex/config.toml"]]);
+    assert.deepEqual(failures.map((f) => [f.server.name, f.server.origin, f.signIn]), [["broken", "Codex: ~/.codex/config.toml", false]]);
   } finally {
     await close();
   }
@@ -81,7 +82,7 @@ test("a project server starts only when allowed; your own servers never ask", as
   await close();
   assert.deepEqual(asked, ["theirs"]);
   assert.ok(tools.every((t) => !t.name.includes("theirs")) && tools.some((t) => t.name.includes("mine")));
-  assert.deepEqual(failures.map((f) => [f.server, f.reason]), [["theirs", "not allowed to start in this workspace"]]);
+  assert.deepEqual(failures.map((f) => [f.server.name, f.reason]), [["theirs", "not allowed to start in this workspace"]]);
 });
 
 test("kernl.mcpServers wins over an imported server of the same name, and the clash is reported", () => {
@@ -91,4 +92,30 @@ test("kernl.mcpServers wins over an imported server of the same name, and the cl
   ]);
   assert.deepEqual(servers.map((s) => [s.name, s.origin]), [["db", "kernl.mcpServers"], ["docs", "Codex: ~/.codex/config.toml"]]);
   assert.deepEqual(skipped, [{ item: "MCP server db", origin: "Claude Code: ~/.claude.json", reason: "same name as the one from kernl.mcpServers" }]);
+});
+
+test("a remote server that wants a sign-in (HTTP 401) is marked as needing OAuth, not reported as broken", async () => {
+  const http = createServer((_req, res) => res.writeHead(401, { "www-authenticate": 'Bearer resource_metadata="x"' }).end());
+  await new Promise<void>((r) => http.listen(0, "127.0.0.1", () => r()));
+  try {
+    const url = `http://127.0.0.1:${(http.address() as any).port}/mcp`;
+    const notion: McpServer = { name: "notion", origin: "Claude Code: ~/.claude.json", project: false, connection: { url, transport: "http" } };
+    const { tools, failures, close } = await loadMcpTools([notion], askNever, { timeoutMs: 10_000, allowProjectServer: async () => true });
+    await close();
+    assert.deepEqual(tools, []);
+    assert.deepEqual(failures.map((f) => [f.server.name, f.reason, f.signIn]), [["notion", "needs a sign-in (OAuth): use it in its own agent", true]]);
+    const seen = new SignInRequired();
+    seen.add(notion);
+    assert.equal(seen.has({ ...notion, origin: "elsewhere" }), true, "the same name and URL");
+    assert.equal(seen.has({ ...notion, connection: { url: `${url}/other`, transport: "http" } }), false);
+  } finally {
+    http.close();
+  }
+});
+
+test("only a 401 or UnauthorizedError, on the error or a cause, counts as needing a sign-in", () => {
+  assert.equal(needsSignIn(Object.assign(new Error("wrapped"), { cause: Object.assign(new Error("401"), { status: 401 }) })), true);
+  assert.equal(needsSignIn(Object.assign(new Error("x"), { name: "UnauthorizedError" })), true);
+  assert.equal(needsSignIn(Object.assign(new Error("forbidden"), { status: 403 })), false);
+  assert.equal(needsSignIn(new Error("ECONNREFUSED")), false);
 });

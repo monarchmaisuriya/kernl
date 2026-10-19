@@ -47,6 +47,37 @@ export function adapterConnection(c: McpConnection): Record<string, unknown> {
   return { transport: c.transport, url: c.url, headers: c.headers };
 }
 
+/** Whether a connection error means "sign in first": an HTTP 401 or the SDK's UnauthorizedError, on the error or its causes (the adapter wraps it). */
+export function needsSignIn(err: unknown): boolean {
+  let current: any = err;
+  for (let depth = 0; depth < 4 && current; depth++, current = current.cause) {
+    if (current.name === "UnauthorizedError" || current.status === 401) return true;
+  }
+  return false;
+}
+
+/**
+ * Remote servers that answered "sign in first" in this window (an OAuth server Claude Code signs in
+ * to itself). kernl's agent doesn't sign in to them: they aren't tried again until the window
+ * reloads, and the Sources view lists them.
+ */
+export class SignInRequired {
+  private servers = new Map<string, McpServer>();
+  private key = (s: McpServer) => `${s.name}\0${"url" in s.connection ? s.connection.url : s.connection.command}`;
+  has(s: McpServer) {
+    return this.servers.has(this.key(s));
+  }
+  add(s: McpServer) {
+    this.servers.set(this.key(s), s);
+  }
+  list(): McpServer[] {
+    return [...this.servers.values()];
+  }
+}
+
+/** Why an OAuth server isn't used, as the Sources view says it. */
+export const SIGN_IN_REASON = "needs a sign-in (OAuth): use it in its own agent";
+
 export interface McpLoadOptions {
   /** How long one tool call (and connecting to a server) may take. */
   timeoutMs: number;
@@ -57,15 +88,16 @@ export interface McpLoadOptions {
 
 /**
  * Connects to each server on its own, so one that fails or hangs doesn't stop the others. Every MCP
- * tool asks before it runs. Servers that can't connect are returned in `failures` with the reason.
+ * tool asks before it runs. Servers that can't connect are returned in `failures` with the reason;
+ * `signIn` marks one that wants a sign-in first.
  */
 export async function loadMcpTools(servers: readonly McpServer[], gate: ApprovalGate, opts: McpLoadOptions) {
   const clients: MultiServerMCPClient[] = [];
   const tools: ReturnType<typeof gatedTool>[] = [];
-  const failures: { server: string; origin: string; reason: string }[] = [];
+  const failures: { server: McpServer; reason: string; signIn: boolean }[] = [];
   for (const server of servers) {
     if (server.project && !(await opts.allowProjectServer(server))) {
-      failures.push({ server: server.name, origin: server.origin, reason: "not allowed to start in this workspace" });
+      failures.push({ server, reason: "not allowed to start in this workspace", signIn: false });
       continue;
     }
     const client = new MultiServerMCPClient({
@@ -83,7 +115,8 @@ export async function loadMcpTools(servers: readonly McpServer[], gate: Approval
       tools.push(...loaded.map((t) => gatedTool(t, gate, "ask")));
       clients.push(client);
     } catch (err: any) {
-      failures.push({ server: server.name, origin: server.origin, reason: err?.message ?? String(err) });
+      const signIn = needsSignIn(err);
+      failures.push({ server, reason: signIn ? SIGN_IN_REASON : (err?.message ?? String(err)), signIn });
       // Not awaited: for a server that never answered, the adapter's close waits for the connection
       // attempt to end (the MCP SDK's own request timeout), then stops the server.
       void client.close().catch((e: any) => opts.log?.(`MCP server ${server.name}: couldn't stop it: ${e?.message ?? e}`));

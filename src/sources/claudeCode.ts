@@ -99,8 +99,9 @@ export async function importClaudeCode(src: ClaudeCodeSource): Promise<Imports> 
   if (on.skills) {
     const skills = join(claudeDir, "skills");
     if (existsSync(skills)) out.skillFolders.push({ dir: skills, origin: user(skills), project: false });
-    // Skills synced from claude.ai sit one level deeper: skills/synced/<id>/<name>/SKILL.md.
-    for (const id of await entries(join(skills, "synced"))) out.skillFolders.push({ dir: join(skills, "synced", id), origin: user(join(skills, "synced", id)), project: false });
+    // Skills synced from claude.ai sit one level deeper: skills/synced/<id>/<name>/SKILL.md. Hidden
+    // folders there (.bucket-<id>) are Claude Code's staging copies of the same skills.
+    for (const id of (await entries(join(skills, "synced"))).filter((n) => !n.startsWith("."))) out.skillFolders.push({ dir: join(skills, "synced", id), origin: user(join(skills, "synced", id)), project: false });
     if (trusted && existsSync(join(projectRoot, ".claude/skills"))) out.skillFolders.push({ dir: join(projectRoot, ".claude/skills"), origin: projectOrigin(".claude/skills"), project: true });
   }
   if (on.commands) {

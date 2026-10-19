@@ -39,6 +39,8 @@ function fixture() {
   // Claude Code: user skills, a synced skill, commands (one in a subfolder), agents, CLAUDE.md, MCP servers.
   put(join(claudeDir, "skills/release-notes/SKILL.md"), skill("release-notes", "USER-SKILL"));
   put(join(claudeDir, "skills/synced/abc123/team-style/SKILL.md"), skill("team-style", "SYNCED-SKILL"));
+  // Claude Code's staging copy of a synced skill: hidden, never loaded.
+  put(join(claudeDir, "skills/synced/.bucket-abc123/team-style/SKILL.md"), skill("team-style", "STAGING-COPY"));
   put(join(claudeDir, "commands/review.md"), "---\ndescription: Review the diff\n---\nReview $ARGUMENTS carefully.\n");
   put(join(claudeDir, "commands/git/commit.md"), "Write a commit message.\n");
   put(join(claudeDir, "agents/helper.md"), "---\nname: helper\ndescription: Helps\n---\nHelp.\n");

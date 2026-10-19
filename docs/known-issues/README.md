@@ -10,6 +10,8 @@ Open limits, each with what happens, why, and what to do. Remove an entry when i
 
 ## Open in kernl
 
+- **Two integration checks have each timed out once, unexplained.** In the single-folder suite, a queued send didn't go out (once in 21 runs). In the multi-root suite, "a message sent in beta runs there" got no approval card within 20 s, where it normally takes about 140 ms (once in 7 runs; six reruns passed, alone and right after the single-folder suite). Both suites now save a timeline of panel messages and run state after every run, and a failing check prints its part, so the next failure shows where it stopped.
+
 - **Tool image previews are kept until "Delete conversations".** Each image (up to 5 MB) is saved next to its conversation; cutting a conversation back or forking it doesn't remove its images, and there's no total size limit. Delete conversations clears them all.
 - **A conversation reopened from history while one of its images is still being saved** could, in a window of milliseconds, be saved over by the older copy. Not seen in practice; noted from review.
 

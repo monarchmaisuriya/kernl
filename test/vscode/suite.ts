@@ -25,6 +25,7 @@ import { jobTerminal } from "../../src/terminal/jobTerminal";
 import { SessionStore } from "../../src/sessions";
 import { emptyImports } from "../../src/sources";
 import { KernlToolServer } from "../../src/mcp/kernlServer";
+import { SignInRequired } from "../../src/mcp/servers";
 import { outsideMessage } from "../../src/attachmentSearch";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -357,6 +358,7 @@ export async function run() {
       sources: async () => ({ imports: emptyImports() }),
       allowProjectServer: async () => false,
       kernlTools: (tools) => toolServer.register(tools),
+      signInRequired: new SignInRequired(),
       sessions: new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))),
       checkpoints: new Checkpoints(mkdtempSync(join(tmpdir(), "kernl-checkpoints-"))),
       apiKey: async () => undefined,
