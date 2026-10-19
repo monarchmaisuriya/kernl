@@ -1,43 +1,73 @@
-import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import type { AnyBackendProtocol } from "deepagents";
 import { ReadOnlyBackend } from "../backend/gatedBackend";
 import type { ApprovalGate } from "../gate/approvalGate";
+import type { SkillFolder } from "../sources/types";
 import type { SkillView } from "../ui/protocol";
 import { splitFrontmatter } from "./instructions";
 
 /**
- * Agent Skills (`<folder>/<skill>/SKILL.md`, the format Claude Code and Deep Agents share) from
- * the user's `~/.claude/skills` and `~/.kernl/skills`, then the project's `.claude/skills` and
- * `.kernl/skills` (trusted workspaces only). Later sources win on the same skill name. The
- * user's folders are outside the workspace, so they're mounted read-only under /user-skills/.
+ * Agent Skills (`<folder>/<skill>/SKILL.md`, the format Claude Code, Codex, OpenCode, and Deep
+ * Agents share). The folders, in order (a later folder wins on the same skill name):
+ *  1. other agents' user-level folders (the Sources settings: ~/.claude/skills, synced, plugins, ~/.agents/skills, ...),
+ *  2. Claude Code commands written as skills (kernl's storage),
+ *  3. your ~/.kernl/skills,
+ *  4. other agents' project folders (trusted workspaces only),
+ *  5. the project's .kernl/skills (trusted workspaces only).
+ * Folders outside the workspace are mounted read-only under /user-skills/.
  */
 export interface SkillSources {
   sources: string[];
   routes: Record<string, AnyBackendProtocol>;
 }
 
-const USER_ROUTES = { claude: "/user-skills/claude/", kernl: "/user-skills/kernl/" };
+export interface SkillPlaces {
+  userDir: string;
+  projectRoot: string;
+  trusted: boolean;
+  /** Skill folders from the other agents' setup (src/sources). */
+  imported: readonly SkillFolder[];
+  /** Claude Code commands written as skills, if any. */
+  commandsDir?: string;
+}
 
-export function skillSources(src: { userDir: string; claudeDir: string; projectRoot: string; trusted: boolean; gate: ApprovalGate }): SkillSources {
+/** Every skill folder, in precedence order, each with where the agent sees it. */
+function skillFolders(src: SkillPlaces): { dir: string; inProject: boolean }[] {
+  const folder = (dir: string) => ({ dir, inProject: isInside(src.projectRoot, dir) });
+  return [
+    ...src.imported.filter((f) => !f.project).map((f) => folder(f.dir)),
+    ...(src.commandsDir ? [folder(src.commandsDir)] : []),
+    folder(join(src.userDir, "skills")),
+    ...(src.trusted ? src.imported.filter((f) => f.project).map((f) => folder(f.dir)) : []),
+    ...(src.trusted ? [folder(join(src.projectRoot, ".kernl/skills"))] : []),
+  ];
+}
+
+function isInside(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return !!root && !!rel && !rel.startsWith("..") && !rel.startsWith(sep);
+}
+
+export function skillSources(src: SkillPlaces & { gate: ApprovalGate }): SkillSources {
   const sources: string[] = [];
   const routes: Record<string, AnyBackendProtocol> = {};
-  const userFolders: [keyof typeof USER_ROUTES, string][] = [["claude", join(src.claudeDir, "skills")], ["kernl", join(src.userDir, "skills")]];
-  for (const [kind, dir] of userFolders) {
-    if (!existsSync(dir)) continue;
-    routes[USER_ROUTES[kind]] = new ReadOnlyBackend(dir, src.gate, "Your skill folders are read-only to the agent.");
-    sources.push(USER_ROUTES[kind]);
-  }
-  if (src.trusted) for (const dir of [".claude/skills", ".kernl/skills"]) if (existsSync(join(src.projectRoot, dir))) sources.push(`/${dir}/`);
+  skillFolders(src).forEach(({ dir, inProject }, i) => {
+    if (inProject) {
+      sources.push(`/${relative(src.projectRoot, dir).split(sep).join("/")}/`);
+      return;
+    }
+    const route = `/user-skills/${i}/`;
+    routes[route] = new ReadOnlyBackend(dir, src.gate, "Skill folders outside the workspace are read-only to the agent.");
+    sources.push(route);
+  });
   return { sources, routes };
 }
 
 /** Skills by name for "/" in the composer: the same folders and precedence as skillSources, read from disk. */
-export async function listSkills(src: { userDir: string; claudeDir: string; projectRoot: string; trusted: boolean }): Promise<SkillView[]> {
-  const dirs = [join(src.claudeDir, "skills"), join(src.userDir, "skills"), ...(src.trusted ? [join(src.projectRoot, ".claude/skills"), join(src.projectRoot, ".kernl/skills")] : [])];
+export async function listSkills(src: SkillPlaces): Promise<SkillView[]> {
   const byName = new Map<string, SkillView>();
-  for (const dir of dirs) {
+  for (const { dir } of skillFolders(src)) {
     let names: string[] = [];
     try {
       names = await readdir(dir);

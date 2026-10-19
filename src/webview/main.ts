@@ -2,11 +2,12 @@
 // and page text are untrusted, so nothing is ever parsed as HTML (test/unit/webviewSafety.test.ts).
 // One transcript per workspace (the main folder plus worktree workspaces); the footer's workspace
 // chip switches between them. New chat and New workspace live in VS Code's view title bar.
-import type { ApprovalCard, HarnessView, HostToPanel, PanelToHost, PlanEntryView, SendMode, SkillView, WorkspaceView } from "../ui/protocol";
+import { type ApprovalCard, type HarnessView, type HostToPanel, type PanelToHost, type PlanEntryView, PREVIEW_FILE, type SendMode, type SkillView, type WorkspaceView } from "../ui/protocol";
 import { icon } from "./icons";
 import { attachmentChip, createAttachments } from "./attachments";
 import { MarkdownView } from "./markdown";
 import { createMenu } from "./menu";
+import { isPanelDrop } from "./dropData";
 import { createMessageActions, type MessageActions } from "./messageActions";
 import { createModeMenu, modeIcon } from "./modeMenu";
 import { createSendMenu, sendModeOf } from "./sendMenu";
@@ -204,6 +205,9 @@ function scroll() {
   if (p) p.log.scrollTop = p.log.scrollHeight;
 }
 
+/** Whether the transcript is scrolled to (or near) its end: new output follows only then. */
+const atEnd = (log: HTMLElement) => log.scrollHeight - log.scrollTop - log.clientHeight <= 40;
+
 /** Everything outside the transcripts: composer, chips, banner, empty state. */
 // While the agent works: "Working" (shimmering) and how long the run has taken, kept at the end of
 // the shown transcript. Only the label is a live region: the ticking time isn't read out.
@@ -370,6 +374,13 @@ function lastLine(container: HTMLElement): Element | null {
   return last === working ? last.previousElementSibling : last;
 }
 
+/** The group a row is in, if any, redrawn after that row changed (not every group in the conversation). */
+function refreshGroupOf(p: Pane, row: HTMLElement) {
+  const group = row.parentElement?.closest<HTMLElement>(".tool-group");
+  if (group) p.toolGroups.get(group)?.refresh();
+}
+
+/** Every group, when every row may have changed (the run ended). */
 function refreshGroups(p: Pane) {
   for (const group of p.toolGroups.values()) group.refresh();
 }
@@ -386,12 +397,6 @@ function addFork(p: Pane, actions: MessageActions, messageId: string) {
   actions.add("fork", "Fork from here", () => send({ type: "fork", workspace, messageId }));
 }
 
-/** A CLI agent copies its whole session to fork, so only the latest turn can be forked. */
-function cliForkLimit(p: Pane): string | undefined {
-  if (p.view.harness.startsWith("deepagents")) return undefined;
-  const label = (harnesses.find((h) => h.id === p.view.harness)?.label ?? "This agent").replace(/ \(experimental\)$/, "");
-  return `${label} can fork only from the last message`;
-}
 
 /** Under a finished reply: Copy (every block of the turn's reply) and Fork. */
 function addReplyActions(p: Pane, turn: { messageId?: string; text: string }) {
@@ -493,14 +498,19 @@ const showDropTarget = (on: boolean) => {
   composer.classList.toggle("drop-target", on);
 };
 app.addEventListener("dragenter", (e) => {
+  // Only drops the panel handles (files, VS Code items, links); moving text in the composer isn't one.
+  if (!isPanelDrop(e.dataTransfer?.types)) return;
   e.preventDefault();
   dragDepth++;
   showDropTarget(true);
 });
-app.addEventListener("dragleave", () => {
+app.addEventListener("dragleave", (e) => {
   dragDepth = Math.max(0, dragDepth - 1);
-  if (!dragDepth) showDropTarget(false);
+  // Leaving the panel itself (no element to go to) ends it whatever the count says.
+  if (!dragDepth || !e.relatedTarget) (dragDepth = 0), showDropTarget(false);
 });
+// A drag can end without a dragleave here (VS Code takes the panel's pointer events when Shift is released).
+window.addEventListener("dragend", () => ((dragDepth = 0), showDropTarget(false)));
 app.addEventListener("dragover", (e) => e.preventDefault());
 app.addEventListener("drop", (e) => {
   dragDepth = 0;
@@ -600,6 +610,9 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
   }
   const p = pane(m.workspace);
   if (!p) return;
+  // New output follows the transcript only if you're at its end (or you just sent): reading
+  // further up isn't interrupted.
+  const follow = m.workspace === active && (atEnd(p.log) || m.type === "userMessage");
   // Thinking ends when anything else from the agent (or the end of the run) arrives.
   if (p.thinking && m.type !== "thinking" && m.type !== "usage" && m.type !== "context" && m.type !== "jobs" && m.type !== "commands") {
     p.thinking.done();
@@ -628,7 +641,8 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
         addFork(p, actions, m.id);
       }
       // A CLI agent can't fork earlier turns any more.
-      const limit = cliForkLimit(p);
+      // The host says when only the latest turn can fork (a CLI agent copies its whole conversation).
+      const limit = p.view.forkLimit;
       if (limit) for (const earlier of p.messageActions.values()) if (earlier !== actions) earlier.setUnavailable("fork", limit);
       for (const reply of p.replyActions) reply.setUnavailable("fork", limit);
       message.append(bubble, actions.row);
@@ -684,7 +698,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
           row.remove();
           placeToolRow(p, container, row, quiet);
         }
-        refreshGroups(p);
+        refreshGroupOf(p, row);
         break;
       }
       if (m.name === "sequential_thinking") {
@@ -743,14 +757,15 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       if (tool) tool.setResult(m.output, m.failed === true);
       else if (row) row.append(el("pre", "result", m.output));
       else p.log.append(el("pre", "result", `${m.name}\n${m.output}`));
-      refreshGroups(p);
+      if (row) refreshGroupOf(p, row);
       break;
     }
     case "toolPreview": {
       // Only a saved preview's own name (conversation/call-id.ext) is accepted, under the host's previews folder.
-      if (!status?.previewBase || !/^[\w-]+\/[\w-]+\.(png|jpg|gif|webp)$/.test(m.file)) break;
+      if (!status?.previewBase || !PREVIEW_FILE.test(m.file)) break;
       p.tools.get(m.id)?.addImage(`${status.previewBase}/${m.file}`);
-      refreshGroups(p);
+      const shown = p.toolRows.get(m.id);
+      if (shown) refreshGroupOf(p, shown);
       break;
     }
     case "usage":
@@ -795,7 +810,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       break;
   }
   render();
-  if (m.workspace === active) scroll();
+  if (follow) scroll();
 });
 
 render();

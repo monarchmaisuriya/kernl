@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { AcpRunner } from "./acp/acpRunner";
-import { CLI_AGENTS, type CliAgentId, isCliAgentId, resolveLaunch } from "./acp/agents";
+import { CLI_AGENTS, type CliAgentId, isCliAgentId, type KernlToolUse, resolveLaunch, sessionMeta } from "./acp/agents";
 import { AgentLifecycle, type BuiltParts } from "./agent/agentLifecycle";
 import { buildAgent } from "./agent/createAgent";
 import { assembleInstructions } from "./agent/instructions";
@@ -20,10 +20,16 @@ import { ApprovalGate, type GateRequest } from "./gate/approvalGate";
 import { PendingApprovals } from "./gate/pendingApprovals";
 import type { Rule } from "./gate/rules";
 import type { Logger } from "./log";
-import { loadMcpTools } from "./mcp/servers";
+import type { StructuredToolInterface } from "@langchain/core/tools";
+import { KERNL_SERVER_NAME, type KernlServerAccess } from "./mcp/kernlServer";
+import { loadMcpTools, type McpServer, mergeServers, settingServers } from "./mcp/servers";
+import type { LoadedSources } from "./sources";
 import { createChatModel, type ProviderSettings, type ResolvedProvider, resolveProvider } from "./providers/registry";
 import { jobTerminal } from "./terminal/jobTerminal";
+import { CommandMirror } from "./terminal/mirror";
 import { TerminalRunner } from "./terminal/runner";
+import { runInTerminalTool } from "./terminal/tool";
+import { gatedTool } from "./gate/gatedTool";
 import type { Attachment, HostToPanel, SendMode, WorkspaceView } from "./ui/protocol";
 import type { Checkpoints } from "./checkpoints";
 import { cutHistory, type QueuedMessage, type SessionRecord, type SessionStore, type TranscriptEvent } from "./sessions";
@@ -55,13 +61,24 @@ export interface RuntimeHost {
   closeApproval(id: string): void;
   /** Why Deep Agents can't start (settings, key), or undefined. */
   deepAgentsProblem(): Promise<string | undefined>;
-  providerSettings(): ProviderSettings & { mcpServers: unknown; agentCommands: unknown; sequentialThinking?: boolean };
+  providerSettings(): ProviderSettings & {
+    mcpServers: unknown;
+    mcpToolTimeoutSeconds: number;
+    agentCommands: unknown;
+    sequentialThinking?: boolean;
+    terminal: { cliAgents: "kernl" | "agent"; outputLimit: number };
+    browser: { cliAgents: boolean; timeoutSeconds: number };
+  };
   sessions: SessionStore;
   checkpoints: Checkpoints;
   /** Where the user's own customisation lives (~/.kernl): AGENTS.md, agents/, skills/. */
   userDir: string;
-  /** Claude Code's config folder (CLAUDE_CONFIG_DIR or ~/.claude): agents/ and skills/ are read from it. */
-  claudeDir: string;
+  /** What kernl's own agent reuses from Claude Code, Codex, and OpenCode for a folder (the Sources settings). */
+  sources(root: string, trusted: boolean): Promise<LoadedSources>;
+  /** Asked before a project's MCP server first starts. */
+  allowProjectServer(server: McpServer): Promise<boolean>;
+  /** Makes a workspace's tools reachable by its CLI agents (kernl's MCP server); the access holds until unregister. */
+  kernlTools(tools: () => readonly StructuredToolInterface[]): Promise<KernlServerAccess & { unregister: () => void }>;
   /** The user's approval rules (user settings only), read on every gate decision. */
   approvalRules(): readonly Rule[];
   apiKey(provider: string): Promise<string | undefined>;
@@ -98,6 +115,12 @@ export class WorkspaceRuntime {
   private creating: Promise<Runner> | undefined;
   private lifecycle: AgentLifecycle | undefined;
   private terminal: TerminalRunner | undefined;
+  /** Commands a CLI agent runs in its own shell (Codex), shown read-only. */
+  private mirror: CommandMirror | undefined;
+  /** This workspace's tools on kernl's MCP server, for its CLI agents. */
+  private toolAccess: Promise<KernlServerAccess & { unregister: () => void }> | undefined;
+  /** The gate for kernl's tools when a CLI agent calls them: the agent's Bypass mode skips the card; every other mode asks (deny rules always apply). */
+  private readonly toolGate: ApprovalGate;
   /** Inputs changed during a run; rebuild once the run ends (never interrupt it). */
   private staleHarness: string | undefined;
   /** Messages to send after the current run, oldest first; also kept in the session store. */
@@ -138,15 +161,21 @@ export class WorkspaceRuntime {
       mode: () => (isCliAgentId(this.harness) ? "ask" : this.permissionMode),
       refusedInPlan: (request) => this.post({ type: "notice", workspace: this.id, text: `Plan mode: refused ${request.kind === "execute" ? `running ${request.command}` : request.kind === "edit" || request.kind === "write" || request.kind === "delete" ? `changing ${request.path}` : "a change"}. Switch modes to make changes.` }),
     });
+    this.toolGate = new ApprovalGate(this.approvals, {
+      rules: () => host.approvalRules(),
+      denied: (_request, rule) => this.post({ type: "notice", workspace: this.id, text: `Refused by your approval rule deny: ${rule}` }),
+      mode: () => (this.permissionMode === "bypass" ? "bypass" : "ask"),
+    });
+  }
+
+  /** Each part of "running" (the integration tests' failure timeline reads them), and the queue. */
+  runState() {
+    return { starting: this.starting, creating: this.creating !== undefined, runner: this.runner?.running ?? false, queue: this.queue.map((q) => q.text), queuePaused: this.queuePaused };
   }
 
   get running() {
-    return this.starting || this.creating !== undefined || (this.runner?.running ?? false);
-  }
-
-  /** Test seam (read-only): each part of `running`, and the queue, for the integration tests' failure timeline. */
-  runState() {
-    return { starting: this.starting, creating: this.creating !== undefined, runner: this.runner?.running ?? false, queue: this.queue.map((q) => q.text), queuePaused: this.queuePaused };
+    const s = this.runState();
+    return s.starting || s.creating || s.runner;
   }
 
   view(): WorkspaceView {
@@ -154,7 +183,13 @@ export class WorkspaceRuntime {
     const disclosure = modes[this.permissionMode] ?? modes.ask!;
     const queue = this.queue.map((q) => ({ id: q.id, text: q.text, attachments: q.attachments.length }));
     const modeList = PERMISSION_MODES.filter((m) => modes[m]).map((m) => ({ id: m, label: MODE_INFO[m].label, icon: MODE_INFO[m].icon, description: modes[m]! }));
-    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused, mode: this.permissionMode, modes: modeList };
+    const forkLimit = this.forkLimit();
+    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused, mode: this.permissionMode, modes: modeList, ...(forkLimit ? { forkLimit } : {}) };
+  }
+
+  /** A CLI agent copies its whole session to fork (ACP session/fork), so only the latest turn can fork. */
+  private forkLimit(): string | undefined {
+    return isCliAgentId(this.harness) ? `${CLI_AGENTS[this.harness].label.replace(/ \(experimental\)$/, "")} can fork only from the last message` : undefined;
   }
 
   /** The current agent's supported modes, each with what it means for this agent. */
@@ -486,7 +521,7 @@ export class WorkspaceRuntime {
     let history: unknown;
     if (isCliAgentId(this.harness)) {
       const label = CLI_AGENTS[this.harness].label;
-      if (nextUser >= 0) throw new Error(`${label} can only fork its whole conversation: use Fork on the last message.`);
+      if (nextUser >= 0) throw new Error(`${this.forkLimit()}: it copies its whole conversation.`);
       history = await this.runner?.forkSession?.();
       if (history === undefined) throw new Error(`${label} can't fork conversations${this.runner ? "" : " yet (send a message first)"}.`);
     } else {
@@ -558,7 +593,9 @@ export class WorkspaceRuntime {
     this.reset();
     this.approvals.denyAll();
     this.terminal?.dispose();
+    this.mirror?.dispose();
     this.jobs?.dispose();
+    void this.toolAccess?.then((a) => a.unregister());
   }
 
   /** Background jobs, for the footer's jobs menu. */
@@ -661,7 +698,9 @@ export class WorkspaceRuntime {
     if (!this.host.trusted()) {
       throw new Error(`${spec.label} can't run in Restricted Mode: its read-only limits can't be enforced on an external agent. Trust the workspace, or use Deep Agents.`);
     }
-    const launch = resolveLaunch(spec.id, this.host.providerSettings().agentCommands, await this.host.agentEnv(spec.id), this.permissionMode);
+    const settings = this.host.providerSettings();
+    const use: KernlToolUse = { tools: settings.terminal.cliAgents === "kernl" || settings.browser.cliAgents, terminal: settings.terminal.cliAgents === "kernl" };
+    const launch = resolveLaunch(spec.id, settings.agentCommands, await this.host.agentEnv(spec.id), this.permissionMode, use);
     if ("error" in launch) throw new Error(launch.error);
     return this.withHistory(new AcpRunner({
       notice: (text) => this.post({ type: "notice", workspace: this.id, text }),
@@ -673,13 +712,57 @@ export class WorkspaceRuntime {
       events: this.events(),
       onStop: () => this.approvals.denyAll(),
       log: (line) => this.host.log.info(line),
+      sessionSetup: async () => {
+        if (!use.tools) return { mcpServers: [] };
+        const access = await (this.toolAccess ??= this.host.kernlTools(() => this.cliAgentTools()));
+        const headers = Object.entries(access.headers).map(([name, value]) => ({ name, value }));
+        return { mcpServers: [{ type: "http" as const, name: KERNL_SERVER_NAME, url: access.url, headers }], meta: sessionMeta(spec.id, use) };
+      },
+      commandOutput: (event) => (this.mirror ??= new CommandMirror(`${spec.label.replace(/ \(.*\)$/, "")}: ${this.label}`)).show(event),
     }));
+  }
+
+  /** The kernl terminal for this workspace: one visible VS Code terminal that runs the agents' commands. */
+  private kernlTerminal(): TerminalRunner {
+    this.terminal ??= new TerminalRunner({
+      cwd: this.root,
+      // A single folder's is "kernl"; each folder of a multi-root window and each worktree gets its own name.
+      name: this.id === "main" ? "kernl" : `kernl: ${this.label}`,
+      currentSignal: () => (this.runner as AgentSession | undefined)?.signal,
+      outputLimit: () => this.host.providerSettings().terminal.outputLimit,
+      onShellIntegrationMissing: (message) =>
+        void vscode.window.showWarningMessage(message, "Open setting").then((pick) => pick && vscode.commands.executeCommand("workbench.action.openSettings", "terminal.integrated.shellIntegration.enabled")),
+    });
+    return this.terminal;
+  }
+
+  /** kernl's tools for this workspace's CLI agent (Terminal and Browser settings), read on every request so a settings change applies at once. */
+  private cliAgentTools(): StructuredToolInterface[] {
+    const s = this.host.providerSettings();
+    const tools: StructuredToolInterface[] = [];
+    if (s.terminal.cliAgents === "kernl") {
+      tools.push(gatedTool(runInTerminalTool(this.toolGate, (command, signal) => this.kernlTerminal().run(command, signal)) as any, this.toolGate, "allow"));
+      tools.push(...jobTools(this.backgroundJobs(), this.toolGate));
+    }
+    if (s.browser.cliAgents) tools.push(...browserTools(this.host.browser(), this.toolGate));
+    return tools;
   }
 
   private withHistory<R extends Runner>(runner: R): R {
     if (this.pendingHistory !== undefined) runner.newThread(this.pendingHistory);
     this.pendingHistory = undefined;
     return runner;
+  }
+
+  /** kernl.mcpServers, then the imported servers; one that can't connect is a notice, and the rest still load. */
+  private async loadMcp(s: ReturnType<RuntimeHost["providerSettings"]>, imported: LoadedSources["imports"]["mcpServers"]) {
+    const { servers } = mergeServers(settingServers(s.mcpServers), imported);
+    const mcp = await loadMcpTools(servers, this.gate, { timeoutMs: s.mcpToolTimeoutSeconds * 1000, allowProjectServer: (server) => this.host.allowProjectServer(server), log: (line) => this.host.log.info(`[${this.label}] ${line}`) });
+    for (const f of mcp.failures) {
+      this.post({ type: "notice", workspace: this.id, text: `The MCP server ${f.server} (${f.origin}) isn't available: ${f.reason}` });
+      this.host.log.info(`[${this.label}] MCP server ${f.server} (${f.origin}) not loaded: ${f.reason}`);
+    }
+    return mcp;
   }
 
   private async buildDeepAgent(): Promise<BuiltParts> {
@@ -689,9 +772,10 @@ export class WorkspaceRuntime {
     const apiKey = await this.host.apiKey(s.provider);
     const model = createChatModel(s, apiKey);
     const trusted = this.host.trusted();
-    const instructions = await assembleInstructions({ userDir: this.host.userDir, projectRoot: this.root, trusted });
-    const named = await loadNamedAgents({ userDir: this.host.userDir, claudeDir: this.host.claudeDir, projectRoot: this.root, trusted });
-    const skills = skillSources({ userDir: this.host.userDir, claudeDir: this.host.claudeDir, projectRoot: this.root, trusted, gate: this.gate });
+    const { imports, commandsDir } = await this.host.sources(this.root, trusted);
+    const instructions = await assembleInstructions({ userDir: this.host.userDir, projectRoot: this.root, trusted, imported: imports.instructions });
+    const named = await loadNamedAgents({ userDir: this.host.userDir, claudeFolders: imports.agentFolders, projectRoot: this.root, trusted });
+    const skills = skillSources({ userDir: this.host.userDir, imported: imports.skillFolders, commandsDir, projectRoot: this.root, trusted, gate: this.gate });
     for (const p of [...instructions.problems, ...named.problems]) this.post({ type: "notice", workspace: this.id, text: `Skipped a customisation file: ${p}` });
     const selected = this.harness.startsWith(NAMED_AGENT_PREFIX) ? named.agents.find((a) => NAMED_AGENT_PREFIX + a.name === this.harness) : undefined;
     if (this.harness.startsWith(NAMED_AGENT_PREFIX) && !selected) {
@@ -700,7 +784,7 @@ export class WorkspaceRuntime {
     const modelFor = (a: NamedAgent) => (a.model ? createChatModel({ ...s, model: a.model }, apiKey) : model);
     // Restricted Mode: read-only backend, no browser or MCP tools, only the user's own agents.
     const browser = trusted ? browserTools(this.host.browser(), this.gate) : [];
-    const mcp = trusted ? await loadMcpTools(s.mcpServers, this.gate) : { tools: [], close: async () => {} };
+    const mcp = trusted ? await this.loadMcp(s, imports.mcpServers) : { tools: [], close: async () => {} };
     const present = { browser: browser.map((t) => t.name), mcp: mcp.tools.map((t) => t.name) };
     // Built-in delegates (explorer, reviewer) unless a user or project agent takes the name.
     const delegates = [...BUILT_IN_AGENTS.filter((b) => !named.agents.some((a) => a.name === b.name)), ...named.agents];
@@ -720,15 +804,9 @@ export class WorkspaceRuntime {
       const agent = buildAgent({ ...common, workspaceBackend: new ReadOnlyBackend(this.root, this.gate), tools: thinking, loadProjectRules: false });
       return { agent, close: async () => {} };
     }
-    this.terminal ??= new TerminalRunner({
-      cwd: this.root,
-      name: this.info ? `kernl: ${this.label}` : "kernl",
-      currentSignal: () => (this.runner as AgentSession | undefined)?.signal,
-      onShellIntegrationMissing: (message) => void vscode.window.showWarningMessage(message),
-    });
     const agent = buildAgent({
       ...common,
-      workspaceBackend: new GatedBackend(this.root, this.gate, new VscodeWorkspaceFiles(), this.terminal.run),
+      workspaceBackend: new GatedBackend(this.root, this.gate, new VscodeWorkspaceFiles(), this.kernlTerminal().run),
       tools: [...thinking, ...jobTools(this.backgroundJobs(), this.gate), ...browser, ...mcp.tools],
       loadProjectRules: true,
     });

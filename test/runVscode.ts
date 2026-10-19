@@ -14,6 +14,9 @@ const workspace = mkdtempSync(join(tmpdir(), "kernl-vscode-ws-"));
 process.env.KERNL_USER_DIR = mkdtempSync(join(tmpdir(), "kernl-vscode-userdir-"));
 // Claude Code's config folder too (agents/ and skills/ are read from it).
 process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "kernl-vscode-claudedir-"));
+// Codex's and OpenCode's config folders (MCP servers, skills, instructions are imported from them).
+process.env.CODEX_HOME = mkdtempSync(join(tmpdir(), "kernl-vscode-codexdir-"));
+process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "kernl-vscode-configdir-"));
 
 // The workspace is a git repo with one commit, so the panel tests can create worktree workspaces from Main.
 const git = (...args: string[]) => execFileSync("git", args, { cwd: workspace, stdio: "ignore" });

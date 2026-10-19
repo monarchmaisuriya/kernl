@@ -32,7 +32,20 @@
         "kernl.agentCommands",
         "kernl.approvals.allow",
         "kernl.approvals.ask",
-        "kernl.approvals.deny"
+        "kernl.approvals.deny",
+        "kernl.sources.claudeCode.skills",
+        "kernl.sources.claudeCode.commands",
+        "kernl.sources.claudeCode.agents",
+        "kernl.sources.claudeCode.instructions",
+        "kernl.sources.claudeCode.mcpServers",
+        "kernl.sources.claudeCode.plugins",
+        "kernl.sources.codex.skills",
+        "kernl.sources.codex.mcpServers",
+        "kernl.sources.opencode.skills",
+        "kernl.sources.opencode.mcpServers",
+        "kernl.sources.opencode.instructions",
+        "kernl.terminal.cliAgents",
+        "kernl.browser.cliAgents"
       ]
     }
   },
@@ -91,6 +104,11 @@
       {
         "command": "kernl.openSettings",
         "title": "Open settings",
+        "category": "kernl"
+      },
+      {
+        "command": "kernl.showSources",
+        "title": "Show loaded sources",
         "category": "kernl"
       },
       {
@@ -217,13 +235,6 @@
             "scope": "application",
             "markdownDescription": "Base URL for the `openai-compatible` provider, e.g. `http://localhost:11434/v1` for Ollama.\n\nUser settings only."
           },
-          "kernl.mcpServers": {
-            "type": "object",
-            "default": {},
-            "order": 6,
-            "scope": "machine",
-            "markdownDescription": "MCP servers: `{ name: { command, args?, env? } | { url } }`. Every MCP tool call asks first.\n\nUser settings only: a workspace can't start programs through this setting."
-          },
           "kernl.sequentialThinking": {
             "type": "boolean",
             "default": true,
@@ -322,6 +333,140 @@
             "markdownDescription": "Override how a CLI agent is launched: `{ \"claude-code\" | \"codex\" | \"opencode\": { \"command\": string, \"args\"?: string[], \"env\"?: object } }`. Ask-mode forcing still applies.\n\nUser settings only: a workspace can't choose what program runs."
           }
         }
+      },
+      {
+        "title": "Sources: Claude Code",
+        "order": 4,
+        "properties": {
+          "kernl.sources.claudeCode.skills": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "kernl's own agent uses your Claude Code skills: `~/.claude/skills` (including synced ones) and, in trusted workspaces, the project's `.claude/skills`. Claude Code itself always loads them."
+          },
+          "kernl.sources.claudeCode.commands": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Claude Code slash commands (`~/.claude/commands`, the project's `.claude/commands`) become skills for kernl's own agent."
+          },
+          "kernl.sources.claudeCode.agents": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Claude Code subagents (`~/.claude/agents`, the project's `.claude/agents`) become named kernl agents."
+          },
+          "kernl.sources.claudeCode.instructions": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "kernl's own agent follows `CLAUDE.md` (yours in `~/.claude`, and the project's) and the project's `.claude/rules`."
+          },
+          "kernl.sources.claudeCode.mcpServers": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "kernl's own agent connects to the MCP servers in `~/.claude.json` and, in trusted workspaces, the project's `.mcp.json` (each project server asks once before it first starts). Servers that sign in with OAuth are listed as skipped: use them in Claude Code."
+          },
+          "kernl.sources.claudeCode.plugins": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "kernl's own agent uses your enabled Claude Code plugins: their skills, commands, agents, and MCP servers. Plugin hooks and workflows run only in Claude Code."
+          }
+        }
+      },
+      {
+        "title": "Sources: Codex",
+        "order": 5,
+        "properties": {
+          "kernl.sources.codex.skills": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "kernl's own agent uses Codex skills: `~/.agents/skills` and, in trusted workspaces, the project's `.agents/skills`."
+          },
+          "kernl.sources.codex.mcpServers": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "kernl's own agent connects to the MCP servers in `~/.codex/config.toml`."
+          }
+        }
+      },
+      {
+        "title": "Sources: OpenCode",
+        "order": 6,
+        "properties": {
+          "kernl.sources.opencode.skills": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "kernl's own agent uses OpenCode skills: `~/.config/opencode/skills` and, in trusted workspaces, the project's `.opencode/skills`."
+          },
+          "kernl.sources.opencode.mcpServers": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "kernl's own agent connects to the MCP servers in OpenCode's config (`~/.config/opencode/opencode.json` or `.jsonc`; in trusted workspaces also the project's, each project server asking once)."
+          },
+          "kernl.sources.opencode.instructions": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "kernl's own agent follows the instruction files listed in OpenCode's config (`instructions`)."
+          }
+        }
+      },
+      {
+        "title": "MCP",
+        "order": 7,
+        "properties": {
+          "kernl.mcpServers": {
+            "type": "object",
+            "default": {},
+            "order": 6,
+            "scope": "machine",
+            "markdownDescription": "kernl's own MCP servers: `{ name: { command, args?, env? } | { url, headers? } }`. Every MCP tool call asks first. Servers from Claude Code, Codex, and OpenCode are added by the Sources settings; on the same name, these win.\n\nUser settings only: a workspace can't start programs through this setting."
+          },
+          "kernl.mcp.toolTimeoutSeconds": {
+            "type": "number",
+            "default": 60,
+            "minimum": 5,
+            "markdownDescription": "How long an MCP tool call may take before kernl stops waiting and reports it."
+          }
+        }
+      },
+      {
+        "title": "Terminal",
+        "order": 8,
+        "properties": {
+          "kernl.terminal.cliAgents": {
+            "type": "string",
+            "enum": [
+              "kernl",
+              "agent"
+            ],
+            "default": "kernl",
+            "enumDescriptions": [
+              "Claude Code and OpenCode run their commands in VS Code's terminal through kernl, with kernl's approvals. Codex keeps its own shell; its output is shown in the terminal.",
+              "The agents keep their own shells. kernl shows a copy of the output where the agent provides one (Claude Code, Codex)."
+            ],
+            "markdownDescription": "Where CLI agents run shell commands."
+          },
+          "kernl.terminal.outputLimit": {
+            "type": "number",
+            "default": 30000,
+            "minimum": 2000,
+            "markdownDescription": "Characters of a command's output kept for the agent (the start and the end are kept; the middle is cut)."
+          }
+        }
+      },
+      {
+        "title": "Browser",
+        "order": 9,
+        "properties": {
+          "kernl.browser.cliAgents": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Give Claude Code, Codex, and OpenCode kernl's browser tools, so they can open, read, and click pages in VS Code's integrated browser (every action that changes a page asks first)."
+          },
+          "kernl.browser.timeoutSeconds": {
+            "type": "number",
+            "default": 30,
+            "minimum": 5,
+            "markdownDescription": "How long one browser action may take before it fails (the next action reconnects)."
+          }
+        }
       }
     ],
     "menus": {
@@ -360,6 +505,11 @@
           "command": "kernl.openSettings",
           "when": "view == kernl.panel",
           "group": "3_settings@1"
+        },
+        {
+          "command": "kernl.showSources",
+          "when": "view == kernl.panel",
+          "group": "3_settings@2"
         }
       ],
       "explorer/context": [
@@ -427,7 +577,8 @@
     "check:upgrade": "node scripts/build.mjs --tests && node scripts/run-unit.mjs && node out/test/backendMethods.cjs",
     "package": "node scripts/build.mjs --production && vsce package --no-dependencies --skip-license -o kernl.vsix",
     "smoke": "node scripts/build.mjs --tests && node out/test/smoke.cjs",
-    "probe:agents": "node scripts/build.mjs --tests && node out/test/probeAgents.cjs"
+    "probe:agents": "node scripts/build.mjs --tests && node out/test/probeAgents.cjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.9.0",
@@ -441,9 +592,11 @@
     "@langchain/openai": "1.6.2",
     "deepagents": "1.15.1",
     "highlight.js": "11.11.2",
+    "jsonc-parser": "3.3.1",
     "langchain": "1.5.18",
     "lowlight": "3.3.0",
     "marked": "18.0.14",
+    "smol-toml": "1.9.0",
     "ws": "8.22.0",
     "yaml": "2.9.1",
     "zod": "4.6.7"

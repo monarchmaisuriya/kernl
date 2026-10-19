@@ -23,6 +23,8 @@ import { Checkpoints } from "../../src/checkpoints";
 import { BackgroundJobs } from "../../src/agent/backgroundJobs";
 import { jobTerminal } from "../../src/terminal/jobTerminal";
 import { SessionStore } from "../../src/sessions";
+import { emptyImports } from "../../src/sources";
+import { KernlToolServer } from "../../src/mcp/kernlServer";
 import { outsideMessage } from "../../src/attachmentSearch";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -180,6 +182,21 @@ export async function run() {
     results.push(`      tool output: ${JSON.stringify(msgs[0])}`);
   });
 
+  await check("agent commands run with no pager, and only the end of a long output is kept", async () => {
+    const capped = new TerminalRunner({ cwd: root, name: "kernl: capped", currentSignal: () => undefined, outputLimit: () => 2_000, onShellIntegrationMissing: () => {} });
+    try {
+      const pager = await capped.run("echo pager=$PAGER git=$GIT_PAGER");
+      assert.match(pager.output, /pager=cat git=cat/);
+      const long = await capped.run("for i in $(seq 1 20000); do echo line-$i; done");
+      assert.equal(long.truncated, true);
+      assert.ok(long.output.length < 2_100, `kept ${long.output.length} characters`);
+      assert.match(long.output, /line-20000/);
+      assert.doesNotMatch(long.output, /line-1\n/);
+    } finally {
+      capped.dispose();
+    }
+  });
+
   await check("approval rules from user settings: an allowed command runs in the terminal without a card; a denied one never asks", async () => {
     const { testing } = await ext.activate();
     const config = vscode.workspace.getConfiguration("kernl");
@@ -284,6 +301,22 @@ export async function run() {
     assert.deepEqual(browser.sentMethods.slice(before), []);
   });
 
+  await check("a browser call that never settles fails after the timeout, and the browser reconnects after its connection drops", async () => {
+    const quick = new IntegratedBrowser(() => 2_000);
+    try {
+      await quick.navigate(`${base}/`);
+      const started = Date.now();
+      await assert.rejects(quick.evaluate("new Promise(() => {})"), /didn't answer Runtime.evaluate within 2 s/);
+      assert.ok(Date.now() - started < 5_000);
+      assert.equal(await quick.evaluate("1 + 1"), 2, "the connection still works after a timeout");
+      (quick as any).ws.close();
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(await quick.evaluate("2 + 2"), 4, "a dropped connection is reopened on the next call");
+    } finally {
+      await quick.dispose();
+    }
+  });
+
   await check("approved type + click act on the page; screenshot returns an image", async () => {
     const { gate } = gateAnswering(true);
     const msgs = await runAgent(new GatedBackend(root, gate, files, unusedRunner), [
@@ -310,6 +343,7 @@ export async function run() {
   // CLI agents (ACP) and worktree workspaces. The fake ACP agent stands in for Claude Code via
   // kernl.agentCommands, so the real launch path, ask-mode forcing, and gate are exercised.
   const fakeAgent = { command: process.execPath, args: [join(__dirname, "fakeAcpAgent.cjs")], env: { FAKE_SCENARIO: "write", FAKE_FORK: "1", FAKE_LOAD: "1" } };
+  const toolServer = new KernlToolServer();
   function runtimeHost(trusted: boolean, decide: (ws: WorkspaceRuntime, r: GateRequest) => boolean, posted: any[]): RuntimeHost {
     return {
       log: new Logger({ appendLine() {} }, new Redactor()),
@@ -317,10 +351,12 @@ export async function run() {
       showApproval: (ws, id, r) => void setTimeout(() => ws.approvals.answer(id, decide(ws, r)), 50),
       closeApproval() {},
       deepAgentsProblem: async () => "not used",
-      providerSettings: () => ({ provider: "anthropic", model: "x", baseUrl: "", mcpServers: {}, agentCommands: { "claude-code": fakeAgent } }),
+      providerSettings: () => ({ provider: "anthropic", model: "x", baseUrl: "", mcpServers: {}, mcpToolTimeoutSeconds: 60, agentCommands: { "claude-code": fakeAgent }, terminal: { cliAgents: "kernl", outputLimit: 30_000 }, browser: { cliAgents: true, timeoutSeconds: 30 } }),
       approvalRules: () => [],
       userDir: join(tmpdir(), "kernl-no-user-dir"),
-      claudeDir: join(tmpdir(), "kernl-no-claude-dir"),
+      sources: async () => ({ imports: emptyImports() }),
+      allowProjectServer: async () => false,
+      kernlTools: (tools) => toolServer.register(tools),
       sessions: new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))),
       checkpoints: new Checkpoints(mkdtempSync(join(tmpdir(), "kernl-checkpoints-"))),
       apiKey: async () => undefined,
@@ -572,6 +608,34 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     } finally {
       rmSync(join(root, ".kernl"), { recursive: true, force: true });
       rmSync(join(userDir, "AGENTS.md"), { force: true });
+    }
+  });
+
+  await check("Sources: Claude Code's skills, commands, and MCP servers are listed by name in the Sources view, never a configured value, and its skills reach the composer", async () => {
+    const claudeDir = process.env.CLAUDE_CONFIG_DIR!;
+    const secret = "fake-header-value-42";
+    mkdirSync(join(claudeDir, "skills", "release-notes"), { recursive: true });
+    writeFileSync(join(claudeDir, "skills", "release-notes", "SKILL.md"), "---\nname: release-notes\ndescription: Write release notes\n---\nSteps.\n");
+    mkdirSync(join(claudeDir, "commands"), { recursive: true });
+    writeFileSync(join(claudeDir, "commands", "ship.md"), "---\ndescription: Ship it\n---\nShip.\n");
+    writeFileSync(join(claudeDir, ".claude.json"), JSON.stringify({ mcpServers: { docs: { type: "http", url: "http://127.0.0.1:1/mcp", headers: { Authorization: secret } }, signin: { type: "http", url: "http://127.0.0.1:1/x", oauth: {} } } }));
+    try {
+      const from = delivered.length;
+      // The skills list follows the Claude Code folder's files (watched outside the workspace).
+      await waitFor("the composer's skills including Claude Code's", (m) => m.type === "skills" && m.items.some((i: any) => i.name === "release-notes") && m.items.some((i: any) => i.name === "ship"), from, 10_000);
+      await vscode.commands.executeCommand("kernl.showSources");
+      const text = vscode.window.activeTextEditor?.document.getText() ?? "";
+      assert.match(text, /# kernl: loaded sources/);
+      assert.match(text, /Claude Code: .*skills/);
+      assert.match(text, /- \/ship \(Claude Code: /);
+      assert.match(text, /- docs \(Claude Code: .*\.claude\.json, http\)/);
+      assert.match(text, /MCP server signin .*OAuth/);
+      assert.doesNotMatch(text, new RegExp(secret));
+      await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+    } finally {
+      rmSync(join(claudeDir, "skills"), { recursive: true, force: true });
+      rmSync(join(claudeDir, "commands"), { recursive: true, force: true });
+      rmSync(join(claudeDir, ".claude.json"), { force: true });
     }
   });
 

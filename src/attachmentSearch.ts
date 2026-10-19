@@ -37,22 +37,32 @@ async function isFolder(uri: vscode.Uri): Promise<boolean> {
 }
 
 /** Resolves file: URIs (a drop, the Explorer) to attachments; anything outside the workspace is returned separately. */
-export async function resolveUris(root: string, uris: string[]): Promise<{ attachments: Attachment[]; outside: string[] }> {
+/**
+ * Dropped or picked URIs, sorted: workspace files and folders become attachments; local files
+ * elsewhere are `outside`; anything that isn't a local file (a link, a remote window's item, an
+ * unreadable string) is `unusable`. Every input lands in one list, so the caller can say why.
+ */
+export async function resolveUris(root: string, uris: string[]): Promise<{ attachments: Attachment[]; outside: string[]; unusable: string[] }> {
   const attachments: Attachment[] = [];
   const outside: string[] = [];
+  const unusable: string[] = [];
   for (const raw of uris) {
     let uri: vscode.Uri;
     try {
       uri = vscode.Uri.parse(raw, true);
     } catch {
+      unusable.push(raw);
       continue;
     }
-    if (uri.scheme !== "file") continue;
+    if (uri.scheme !== "file") {
+      unusable.push(raw);
+      continue;
+    }
     const a = toAttachment(root, uri.fsPath, (await isFolder(uri)) ? "folder" : "file");
     if (a) attachments.push(a);
     else outside.push(uri.fsPath);
   }
-  return { attachments, outside };
+  return { attachments, outside, unusable };
 }
 
 /** Workspace files and folders whose path contains `query` (case-insensitive), best matches first. */

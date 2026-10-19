@@ -1,20 +1,27 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, relative, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { type InstructionFile, shown } from "../sources/types";
 
 /**
  * Instructions Deep Agents gets on top of its built-in prompt:
  * - the user's own `<userDir>/AGENTS.md`, always (it's theirs, so also in Restricted Mode);
  * - (the project's `/AGENTS.md` is loaded as Deep Agents memory by buildAgent, trusted workspaces only);
- * - project rules `.kernl/rules/*.md`, in trusted workspaces only. A rule with
- *   `alwaysApply: true` is put in the prompt; any other rule is listed with its description and
- *   globs, and the agent reads the file when it is relevant (reading doesn't ask).
+ * - the other agents' instruction files the Sources settings bring in (`~/.claude/CLAUDE.md`, the
+ *   project's CLAUDE.md, OpenCode's `instructions`): each one in the prompt;
+ * - project rules `.kernl/rules/*.md` and Claude Code's `.claude/rules/*.md`, in trusted workspaces
+ *   only. A kernl rule with `alwaysApply: true`, or a Claude Code rule without `paths`, is put in the
+ *   prompt; any other rule is listed with its description and globs, and the agent reads the file
+ *   when it is relevant (reading doesn't ask).
  * Files only add knowledge: nothing here can change what is allowed (that is the gate's rules).
  */
 export interface InstructionSources {
   userDir: string;
   projectRoot: string;
   trusted: boolean;
+  /** Instruction files from the other agents' setup (src/sources). */
+  imported: readonly InstructionFile[];
 }
 
 export interface Instructions {
@@ -40,6 +47,22 @@ const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 export function splitFrontmatter(text: string): { data: unknown; body: string } {
   const m = FRONTMATTER.exec(text);
   return m ? { data: parseYaml(m[1]) ?? {}, body: m[2] } : { data: {}, body: text };
+}
+
+/** A Claude Code rule (`.claude/rules/*.md`): `paths` globs, or none to always apply. */
+function parseClaudeRule(file: string, text: string): Rule | string {
+  let parsed: { data: unknown; body: string };
+  try {
+    parsed = splitFrontmatter(text);
+  } catch (err: any) {
+    return `${file}: frontmatter is not valid YAML (${err?.message ?? err})`;
+  }
+  const d = parsed.data as Record<string, unknown>;
+  if (typeof d !== "object" || d === null || Array.isArray(d)) return `${file}: expected frontmatter to be key: value pairs`;
+  const paths = d.paths === undefined ? [] : typeof d.paths === "string" ? d.paths.split(",").map((g) => g.trim()).filter(Boolean) : d.paths;
+  if (!Array.isArray(paths) || paths.some((g) => typeof g !== "string")) return `${file}: expected paths to be a glob or a list of globs, got ${JSON.stringify(d.paths)}`;
+  const description = typeof d.description === "string" ? d.description : undefined;
+  return { file, description, globs: paths as string[], alwaysApply: paths.length === 0, body: parsed.body.trim() };
 }
 
 function parseRule(file: string, text: string): Rule | string {
@@ -72,6 +95,11 @@ export async function assembleInstructions(src: InstructionSources): Promise<Ins
   const problems: string[] = [];
   const user = (await readIfPresent(join(src.userDir, "AGENTS.md")))?.trim();
   if (user) sections.push(`## The user's own instructions (~/.kernl/AGENTS.md)\n\n${user}`);
+  const inProject = (file: string) => `/${relative(src.projectRoot, file).split(sep).join("/")}`;
+  for (const f of src.imported.filter((f) => f.kind === "always" && (src.trusted || !f.project))) {
+    const text = (await readIfPresent(f.file))?.trim();
+    if (text) sections.push(`## ${f.project ? `Project instructions (${inProject(f.file)})` : `The user's own instructions (${shown(f.file, homedir())})`}\n\n${text}`);
+  }
   if (!src.trusted) return { prompt: sections.join("\n\n"), problems };
 
   let names: string[] = [];
@@ -84,6 +112,13 @@ export async function assembleInstructions(src: InstructionSources): Promise<Ins
   for (const name of names) {
     const file = `/${RULES_DIR}/${name}`;
     const parsed = parseRule(file, await readFile(join(src.projectRoot, RULES_DIR, name), "utf8"));
+    if (typeof parsed === "string") problems.push(parsed);
+    else rules.push(parsed);
+  }
+  for (const f of src.imported.filter((f) => f.kind === "rule" && f.project)) {
+    const text = await readIfPresent(f.file);
+    if (text === undefined) continue;
+    const parsed = parseClaudeRule(inProject(f.file), text);
     if (typeof parsed === "string") problems.push(parsed);
     else rules.push(parsed);
   }

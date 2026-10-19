@@ -16,3 +16,6 @@ export function cleanTerminalOutput(raw: string, maxChars = 30_000): { text: str
   if (text.length <= maxChars) return { text, truncated: false };
   return { text: `[earlier output truncated]\n${text.slice(-maxChars)}`, truncated: true };
 }
+
+/** Agent commands run with no pager: `git log` or `man` would otherwise wait in `less` for a key the agent can't press. */
+export const NO_PAGER = { PAGER: "cat", GIT_PAGER: "cat" };

@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import type { AskMode } from "../../src/acp/agents";
-import { AcpRunner } from "../../src/acp/acpRunner";
+import { AcpRunner, type AcpRunnerOptions, type CommandOutputEvent, isKernlTool } from "../../src/acp/acpRunner";
+import { KernlToolServer } from "../../src/mcp/kernlServer";
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
 import { toPermissionResponse } from "../../src/acp/permission";
 import { ApprovalGate, type GateRequest } from "../../src/gate/approvalGate";
 import { PendingApprovals } from "../../src/gate/pendingApprovals";
@@ -12,7 +15,7 @@ import { PendingApprovals } from "../../src/gate/pendingApprovals";
 const fake = resolve(__dirname, "fakeAcpAgent.cjs");
 const MANUAL: AskMode = { kind: "configOption", optionId: "mode", value: "default" };
 
-function harness(scenario: string, answer: boolean | "never", askMode: AskMode | (() => AskMode) = MANUAL, extraEnv: Record<string, string> = {}) {
+function harness(scenario: string, answer: boolean | "never", askMode: AskMode | (() => AskMode) = MANUAL, extraEnv: Record<string, string> = {}, more: Pick<AcpRunnerOptions, "sessionSetup" | "commandOutput"> = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "kernl-acp-"));
   const logFile = join(cwd, "..", `fake-${Math.random().toString(36).slice(2)}.log`);
   const asked: GateRequest[] = [];
@@ -30,6 +33,7 @@ function harness(scenario: string, answer: boolean | "never", askMode: AskMode |
     gate,
     onStop: () => pending.denyAll(),
     notice: (t) => events.push(`notice:${t}`),
+    ...more,
     events: {
       text: (d) => events.push(`text:${d}`),
       toolCall: (id, name, _args, info) => (info?.command && events.push(`command:${info.description ?? "-"}|${info.command}|${info.lookup ?? "-"}`), events.push(info?.status ? `call:${name}:${info.status}${info.kind ? `:${info.kind}` : ""}${info.diff ? `:+${info.diff.added}-${info.diff.removed}` : ""}${info.locations?.length ? `:@${info.locations[0].line}` : ""}` : `call:${name}`)),
@@ -231,6 +235,8 @@ test("a full agent's updates all reach the panel: thinking, one tool call merged
   assert.deepEqual(e.filter((x) => x.startsWith("call:Read src")), ["call:Read src/a.ts:pending:read:@3", "call:Read src/a.ts:running:read:@3", "call:Read src/a.ts"], JSON.stringify(e));
   assert.ok(e.includes("result:export const a = 1;"), "its output ends it, without the agent's code fence");
   assert.ok(e.includes("result:src/a.ts:3"), "a command's output loses its console fence");
+  assert.ok(!e.some((x) => x.startsWith("call:tool")), `an update after the result keeps the call's title, not a blank one: ${JSON.stringify(e)}`);
+  assert.equal(e.filter((x) => x === "result:src/a.ts:3").length, 1, "and its result isn't reported again");
   assert.ok(e.includes("image:i1:image/png:96"), `a read image is passed on, base64 with its type: ${JSON.stringify(e)}`);
   assert.ok(e.includes("command:Find usages of useRewards|grep -n useRewards src|search"), `a command leads with its description, without the cd into the session folder: ${JSON.stringify(e)}`);
   assert.ok(e.includes("call:Edit src/a.ts:running:edit") && e.includes("call:Edit src/a.ts"), JSON.stringify(e));
@@ -286,4 +292,55 @@ test("the approval queue passes 'always' through only with an approve", async ()
   pending.answer("b", false, true);
   assert.equal(await a, "always");
   assert.equal(await b, false);
+});
+
+const echo = tool(async ({ command }: { command: string }) => `A: ${command}`, { name: "run_in_terminal", description: "Run", schema: z.object({ command: z.string() }) as any });
+
+test("kernl's tools are given in every session with the agent's options; the agent's permission request for them gets no card", async () => {
+  const server = new KernlToolServer();
+  const access = await server.register(() => [echo]);
+  const meta = { claudeCode: { options: { allowedTools: ["mcp__kernl"], disallowedTools: ["Bash"] } } };
+  const h = harness("kernl-tools", false, MANUAL, { FAKE_MCP_HTTP: "1", FAKE_FORK: "1" }, {
+    sessionSetup: async () => ({ mcpServers: [{ type: "http", name: "kernl", url: access.url, headers: Object.entries(access.headers).map(([name, value]) => ({ name, value })) }], meta }),
+  });
+  try {
+    await h.runner.send("go");
+    await h.runner.forkSession();
+  } finally {
+    h.runner.dispose();
+    await server.dispose();
+  }
+  const log = h.fakeLog();
+  assert.ok(log.includes(`setup new mcp=kernl:http meta=${JSON.stringify(meta)}`), log.join(" | "));
+  assert.ok(log.includes(`setup fork mcp=kernl:http meta=${JSON.stringify(meta)}`), log.join(" | "));
+  assert.ok(log.includes("kernl tool permission allow"), log.join(" | "));
+  assert.deepEqual(h.asked, [], "no card: kernl's own tool asks through kernl's gate itself");
+  assert.ok(h.events.some((e) => e.startsWith("result:") && e.includes("A: echo from agent")), h.events.join(" | "));
+  assert.ok(h.events.includes("command:-|echo from agent|-"), "kernl's run_in_terminal shows as a command row");
+});
+
+test("an agent that can't reach HTTP MCP servers isn't given kernl's server", async () => {
+  const h = harness("write", true, MANUAL, {}, { sessionSetup: async () => ({ mcpServers: [{ type: "http", name: "kernl", url: "http://127.0.0.1:1/mcp", headers: [] }] }) });
+  await h.runner.send("go");
+  h.runner.dispose();
+  assert.ok(h.fakeLog().includes("setup new mcp=none meta=null"), h.fakeLog().join(" | "));
+});
+
+test("a command the agent runs in its own shell: streamed output fills its row and goes to the mirror terminal", async () => {
+  const mirrored: CommandOutputEvent[] = [];
+  const h = harness("kernl-tools", true, MANUAL, {}, { commandOutput: (e) => mirrored.push(e) });
+  await h.runner.send("go");
+  h.runner.dispose();
+  assert.ok(h.events.includes("result:1 passing\nok"), h.events.join(" | "));
+  assert.deepEqual(mirrored, [
+    { id: "sh1", command: "npm test", cwd: h.cwd },
+    { id: "sh1", data: "1 passing\r\n" },
+    { id: "sh1", data: "\x1b[32mok\x1b[0m\r\n" },
+    { id: "sh1", exitCode: 0 },
+  ]);
+});
+
+test("kernl's own tools are recognised by each agent's naming, and nothing else is", () => {
+  for (const name of ["mcp__kernl__run_in_terminal", "mcp.kernl.browser_click", "kernl_run_in_terminal"]) assert.equal(isKernlTool(name), true, name);
+  for (const name of ["Bash", "mcp__kernel__x", "mcp.notion.search", "Write kernl_notes.md", undefined]) assert.equal(isKernlTool(name), false, String(name));
 });

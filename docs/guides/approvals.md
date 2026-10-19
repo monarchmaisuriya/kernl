@@ -5,7 +5,8 @@
 | Edit, create, overwrite, delete a file | Asks unless your approval rules say otherwise; edits and writes open a diff. Deletes go to the trash. Files with unsaved changes are refused. |
 | Run a command | Asks unless an allow rule matches and the command has no shell operators (`; && \|\| \| \` $( > <`). Runs in the visible "kernl" terminal. |
 | Browser: navigate, click, type | Asks unless a rule says otherwise. Reading the page and screenshots do not. Page text is marked untrusted. |
-| MCP tools (`kernl.mcpServers`) | Every call asks unless a rule says otherwise. |
+| MCP tools (`kernl.mcpServers`, and your other agents' servers) | Every call asks unless a rule says otherwise. A project's server asks once before it first starts. |
+| kernl's tools used by a CLI agent (`run_in_terminal`, jobs, browser) | The same as for the kernl agent; in the agent's Bypass mode they don't ask (deny rules still refuse). |
 | Reading `.env*`, `*.pem`, `*.key`, `id_*` | Asks (contents would go to your model provider); grep never shows their lines. |
 | Restricted Mode (untrusted workspace) | Read-only: no edits, commands, browser, MCP, or project AGENTS.md, rules, or agents. |
 

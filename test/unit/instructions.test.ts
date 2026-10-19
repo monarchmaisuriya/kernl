@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { buildAgent } from "../../src/agent/createAgent";
 import { assembleInstructions } from "../../src/agent/instructions";
+import type { InstructionFile } from "../../src/sources/types";
 import { workspace } from "../support/harness";
 import { ScriptedChatModel } from "../support/scriptedModel";
 
@@ -16,7 +17,7 @@ function dirs(rules: Record<string, string> = {}, userAgentsMd?: string) {
   if (userAgentsMd !== undefined) writeFileSync(join(userDir, "AGENTS.md"), userAgentsMd);
   if (Object.keys(rules).length) mkdirSync(join(projectRoot, ".kernl/rules"), { recursive: true });
   for (const [name, text] of Object.entries(rules)) writeFileSync(join(projectRoot, ".kernl/rules", name), text);
-  return { userDir, projectRoot };
+  return { userDir, projectRoot, imported: [] as InstructionFile[] };
 }
 
 const RULES = {

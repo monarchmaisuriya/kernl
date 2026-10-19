@@ -4,7 +4,7 @@
 // searches workspace paths, "/" names a skill, and the file open in the editor is offered as a
 // suggestion. Everything is built with createElement/textContent; the host checks every path.
 import type { Attachment, PanelToHost, SkillView } from "../ui/protocol";
-import { droppedFiles, droppedUris } from "./dropData";
+import { droppedFiles, isPanelDrop, linkUris, vscodeUris } from "./dropData";
 import { icon } from "./icons";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -138,7 +138,8 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   function add(next: Attachment[]) {
     for (const a of next) {
       if (a.kind === "text") {
-        if (!texts.some((x) => x.path === a.path)) texts.push(a);
+        // The same label again (a file dropped again after editing it): the newer text replaces the older.
+        texts = [...texts.filter((x) => x.path !== a.path), a];
       } else if (new RegExp(`${escape(mentionText(a))}(?=\\s|$)`).test(input.value)) remember(a); // already in the text (a message put back): just mark it
       else insertMention(a);
     }
@@ -246,25 +247,28 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
 
   /** Files dragged from the Explorer or the OS arrive as a URI list; the host checks and resolves them. */
   /**
-   * A drop (it only gets here with Shift held: VS Code blocks webviews during a drag otherwise).
-   * Explorer items go to the host, which checks they're in the workspace; files from Finder are
-   * attached by content when they're text. A drop that attaches nothing says why, and the host logs
-   * what it carried.
+   * A drop on the panel. Items from VS Code go to the host, which checks they're in this window's
+   * folders; files from Finder or another app are attached by their content when they're text (a
+   * webview can't see their paths), even when the drop also carries their file:// links; other links
+   * go to the host, which says why it can't attach them. A drop that attaches nothing here says why,
+   * and the host logs what it carried. A plain-text drop isn't the panel's: it's left alone.
    */
   async function onDrop(e: DragEvent) {
     const data = e.dataTransfer;
-    if (!data) return;
+    if (!data || !isPanelDrop(data.types)) return;
     e.preventDefault();
     // The drop's data is readable only during the event: take everything before any await.
-    const uris = droppedUris(data);
+    const fromVsCode = vscodeUris(data);
+    const links = linkUris(data);
     const types = Array.from(data.types ?? []);
     const files = Array.from(data.files ?? []);
-    if (uris.length) return send({ type: "dropUris", uris });
+    if (fromVsCode.length) return send({ type: "dropUris", uris: fromVsCode });
+    if (!files.length && links.length) return send({ type: "dropUris", uris: links });
     const { attached, skipped } = await droppedFiles(files);
     if (attached.length) add(attached);
     if (skipped.length) note(`Couldn't attach ${skipped.join(", ")}. Drag workspace files from the Explorer instead.`);
     else if (!attached.length) note("Nothing to attach from that drop.");
-    if (!attached.length) send({ type: "dropUris", uris: [], types });
+    if (!attached.length) send({ type: "dropIgnored", types });
   }
 
   suggestion.addEventListener("click", () => activeFile && (add([{ path: activeFile, kind: "file" }]), input.focus()));

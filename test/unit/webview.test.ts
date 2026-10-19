@@ -35,7 +35,7 @@ function loadPanel() {
 }
 
 const MAIN: WorkspaceView = { id: "main", label: "Main", harness: "deepagents", running: false, waiting: 0, disclosure: "Deep Agents asks before every edit.", queue: [], queuePaused: false, mode: "ask", modes: [] };
-const WT: WorkspaceView = { id: "wt:fix", label: "fix", harness: "claude-code", branch: "kernl/fix", running: false, waiting: 0, disclosure: "Claude Code runs approved actions itself.", queue: [], queuePaused: false, mode: "ask", modes: [] };
+const WT: WorkspaceView = { id: "wt:fix", label: "fix", harness: "claude-code", branch: "kernl/fix", running: false, waiting: 0, disclosure: "Claude Code runs approved actions itself.", queue: [], queuePaused: false, mode: "ask", modes: [], forkLimit: "Claude Code can fork only from the last message" };
 const STATUS: HostToPanel = { type: "status", ready: true, provider: "deepseek", model: "deepseek-flash", restricted: false, thinkingDisplay: "auto" };
 const HARNESSES: HarnessView[] = [
   { id: "deepagents", label: "kernl", group: "kernl", ready: true },
@@ -381,7 +381,7 @@ test("files dropped on the panel are sent to the host to check and attach", () =
   const p = loadPanel();
   p.host(workspaces([MAIN]));
   const drop = new p.window.Event("drop", { bubbles: true, cancelable: true }) as any;
-  drop.dataTransfer = { getData: (t: string) => (t === "text/uri-list" ? "file:///ws/src/app.ts\r\n# comment\r\nfile:///ws/docs\r\n" : "") };
+  drop.dataTransfer = { getData: (t: string) => (t === "text/uri-list" ? "file:///ws/src/app.ts\r\n# comment\r\nfile:///ws/docs\r\n" : ""), types: ["text/uri-list"], files: [] };
   p.doc.getElementById("app")!.dispatchEvent(drop);
   assert.deepEqual(p.sent.at(-1), { type: "dropUris", uris: ["file:///ws/src/app.ts", "file:///ws/docs"] });
 });
@@ -1122,7 +1122,8 @@ test("drag and drop: the composer names the ways in; a drag over the panel marks
   const app = p.doc.getElementById("app")!;
   const fire = (type: string, target: Element = app) => {
     const e = new p.window.Event(type, { bubbles: true, cancelable: true }) as any;
-    e.dataTransfer = { getData: () => "", types: [], files: [] };
+    e.dataTransfer = { getData: () => "", types: ["Files"], files: [] };
+    e.relatedTarget = type === "dragleave" && target !== app ? app : null;
     target.dispatchEvent(e);
     return e;
   };
@@ -1160,9 +1161,67 @@ test("drag and drop: Explorer items go to the host; a Finder text file is attach
   const note = p.doc.querySelector<HTMLElement>(".drop-note")!;
   assert.equal(note.hidden, false);
   assert.match(note.textContent!, /Couldn't attach logo\.png \(not text\)\. Drag workspace files from the Explorer instead\./);
-  assert.deepEqual(p.sent.slice(before), [{ type: "dropUris", uris: [], types: ["Files"] }], "the host logs what it carried");
+  assert.deepEqual(p.sent.slice(before), [{ type: "dropIgnored", types: ["Files"] }], "the host logs what it carried");
 
-  drop({ getData: () => "", types: ["text/plain"], files: [] });
+  // From Finder, a drop carries the files and their file:// links: the files are read by content.
+  drop({ getData: (t: string) => (t === "text/uri-list" ? "file:///Users/m/Desktop/todo.txt" : ""), types: ["Files", "text/uri-list"], files: [new File(["buy milk\n"], "todo.txt", { type: "text/plain" })] });
   await settle();
-  assert.equal(note.textContent, "Nothing to attach from that drop.");
+  assert.ok([...p.doc.querySelectorAll(".attachments .chip-text")].some((c) => c.textContent === "todo.txt"), "attached by content, not refused as outside the workspace");
+
+  // A link from a browser goes to the host, which says why it can't attach it.
+  drop({ getData: (t: string) => (t === "text/uri-list" ? "https://example.com/page" : ""), types: ["text/uri-list"], files: [] });
+  assert.deepEqual(p.sent.at(-1), { type: "dropUris", uris: ["https://example.com/page"] });
+
+  // Dropping the same file again after editing it: the newer text replaces the older.
+  drop({ getData: () => "", types: ["Files"], files: [new File(["# Notes v2\n"], "notes.md", { type: "text/markdown" })] });
+  await settle();
+  assert.equal([...p.doc.querySelectorAll(".attachments .chip-text")].filter((c) => c.textContent === "notes.md").length, 1);
+});
+
+test("drag and drop: moving text within the composer isn't the panel's drop; it keeps the browser's behavior", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const app = p.doc.getElementById("app")!;
+  const textDrag = (type: string) => {
+    const e = new p.window.Event(type, { bubbles: true, cancelable: true }) as any;
+    e.dataTransfer = { getData: (t: string) => (t === "text/plain" ? "some words" : ""), types: ["text/plain"], files: [] };
+    app.dispatchEvent(e);
+    return e;
+  };
+  assert.equal(textDrag("dragenter").defaultPrevented, false);
+  assert.equal(p.doc.querySelector<HTMLElement>(".drop-hint")!.hidden, true, "no drop target for moving text");
+  const before = p.sent.length;
+  assert.equal(textDrag("drop").defaultPrevented, false, "the text is inserted where it's dropped");
+  assert.equal(p.sent.length, before);
+});
+
+test("new output follows the transcript only when you're at its end; your own message always scrolls to it", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  p.host({ type: "userMessage", workspace: "main", text: "first" });
+  const log = p.visibleLog();
+  // jsdom has no layout: a 1000 px transcript in a 300 px view.
+  Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => 1000 });
+  Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 300 });
+  log.scrollTop = 200; // reading further up
+  p.host({ type: "text", workspace: "main", delta: "more output" });
+  assert.equal(log.scrollTop, 200, "reading isn't interrupted");
+  log.scrollTop = 690; // at the end (within 40 px)
+  p.host({ type: "text", workspace: "main", delta: " and more" });
+  assert.equal(log.scrollTop, 1000, "at the end, new output follows");
+  log.scrollTop = 100;
+  p.host({ type: "userMessage", workspace: "main", text: "second" });
+  assert.equal(log.scrollTop, 1000, "your own message scrolls to the end");
+});
+
+test("a failed row keeps 'Failed:' when the agent updates it after the result", () => {
+  const p = loadPanel();
+  p.host(workspaces([WT]));
+  const call = { type: "toolCall" as const, workspace: "wt:fix", id: "x1", name: "grep x", args: "{}", kind: "execute", command: "grep -n x src", description: "Find usages of x" };
+  p.host({ ...call, status: "running" });
+  p.host({ type: "toolResult", workspace: "wt:fix", id: "x1", name: "grep x", output: "boom", failed: true });
+  p.host(call); // the late update: same call, no status
+  const row = p.doc.querySelector<HTMLElement>(".tool")!;
+  assert.equal(row.querySelector(".tool-action")!.textContent, "Failed: Find usages of x");
+  assert.equal(row.dataset.status, "failed");
 });

@@ -2,7 +2,7 @@
 // runVscode.ts, KERNL_WORKSPACE=multi): each folder is its own workspace with its own agent,
 // sends run in the right folder, worktrees belong to their folder, and Agent logins can switch agents.
 import { strict as assert } from "node:assert";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
@@ -95,6 +95,30 @@ export async function run() {
     const actions = menusShown.at(-1)!.map((i: any) => i.label);
     assert.equal(actions[0], "Use Claude Code in this workspace", JSON.stringify(actions));
     assert.equal(harnessOf("folder:alpha"), "claude-code");
+  });
+
+  await check("multi-root: a tool row's file opens from any folder of the window (an image in the image viewer); one outside the window's folders doesn't", async () => {
+    const notes = join(beta, "notes.md");
+    const pixel = join(beta, "pixel.png");
+    const outside = join(tmpdir(), `kernl-outside-${Date.now()}.md`);
+    writeFileSync(notes, "# notes\nsecond line\n");
+    writeFileSync(pixel, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64"));
+    writeFileSync(outside, "not in the window\n");
+    try {
+      // The panel shows alpha; the agent read a file in beta.
+      await testing.receive({ type: "openLocation", workspace: "folder:alpha", path: notes, line: 2 });
+      assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, notes, "a file in another folder of the window opens");
+      assert.equal(vscode.window.activeTextEditor?.selection.active.line, 1, "at its line");
+      await testing.receive({ type: "openLocation", workspace: "folder:alpha", path: pixel });
+      const tab: any = vscode.window.tabGroups.activeTabGroup.activeTab;
+      assert.equal(tab?.input?.uri?.fsPath, pixel);
+      assert.equal(tab?.input?.viewType, "imagePreview.previewEditor", "an image opens in VS Code's image viewer, not as text");
+      await testing.receive({ type: "openLocation", workspace: "folder:alpha", path: outside });
+      assert.ok(!vscode.window.tabGroups.all.flatMap((g) => g.tabs).some((t: any) => t.input?.uri?.fsPath === outside), "a file outside the window's folders isn't opened");
+    } finally {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      for (const f of [notes, pixel, outside]) rmSync(f, { force: true });
+    }
   });
 
   await check("multi-root: adding a folder adds a workspace; each folder's agent choice is kept across the reload", async () => {

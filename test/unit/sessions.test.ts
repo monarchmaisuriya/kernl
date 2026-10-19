@@ -111,3 +111,22 @@ test("a tool's image is saved as a file next to the conversations: raster types 
   await store.clear();
   assert.equal(existsSync(join(store.previewsDir, file!)), false, "Delete conversations removes them too");
 });
+
+// Saves are queued one at a time per file and written to a temporary file renamed into place
+// (SessionStore.write). This doesn't force the interleaving the fix prevents (plain concurrent
+// writeFile passes here too); it pins the outcome: the last save wins, whole, and the list reads.
+test("many saves of one conversation at once end with the last one, whole, and the list still reads", async () => {
+  const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-")));
+  const s = store.create("claude-code");
+  s.events.push({ type: "userMessage", workspace: "main", text: "first" });
+  const saves: Promise<void>[] = [];
+  for (let i = 0; i < 30; i++) {
+    // Each save has a different length, as the conversation grows between them.
+    s.events.push({ type: "text", workspace: "main", delta: "x".repeat(((i * 7919) % 30) * 20_000) });
+    saves.push(store.save("ws", s));
+  }
+  await Promise.all(saves);
+  const loaded = await store.load("ws", s.id);
+  assert.equal(loaded?.events.length, 31, "the last save wins, whole");
+  assert.equal((await store.list("ws")).length, 1, "the conversation list still reads");
+});

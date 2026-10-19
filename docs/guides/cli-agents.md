@@ -26,3 +26,20 @@ storing or clearing it restarts only workspaces running that agent. OpenCode kee
   In this mode your personal `~/.claude` settings (user MCP servers, hooks, permissions, personal CLAUDE.md) don't load.
   `npm run test:live` checks against a localhost server that only the stored key is sent.
 - **Codex keys are unverified:** Codex with its own login was checked against adapter 2.2.2 (Read-only confirmed, a reply received); a stored `CODEX_API_KEY` wasn't tested, and Codex may prefer its own login over it.
+
+## Terminal and browser
+
+CLI agents use kernl's own tools through a small MCP server kernl runs on this machine (only on `127.0.0.1`, with a token per workspace; a web page can't reach it). The tools are `run_in_terminal`, the background job tools, and the browser tools. They ask through kernl's approvals like the kernl agent's tools, so your approval rules apply. Settings:
+
+- **`kernl.terminal.cliAgents`**: `kernl` (default) runs the agents' commands in the workspace's visible "kernl" terminal in VS Code; `agent` leaves each agent its own shell.
+- **`kernl.browser.cliAgents`**: offer kernl's integrated browser tools to CLI agents (default on).
+
+| Agent | With `kernl.terminal.cliAgents = kernl` |
+| --- | --- |
+| Claude Code | Its `Bash` tool is off; commands go through `run_in_terminal`. kernl's tools run without Claude Code's own prompt: kernl's card is the one you see. |
+| OpenCode | `bash` is set to `deny` in its config; commands go through `run_in_terminal`. |
+| Codex | Keeps its own shell (it has no switch to turn it off). Its commands' output streams into a read-only "Codex: <workspace>" terminal and into the command's row. |
+
+- **One card per action.** When an agent asks its own permission for one of kernl's tools, kernl answers it without a card; kernl's tool then asks through kernl's approvals.
+- **Bypass permissions** in the agent's mode also skips kernl's cards for its tools (your deny rules still refuse).
+- Changing either setting restarts CLI agents at their next message.

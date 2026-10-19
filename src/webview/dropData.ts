@@ -21,21 +21,32 @@ const json = (text: string): unknown => {
 
 const fileUri = (path: string) => `file://${path.split("/").map(encodeURIComponent).join("/")}`;
 
+const uriLines = (text: string) => text.split(/\r?\n/).map((u) => u.trim()).filter((u) => u && !u.startsWith("#"));
+const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
+
 /**
- * The dropped URIs, from the richest format VS Code's Explorer provides: its own URI list (every
- * item, folders included), then `resourceurls` (files), `codefiles` (paths), and `text/uri-list`
- * (Chromium keeps only the first item there).
+ * Whether a drop is the panel's to handle: items from VS Code, files from the system, or links. A
+ * plain-text drop (moving text within the composer) isn't, and keeps the browser's own behavior.
  */
-export function droppedUris(data: DroppedData): string[] {
-  const list = (text: string) => text.split(/\r?\n/).map((u) => u.trim()).filter((u) => u && !u.startsWith("#"));
-  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
-  const code = list(data.getData("application/vnd.code.uri-list"));
+export function isPanelDrop(types: ReadonlyArray<string> | undefined): boolean {
+  return Array.from(types ?? []).some((t) => ["application/vnd.code.uri-list", "resourceurls", "codefiles", "text/uri-list", "files"].includes(t.toLowerCase()));
+}
+
+/**
+ * Items dragged from VS Code (the Explorer, an editor tab), from the richest format it provides: its
+ * own URI list (every item, folders included), then `resourceurls` (files), then `codefiles` (paths).
+ */
+export function vscodeUris(data: DroppedData): string[] {
+  const code = uriLines(data.getData("application/vnd.code.uri-list"));
   if (code.length) return code;
   const resources = strings(json(data.getData("resourceurls")));
   if (resources.length) return resources;
-  const paths = strings(json(data.getData("codefiles")));
-  if (paths.length) return paths.map(fileUri);
-  return list(data.getData("text/uri-list"));
+  return strings(json(data.getData("codefiles"))).map(fileUri);
+}
+
+/** Links in a drop's `text/uri-list` (from a browser, say; Chromium keeps only the first of VS Code's items there). */
+export function linkUris(data: DroppedData): string[] {
+  return uriLines(data.getData("text/uri-list"));
 }
 
 /** Read past this many bytes and the text can't fit in an attachment anyway (4 bytes a character at most). */

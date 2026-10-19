@@ -9,6 +9,8 @@ import { toGateRequest, toPermissionResponse } from "./permission";
 import { lookupKind } from "./readOnlyCommand";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { KERNL_SERVER_NAME } from "../mcp/kernlServer";
+import { cleanTerminalOutput } from "../terminal/output";
 import { type Attachment, attachmentNote, type ToolInfo } from "../ui/protocol";
 
 export interface AcpRunnerOptions {
@@ -24,6 +26,35 @@ export interface AcpRunnerOptions {
   log?: (line: string) => void;
   /** A one-line note for the transcript (e.g. an earlier conversation couldn't be reloaded). */
   notice?: (text: string) => void;
+  /** Read for every new, loaded, and forked session: MCP servers to give the agent (kernl's tools) and the agent's own session options (`_meta`). */
+  sessionSetup?: () => Promise<SessionSetup>;
+  /** A command the agent ran in its own shell (Codex), as its output streams: shown in a kernl terminal. */
+  commandOutput?: (event: CommandOutputEvent) => void;
+}
+
+export interface SessionSetup {
+  mcpServers: acp.McpServer[];
+  meta?: Record<string, unknown>;
+}
+
+/** One step of a command an agent runs itself: its start (command, folder), more output, or its end. */
+export interface CommandOutputEvent {
+  id: string;
+  command?: string;
+  cwd?: string;
+  data?: string;
+  exitCode?: number | null;
+}
+
+/**
+ * Whether a tool call is one of kernl's own tools (Claude Code `mcp__kernl__x`, Codex `mcp.kernl.x`,
+ * OpenCode `kernl_x`). Those ask through kernl's gate themselves, so the agent's own permission
+ * request for them is answered without a second card.
+ */
+export function isKernlTool(name: string | undefined): boolean {
+  if (!name) return false;
+  const n = KERNL_SERVER_NAME;
+  return name.startsWith(`mcp__${n}__`) || name.startsWith(`mcp.${n}.`) || name.startsWith(`${n}_`);
 }
 
 /** The session could not be confirmed to ask before every action; nothing was sent. */
@@ -39,6 +70,12 @@ interface CallState {
   locations?: { path: string; line?: number }[];
   rawInput: unknown;
   diff?: { path: string; before: string | null; after: string };
+  /** Completed or failed, and its result reported. Kept: an agent can still update it afterwards. */
+  ended?: boolean;
+  /** Output the agent streamed for a command it ran itself (Codex's terminal_output_delta). */
+  output?: string;
+  /** The agent's own name for the tool, when it sends one (Claude Code: `mcp__kernl__run_in_terminal`). */
+  toolName?: string;
 }
 
 /**
@@ -173,7 +210,8 @@ export class AcpRunner implements Runner {
   async forkSession(): Promise<unknown> {
     if (this.active) throw new Error("Stop the agent before forking.");
     if (!this.connection || !this.sessionId || !this.agentCapabilities?.sessionCapabilities?.fork) return undefined;
-    const forked = await this.connection.unstable_forkSession({ sessionId: this.sessionId, cwd: this.o.cwd, mcpServers: [] });
+    const setup = await this.setup();
+    const forked = await this.connection.unstable_forkSession({ sessionId: this.sessionId, cwd: this.o.cwd, mcpServers: setup.mcpServers, ...(setup.meta ? { _meta: setup.meta } : {}) });
     await this.forceMode(this.connection, forked as unknown as acp.NewSessionResponse);
     this.sessionId = forked.sessionId;
     return { sessionId: forked.sessionId };
@@ -226,12 +264,23 @@ export class AcpRunner implements Runner {
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>);
     const connection = new acp.ClientSideConnection(() => this.client(), stream);
     const init = await Promise.race([
-      connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } }),
+      // terminal_output_delta: an agent that runs commands in its own shell (Codex) streams their output to us.
+      connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, _meta: { terminal_output_delta: true } } }),
       exitReason.then((message) => Promise.reject(new Error(message))),
     ]);
     this.agentCapabilities = init.agentCapabilities;
     this.connection = connection;
     return connection;
+  }
+
+  /** The servers and options for a session; an HTTP server is left out (with a log line) when the agent can't reach HTTP MCP servers. */
+  private async setup(): Promise<SessionSetup> {
+    const setup = (await this.o.sessionSetup?.()) ?? { mcpServers: [] };
+    if (this.agentCapabilities?.mcpCapabilities?.http) return setup;
+    const isHttp = (s: acp.McpServer) => "type" in s && s.type === "http";
+    const http = setup.mcpServers.filter(isHttp);
+    if (http.length) this.o.log?.(`${this.o.agentLabel}: can't use HTTP MCP servers; not given ${http.map((s) => s.name).join(", ")}`);
+    return { ...setup, mcpServers: setup.mcpServers.filter((s) => !isHttp(s)) };
   }
 
   /** Opens a session if needed and confirms its ask mode before anything is sent. */
@@ -245,7 +294,8 @@ export class AcpRunner implements Runner {
       // The agent replays the old conversation as updates; the panel already shows it, so they're dropped.
       this.replaying = true;
       try {
-        const loaded = await conn.loadSession({ sessionId: resumeId, cwd: this.o.cwd, mcpServers: [] });
+        const setup = await this.setup();
+        const loaded = await conn.loadSession({ sessionId: resumeId, cwd: this.o.cwd, mcpServers: setup.mcpServers, ...(setup.meta ? { _meta: setup.meta } : {}) });
         const session = { ...loaded, sessionId: resumeId } as acp.NewSessionResponse;
         await this.forceMode(conn, session);
         this.sessionId = resumeId;
@@ -260,7 +310,8 @@ export class AcpRunner implements Runner {
     } else if (resumeId) {
       this.o.notice?.(`${this.o.agentLabel} can't reload earlier conversations; this message starts a new one.`);
     }
-    const session = await conn.newSession({ cwd: this.o.cwd, mcpServers: [] });
+    const setup = await this.setup();
+    const session = await conn.newSession({ cwd: this.o.cwd, mcpServers: setup.mcpServers, ...(setup.meta ? { _meta: setup.meta } : {}) });
     await this.forceMode(conn, session);
     this.sessionId = session.sessionId;
     return session.sessionId;
@@ -328,12 +379,19 @@ export class AcpRunner implements Runner {
   private toolCallUpdate(u: any) {
     const id = String(u.toolCallId);
     const call = this.calls.get(id) ?? { title: "tool", status: "pending", rawInput: {} };
+    // A call stays known after it ends: Claude Code's post-tool hook can update it after the result
+    // (claude-agent-acp renderer.hookResult), and that must not turn it back into a blank, pending row.
+    const ended = call.ended === true;
     if (u.title) call.title = String(u.title);
     else if (!this.calls.has(id) && u.kind) call.title = String(u.kind);
     if (u.kind) call.kind = String(u.kind);
-    if (u.status) call.status = String(u.status);
+    if (u.status && !ended) call.status = String(u.status);
     if (Array.isArray(u.locations)) call.locations = u.locations.filter((l: any) => l?.path).map((l: any) => ({ path: String(l.path), line: typeof l.line === "number" ? l.line : undefined }));
     if (u.rawInput !== undefined) call.rawInput = u.rawInput;
+    if (typeof u._meta?.claudeCode?.toolName === "string") call.toolName = u._meta.claudeCode.toolName;
+    // kernl's own terminal tools are commands: the row shows the command like the agent's own shell.
+    if ([call.toolName, call.title].some((n) => isKernlTool(n) && /(run_in_terminal|start_background_job)$/.test(n!))) call.kind = "execute";
+    this.commandOutput(id, call, u._meta);
     const diff = (u.content ?? []).find((c: any) => c?.type === "diff");
     if (diff) call.diff = { path: String(diff.path), before: diff.oldText ?? null, after: String(diff.newText ?? "") };
     this.calls.set(id, call);
@@ -347,8 +405,9 @@ export class AcpRunner implements Runner {
       ...(call.kind === "execute" ? describeCommand(call.rawInput, this.o.cwd) : {}),
     };
     this.o.events.toolCall(id, call.title, call.rawInput ?? {}, info);
-    if (call.status === "completed" || call.status === "failed") {
-      const out = (u.content ?? []).map((c: any) => unfenced(textOf(c))).filter(Boolean).join("\n");
+    if (!ended && (call.status === "completed" || call.status === "failed")) {
+      // A command's output may have come only as streamed chunks (Codex): then that is the result.
+      const out = (u.content ?? []).map((c: any) => unfenced(textOf(c))).filter(Boolean).join("\n") || (call.output ? cleanTerminalOutput(call.output).text : "");
       // A read image (or any image a tool returns) comes as an ACP image block: base64 and its type.
       const images = (u.content ?? [])
         .map((c: any) => (c?.type === "content" ? c.content : c))
@@ -356,8 +415,25 @@ export class AcpRunner implements Runner {
       // With an image, the preview is the output: no "completed" stand-in text.
       this.o.events.toolResult(id, call.title, out || (images.length ? "" : call.status), call.status === "failed");
       for (const b of images) this.o.events.toolImage?.(id, { mimeType: b.mimeType, data: b.data });
-      this.calls.delete(id);
+      call.ended = true;
     }
+  }
+
+  /** Codex's `_meta` on a command it runs itself: terminal_info (start), terminal_output_delta (output), terminal_exit (end). */
+  private commandOutput(id: string, call: CallState, meta: any) {
+    if (!meta || typeof meta !== "object") return;
+    const info = meta.terminal_info;
+    const delta = meta.terminal_output_delta;
+    const exit = meta.terminal_exit;
+    if (!info && !delta && !exit) return;
+    if (typeof delta?.data === "string") call.output = (call.output ?? "") + delta.data;
+    const command = describeCommand(call.rawInput, this.o.cwd).command;
+    this.o.commandOutput?.({
+      id,
+      ...(info ? { command, cwd: typeof info.cwd === "string" ? info.cwd : undefined } : {}),
+      ...(typeof delta?.data === "string" ? { data: delta.data } : {}),
+      ...(exit ? { exitCode: typeof exit.exit_code === "number" ? exit.exit_code : null } : {}),
+    });
   }
 
   private client(): acp.Client {
@@ -365,6 +441,9 @@ export class AcpRunner implements Runner {
       requestPermission: async (params) => {
         const run = this.active;
         if (!run || run.stopped) return toPermissionResponse(params.options, false, true);
+        const call = params.toolCall as any;
+        const known = this.calls.get(String(call.toolCallId));
+        if ([call._meta?.claudeCode?.toolName, known?.toolName, known?.title, call.title].some(isKernlTool)) return toPermissionResponse(params.options, true, false);
         const decision = await this.o.gate.decide(toGateRequest(this.o.agentLabel, params));
         return toPermissionResponse(params.options, decision, run.stopped);
       },

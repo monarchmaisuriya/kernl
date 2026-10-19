@@ -16,6 +16,8 @@ test("the agent's usual lookups fold in: searches and reads, through pipes and w
   assert.equal(lookupKind("cat package.json"), "read");
   assert.equal(lookupKind("head -n 50 src/a.ts && tail -n 20 src/a.ts"), "read");
   assert.equal(lookupKind("sed -n '1,80p' src/a.ts"), "read");
+  assert.equal(lookupKind("sed -n -e '/start/,/end/p' -e '$=' src/a.ts"), "read", "addresses with p and =");
+  assert.equal(lookupKind("sed -n '15,40p;100p' src/a.ts"), "read");
   assert.equal(lookupKind("wc -l src/*.ts 2>&1"), "read");
   assert.equal(lookupKind(`grep "a|b; c && d > e" src`), "search", "operators inside quotes are just text");
   assert.equal(lookupKind("grep foo src >/dev/null"), "search");
@@ -37,6 +39,14 @@ test("anything that could write a file or run a program stays a command", () => 
     "sed 's/a/b/' src/a.ts",
     "sed -n '/x/w out.txt' src/a.ts",
     "sed -n '1e date' src/a.ts",
+    // From the review: sed forms that write or run, which a list of forbidden forms missed.
+    "sed -n 's/a/b/gw out.txt' f",
+    "sed -n 's/a/b/ge' f",
+    "sed -n '$w out' f",
+    "sed -n '/x/Iw out' f",
+    "sed -n 's/a/b/w/tmp/out' f",
+    "sed -n -f script.sed f",
+    "sed -n 's/a/b/p' f",
     "rg --pre ./script.sh foo",
     "grep foo $(cat files.txt)",
     'grep "$(whoami)" src',

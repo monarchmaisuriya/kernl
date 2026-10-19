@@ -11,17 +11,31 @@ import { assertNavigableUrl } from "./urlPolicy";
 export class IntegratedBrowser implements vscode.Disposable {
   private ws: WebSocket | undefined;
   private session: vscode.DebugSession | undefined;
+  /** The connection being made; calls that arrive meanwhile share it instead of opening a second tab. */
+  private connecting: Promise<void> | undefined;
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   /** Every CDP method sent, in order. Lets tests prove a rejected action sent nothing. */
   readonly sentMethods: string[] = [];
 
+  /** `timeoutMs` is read for every call: how long one browser action (or a page load) may take. */
+  constructor(private timeoutMs: () => number = () => 30_000) {}
+
   get sessionType(): string | undefined {
     return this.session?.type;
   }
 
-  private async connect(): Promise<void> {
-    if (this.ws?.readyState === WebSocket.OPEN) return;
+  /** Connects on first use, and again after the tab was closed or its connection dropped. */
+  private connect(): Promise<void> {
+    if (this.ws?.readyState === WebSocket.OPEN) return Promise.resolve();
+    this.connecting ??= this.open().finally(() => (this.connecting = undefined));
+    return this.connecting;
+  }
+
+  private async open(): Promise<void> {
+    // A session left from a closed tab or a dropped connection is ended before a new one starts.
+    if (this.session) await vscode.debug.stopDebugging(this.session.parentSession ?? this.session).then(undefined, () => undefined);
+    this.session = undefined;
     const child = new Promise<vscode.DebugSession>((resolve, reject) => {
       const timer = setTimeout(() => {
         sub.dispose();
@@ -47,6 +61,8 @@ export class IntegratedBrowser implements vscode.Disposable {
       ws.once("open", () => resolve());
       ws.once("error", reject);
     });
+    // After it opens, an error is followed by "close", which fails the waiting calls; nothing else to do.
+    ws.on("error", () => {});
     ws.on("message", (raw) => {
       const msg = JSON.parse(String(raw));
       const waiter = msg.id !== undefined ? this.pending.get(msg.id) : undefined;
@@ -63,12 +79,21 @@ export class IntegratedBrowser implements vscode.Disposable {
     this.ws = ws;
   }
 
+  /** One CDP call; it fails after the browser timeout instead of waiting forever (a page script that never settles). */
   private async send(method: string, params: Record<string, unknown> = {}): Promise<any> {
     await this.connect();
     this.sentMethods.push(method);
     const id = this.nextId++;
-    this.ws!.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
+    const timeoutMs = this.timeoutMs();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`The integrated browser didn't answer ${method} within ${Math.round(timeoutMs / 1000)} s`));
+      }, timeoutMs);
+      const settle = <T>(fn: (v: T) => void) => (v: T) => (clearTimeout(timer), fn(v));
+      this.pending.set(id, { resolve: settle(resolve), reject: settle(reject) });
+      this.ws!.send(JSON.stringify({ id, method, params }));
+    });
   }
 
   async evaluate<T>(expression: string): Promise<T> {
@@ -77,7 +102,7 @@ export class IntegratedBrowser implements vscode.Disposable {
     return r.result.value as T;
   }
 
-  async navigate(url: string, timeoutMs = 15_000): Promise<void> {
+  async navigate(url: string, timeoutMs = this.timeoutMs()): Promise<void> {
     assertNavigableUrl(url);
     await this.send("Page.navigate", { url });
     const deadline = Date.now() + timeoutMs;

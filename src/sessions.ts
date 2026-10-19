@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { Attachment, HostToPanel } from "./ui/protocol";
+import { type Attachment, type HostToPanel, PREVIEW_TYPES } from "./ui/protocol";
 
 /**
  * Conversations per workspace, kept across window reloads (VS Code's workspace storage).
@@ -41,13 +41,32 @@ export interface SessionSummary {
   messages: number;
 }
 
-/** Image types kept as previews: raster only (an SVG can carry script and links), by file extension. */
-const PREVIEW_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
 export const PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
 const safeName = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_");
 
 export class SessionStore {
   constructor(private dir: string) {}
+
+  /** The write in progress (or last queued) per file. */
+  private writes = new Map<string, Promise<void>>();
+
+  /**
+   * Writes a file one save at a time, each to a temporary file renamed over the real one. Two saves
+   * of a conversation (the end of a run, a preview, New Chat) never interleave, and a reader never
+   * sees half a file.
+   */
+  private write(file: string, data: string | Uint8Array): Promise<void> {
+    const next = (this.writes.get(file) ?? Promise.resolve())
+      .catch(() => {}) // the earlier save's caller got its own error
+      .then(async () => {
+        const temporary = `${file}.${randomUUID().slice(0, 8)}.tmp`;
+        await writeFile(temporary, data);
+        await rename(temporary, file);
+      });
+    this.writes.set(file, next);
+    void next.finally(() => this.writes.get(file) === next && this.writes.delete(file)).catch(() => {});
+    return next;
+  }
 
   /**
    * Where tool images are kept, one folder per conversation; the panel may load files from here
@@ -85,7 +104,7 @@ export class SessionStore {
     s.title = base ? `${base}${s.forkOf ? " (fork)" : ""}` : s.title;
     s.updatedAt = Date.now();
     await mkdir(this.folder(workspaceKey), { recursive: true });
-    await writeFile(join(this.folder(workspaceKey), `${s.id}.json`), JSON.stringify(s));
+    await this.write(join(this.folder(workspaceKey), `${s.id}.json`), JSON.stringify(s));
   }
 
   async load(workspaceKey: string, id: string): Promise<SessionRecord | undefined> {
@@ -126,7 +145,7 @@ export class SessionStore {
     const file = this.queueFile(workspaceKey);
     if (!items.length) return rm(file, { force: true });
     await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(items));
+    await this.write(file, JSON.stringify(items));
   }
 
   async loadQueue(workspaceKey: string): Promise<QueuedMessage[]> {

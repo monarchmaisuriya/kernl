@@ -203,7 +203,12 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
   let location: ToolLocation | undefined;
   // The web page the call fetched or opened, if any.
   let page: URL | undefined;
+  // How the call ended (once it has), and the latest report of it: the line is always drawn from
+  // both, so a report that comes after the result can't erase "Failed:".
+  let ended: ToolStatus | undefined;
+  let latest = { n: name, a: args, raw: rawArgs, i: info };
   const show = (n: string, a: Record<string, unknown>, raw: string, i: ToolInfo) => {
+    latest = { n, a, raw, i };
     // A command leads with what it's for; the command itself follows in monospace. A web page shows
     // its site, not the whole address (that's in the tooltip and the opened row).
     page = (i.kind === "fetch" || n === "browser_navigate") && !i.command ? webPage(a.url) : undefined;
@@ -213,7 +218,9 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
         ? { action: n === "browser_navigate" ? "Opening" : "Fetch", target: page.hostname }
         : describeTool(n, a);
     undescribedCommand = !!i.command && !i.description;
-    action.textContent = d.action;
+    // "Failed: Find usages of x", "Stopped: Reading a.ts"; a command with no description: "Failed:" then the command.
+    const outcome = ended === "failed" ? "Failed:" : ended === "stopped" ? "Stopped:" : undefined;
+    action.textContent = outcome ? (undescribedCommand ? outcome : `${outcome} ${d.action}`) : d.action;
     target.textContent = d.target ?? "";
     target.hidden = !d.target;
     row.classList.toggle("command", !!i.command);
@@ -261,11 +268,9 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
   const settle = (state: ToolStatus) => {
     if (!running.delete(timer)) return;
     time.textContent = shownElapsed(Date.now() - timer.started);
-    // "Failed: Find usages of x" / "Stopped: Reading a.ts"; a command with no description reads "Failed: <command>".
-    const outcome = state === "failed" ? "Failed:" : state === "stopped" ? "Stopped:" : undefined;
-    if (outcome) action.textContent = undescribedCommand ? outcome : `${outcome} ${action.textContent}`;
-    else if (undescribedCommand) action.textContent = "Ran";
+    ended = state;
     row.dataset.status = state;
+    show(latest.n, latest.a, latest.raw, latest.i);
     tick();
   };
   return {
@@ -273,8 +278,10 @@ export function createToolRow(name: string, args: Record<string, unknown>, rawAr
     body,
     update: (n, a, raw, i) => show(n, a, raw, i),
     setResult(output, failed) {
-      // Web search hits become links, and their count shows on the line.
-      const hits = webHits(output);
+      // A web search's hits become links, and their count shows on the line. Only a search's: other
+      // output that happens to read "Title (https://…)" stays as it is.
+      const searching = latest.i.kind === "fetch" && !page && !latest.i.command;
+      const hits = searching ? webHits(output) : [];
       if (hits.length) {
         time.before(el("span", "tool-hits", `${hits.length} result${hits.length === 1 ? "" : "s"}`));
         const list = el("div", "tool-hit-list");

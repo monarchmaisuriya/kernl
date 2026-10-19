@@ -15,15 +15,36 @@ const READ_ONLY: Record<string, { lookup: Lookup; allows(args: string[]): boolea
   head: { lookup: "read", allows: () => true },
   tail: { lookup: "read", allows: () => true },
   wc: { lookup: "read", allows: () => true },
-  // sed only prints with -n; -i edits in place, and a script's w or e command writes a file or runs one.
-  sed: {
-    lookup: "read",
-    allows: (a) =>
-      a.some((x) => /^-[a-zA-Z]*n[a-zA-Z]*$/.test(x)) &&
-      !a.some((x) => /^-[a-zA-Z]*i/.test(x) || x.startsWith("--in-place")) &&
-      !a.some((x) => /(^|[;{}\s\d/])[wWe](\s|$)/.test(x)),
-  },
+  sed: { lookup: "read", allows: sedPrintsOnly },
 };
+
+/** A sed address: a line number, `$`, a step (`1~2`), or a /regex/ (optionally I). */
+const SED_ADDRESS = String.raw`(?:\d+(?:~\d+)?|\$|/(?:[^/\\]|\\.)*/I?)`;
+/** A sed script that only prints: commands of addresses plus `p`, `=`, or `l`, separated by `;`. */
+const SED_PRINT_SCRIPT = new RegExp(String.raw`^\s*(?:${SED_ADDRESS}(?:\s*,\s*${SED_ADDRESS})?\s*!?\s*[pl=]\s*(?:;\s*|$))+$`);
+
+/**
+ * sed counts as a read only when it prints and nothing else: quiet (-n), and every script made of
+ * addresses with p, =, or l. Anything else (in-place edits, scripts from a file, s///, w, e, ...)
+ * can write a file or run a program, so it's a plain command. An allowlist, not a list of what's
+ * forbidden: sed has too many ways to write.
+ */
+function sedPrintsOnly(args: string[]): boolean {
+  let quiet = false;
+  const scripts: string[] = [];
+  let operands = 0;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--quiet" || arg === "--silent") quiet = true;
+    else if (arg === "-e" || arg === "--expression") scripts.push(args[++i] ?? "");
+    else if (/^-[nEr]+$/.test(arg)) quiet ||= arg.includes("n");
+    else if (arg === "--regexp-extended") continue;
+    else if (arg.startsWith("-")) return false; // -i, -f, --in-place, --file, anything unknown
+    else if (!scripts.length && operands === 0) (scripts.push(arg), operands++);
+    else operands++;
+  }
+  return quiet && scripts.length > 0 && scripts.every((s) => SED_PRINT_SCRIPT.test(s));
+}
 
 /**
  * The simple commands in a command line (split at |, ||, &&, ;, and newlines), each as its unquoted

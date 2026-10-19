@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { CLI_AGENTS, OPENCODE_ASK_CONFIG, resolveLaunch } from "../../src/acp/agents";
+import { CLI_AGENTS, denyOpencodeBash, OPENCODE_ASK_CONFIG, resolveLaunch, sessionMeta } from "../../src/acp/agents";
 import { resolveCommand } from "../../src/acp/commands";
 import { AgentCredentials, credentialEnv, DEEPSEEK_ANTHROPIC_URL } from "../../src/acp/credentials";
 import { Redactor } from "../../src/log";
@@ -76,4 +76,25 @@ test("each agent offers only the permission modes it supports, each set through 
   const oc = resolveLaunch("opencode", { opencode: { command: "/opt/oc", args: ["acp"] } }, {}, "acceptEdits") as any;
   assert.equal(JSON.parse(oc.env.OPENCODE_CONFIG_CONTENT).permission.edit, "allow", "Edit automatically relaunches OpenCode with edits allowed");
   assert.equal(JSON.parse(oc.env.OPENCODE_CONFIG_CONTENT).permission.bash, "ask", "commands still ask");
+});
+
+test("with kernl's terminal, Claude Code's Bash is off and kernl's tools skip its own prompt; other agents get no session options", () => {
+  assert.deepEqual(sessionMeta("claude-code", { tools: true, terminal: true }), { claudeCode: { options: { allowedTools: ["mcp__kernl"], disallowedTools: ["Bash"] } } });
+  assert.deepEqual(sessionMeta("claude-code", { tools: true, terminal: false }), { claudeCode: { options: { allowedTools: ["mcp__kernl"] } } });
+  assert.equal(sessionMeta("claude-code", { tools: false, terminal: false }), undefined);
+  assert.equal(sessionMeta("codex", { tools: true, terminal: true }), undefined);
+  assert.equal(sessionMeta("opencode", { tools: true, terminal: true }), undefined);
+});
+
+test("with kernl's terminal, OpenCode's bash is denied on top of every mode's ask config, and only then", () => {
+  for (const mode of ["ask", "acceptEdits", "plan"] as const) {
+    const oc = resolveLaunch("opencode", { opencode: { command: "/opt/oc", args: ["acp"] } }, {}, mode, { tools: true, terminal: true }) as any;
+    const config = JSON.parse(oc.env.OPENCODE_CONFIG_CONTENT);
+    assert.equal(config.permission.bash, "deny", mode);
+    assert.equal(config.permission.edit, mode === "acceptEdits" ? "allow" : "ask", mode);
+    assert.equal(config.permission.webfetch, "ask", mode);
+  }
+  const own = resolveLaunch("opencode", { opencode: { command: "/opt/oc" } }, {}, "ask", { tools: true, terminal: false }) as any;
+  assert.equal(JSON.parse(own.env.OPENCODE_CONFIG_CONTENT).permission.bash, "ask");
+  assert.deepEqual(JSON.parse(denyOpencodeBash(undefined)), { permission: { bash: "deny" } });
 });

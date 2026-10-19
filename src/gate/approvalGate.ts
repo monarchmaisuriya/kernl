@@ -69,6 +69,8 @@ export class ApprovalGate {
       return false;
     }
     if (verdict === "allow") return true;
+    // A CLI agent in Bypass mode calling kernl's tools: the user chose no prompts (deny rules above still apply).
+    if (mode === "bypass") return true;
     if (mode === "acceptEdits" && (request.kind === "edit" || request.kind === "write") && !isSensitivePath(request.path)) return true;
     return this.prompter.ask(randomUUID(), request);
   }

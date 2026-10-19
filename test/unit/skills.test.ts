@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { buildAgent } from "../../src/agent/createAgent";
 import { skillSources } from "../../src/agent/skills";
+import { writeCommandSkills } from "../../src/sources/commands";
 import { toolCall, workspace } from "../support/harness";
 import { ScriptedChatModel } from "../support/scriptedModel";
 import { messageText } from "../support/harness";
@@ -23,7 +24,11 @@ async function run(trusted: boolean, script: any[] = []) {
   skill(join(claudeDir, "skills"), "release-notes", "Write release notes USER-CLAUDE-SKILL");
   skill(join(w.root, ".claude/skills"), "db-migrate", "Run database migrations PROJECT-CLAUDE-SKILL");
   skill(join(w.root, ".kernl/skills"), "deploy", "Deploy the service PROJECT-KERNL-SKILL");
-  const skills = skillSources({ userDir, claudeDir, projectRoot: w.root, trusted, gate: w.gate });
+  const imported = [
+    { dir: join(claudeDir, "skills"), origin: "Claude Code: ~/.claude/skills", project: false },
+    { dir: join(w.root, ".claude/skills"), origin: "Claude Code: project .claude/skills", project: true },
+  ];
+  const skills = skillSources({ userDir, imported, projectRoot: w.root, trusted, gate: w.gate });
   const model = new ScriptedChatModel(script);
   let seen = "";
   const original = model._generate.bind(model);
@@ -34,7 +39,7 @@ async function run(trusted: boolean, script: any[] = []) {
 
 test("skills from the user's and the project's folders are offered to the agent", async () => {
   const { seen, skills } = await run(true);
-  assert.deepEqual(skills.sources, ["/user-skills/claude/", "/.claude/skills/", "/.kernl/skills/"]);
+  assert.deepEqual(skills.sources, ["/user-skills/0/", "/user-skills/1/", "/.claude/skills/", "/.kernl/skills/"]);
   for (const marker of ["USER-CLAUDE-SKILL", "PROJECT-CLAUDE-SKILL", "PROJECT-KERNL-SKILL"]) assert.match(seen, new RegExp(marker));
 });
 
@@ -46,10 +51,25 @@ test("project skills don't load in Restricted Mode; the user's own still do", as
 
 test("the agent can read a user skill but can't write into the user's skill folder", async () => {
   const { out } = await run(true, [
-    toolCall("read_file", { file_path: "/user-skills/claude/release-notes/SKILL.md" }),
-    toolCall("write_file", { file_path: "/user-skills/claude/evil/SKILL.md", content: "x" }),
+    toolCall("read_file", { file_path: "/user-skills/0/release-notes/SKILL.md" }),
+    toolCall("write_file", { file_path: "/user-skills/0/evil/SKILL.md", content: "x" }),
   ]);
   const results = out.messages.filter((m: any) => m.getType?.() === "tool").map((m: any) => messageText(m.content));
   assert.match(results[0], /Steps for release-notes/);
   assert.match(results[1], /read-only/);
+});
+
+test("Claude Code commands written as skills pass Deep Agents' name check and reach the agent", async () => {
+  const w = workspace(true);
+  const commands = mkdtempSync(join(tmpdir(), "kernl-commands-"));
+  writeFileSync(join(commands, "deploy.md"), "---\ndescription: Ship it COMMAND-MARKER\n---\nDeploy.\n");
+  const { dir } = await writeCommandSkills([{ name: "render:Deploy", file: join(commands, "deploy.md"), origin: "Claude Code plugin render", project: false }], mkdtempSync(join(tmpdir(), "kernl-command-skills-")));
+  const skills = skillSources({ userDir: mkdtempSync(join(tmpdir(), "kernl-user-")), imported: [], commandsDir: dir, projectRoot: w.root, trusted: true, gate: w.gate });
+  const model = new ScriptedChatModel([]);
+  let seen = "";
+  const original = model._generate.bind(model);
+  model._generate = async (messages: any) => ((seen ||= JSON.stringify(messages.map((m: any) => m.content))), original(messages));
+  await buildAgent({ model, workspaceBackend: w.workspaceBackend, tools: [], loadProjectRules: false, skills }).invoke({ messages: [{ role: "user", content: "hi" }] }, { configurable: { thread_id: "t" } });
+  assert.match(seen, /render-deploy/);
+  assert.match(seen, /COMMAND-MARKER/);
 });

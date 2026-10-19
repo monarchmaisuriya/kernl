@@ -56,6 +56,13 @@ export interface Attachment {
   text?: string;
 }
 
+/**
+ * Image types kept as tool previews, by file extension: raster only (an SVG can carry script and
+ * links). The store saves `<conversation>/<call>-<id>.<ext>`; the panel loads only names of that shape.
+ */
+export const PREVIEW_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+export const PREVIEW_FILE = new RegExp(`^[\\w-]+/[\\w-]+\\.(${Object.values(PREVIEW_TYPES).join("|")})$`);
+
 /** Longest text attachment sent to an agent. */
 export const MAX_ATTACHED_TEXT = 20_000;
 
@@ -110,6 +117,8 @@ export interface WorkspaceView {
   /** The permission mode (see src/modes.ts) and the modes this workspace's agent supports. */
   mode: string;
   modes: ModeView[];
+  /** Why earlier turns can't be forked (this agent copies only its whole conversation); absent when any turn can. */
+  forkLimit?: string;
 }
 
 export interface ModeView {
@@ -206,8 +215,9 @@ export type PanelToHost =
   /** The composer's + button: the attachment menu. */
   | { type: "pickAttachments" }
   /** Files or folders dropped on the panel (file: URIs). */
-  /** `types`: what a drop that attached nothing carried (for kernl's log). */
-  | { type: "dropUris"; uris: string[]; types?: string[] }
+  | { type: "dropUris"; uris: string[] }
+  /** A drop that attached nothing: what it carried, for kernl's log. */
+  | { type: "dropIgnored"; types: string[] }
   /** Restore the files (and maybe the conversation) to how they were before this message. */
   | { type: "restore"; workspace: string; messageId: string }
   /** The footer's jobs chip: show or stop a background job. */
@@ -243,7 +253,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "menuPick", "showToolDiff", "openLocation"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "menuPick", "showToolDiff", "openLocation"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

@@ -104,13 +104,14 @@ body.vscode-reduce-motion .message-actions { transition: none; }
 .tool-group-failed { color: var(--vscode-errorForeground); }
 .tool-group-failed { flex: none; }
 .tool-group-files { display: inline-flex; gap: 4px; min-width: 0; overflow: hidden; }
-.tool-file-chip { display: inline-flex; align-items: center; gap: 3px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--border); font-size: 0.88em; white-space: nowrap; color: var(--muted); }
+.tool-file-chip { display: inline-flex; align-items: center; gap: 3px; min-width: 0; padding: 0 5px; border-radius: 4px; border: 1px solid var(--border); font-size: 0.88em; white-space: nowrap; color: var(--muted); }
+.tool-file-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tool-file-chip:hover { color: var(--vscode-foreground); }
 .tool-file-more { font-size: 0.88em; color: var(--muted); }
 .tool-group-thumbs { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
 .tool-group-rows { margin: 2px 0 4px 18px; display: flex; flex-direction: column; }
 /* A command: its description (cut with an ellipsis past 60%), then the command, dimmer */
-.tool.command .tool-action { flex: 0 1 auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool.command .tool-action { flex: 0 0 auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool.command .tool-target { color: var(--muted); }
 /* An image a call read or produced: a thumbnail on its line (and its group's), larger when opened */
 .tool-thumb { width: 24px; height: 24px; flex: none; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); }
@@ -256,9 +257,11 @@ button.chip:hover:not(:disabled) { background: var(--hover); color: var(--vscode
 
 /* Attachments and suggestions */
 .composer { position: relative; }
-.attachments { display: flex; flex-wrap: wrap; gap: 4px; }
+.attachments { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; max-width: 100%; }
 .attachment { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 2px 1px 6px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--vscode-badge-background, var(--hover)); color: var(--vscode-badge-foreground, inherit); font-size: 0.88em; }
-.attachment-remove { display: inline-flex; padding: 1px; color: inherit; }
+.attachment-remove { display: inline-flex; flex: none; padding: 1px; color: inherit; }
+/* A long name shortens with an ellipsis, so the chip (and its remove button) stays inside the composer */
+.attachment .chip-text { min-width: 0; }
 .user-attachments { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .user-attachments .attachment { padding-right: 6px; }
 .attach { padding: 3px; }

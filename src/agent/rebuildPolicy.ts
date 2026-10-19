@@ -6,7 +6,7 @@ export type InputChange =
   | { kind: "keys"; harnesses: string[] }
   /** The workspace became trusted (Restricted Mode ended). */
   | { kind: "trust" }
-  /** An instruction or agent file changed (AGENTS.md, .kernl/, ~/.kernl/). */
+  /** An instruction, agent, skill, or MCP config file changed (AGENTS.md, .kernl/, ~/.kernl/, the other agents' setup). */
   | { kind: "customisation" };
 
 export interface RuntimeShape {
@@ -15,7 +15,7 @@ export interface RuntimeShape {
 }
 
 // The inputs each harness is built from. Approval rules are read live by the gate, so they need no rebuild.
-const DEEP_AGENTS_SETTINGS = ["kernl.provider", "kernl.model", "kernl.baseUrl", "kernl.customProviders", "kernl.modelOptions", "kernl.sequentialThinking", "kernl.mcpServers"];
+const DEEP_AGENTS_SETTINGS = ["kernl.provider", "kernl.model", "kernl.baseUrl", "kernl.customProviders", "kernl.modelOptions", "kernl.sequentialThinking", "kernl.mcpServers", "kernl.mcp", "kernl.sources"];
 
 /** Named agents (`deepagents:<name>`) are built by the Deep Agents harness and depend on the same inputs. */
 const family = (harness: string) => (harness.startsWith("deepagents:") ? "deepagents" : harness);
@@ -33,6 +33,7 @@ export function needsRebuild(ws: RuntimeShape, change: InputChange): boolean {
     case "settings":
       if (ws.isMain && change.affects("kernl.harness") && change.mainHarness !== ws.harness) return true;
       if (harness === "deepagents") return DEEP_AGENTS_SETTINGS.some((s) => change.affects(s));
-      return change.affects("kernl.agentCommands");
+      // CLI agents: how they're launched, and whether their commands and browser go through kernl (Claude Code's Bash, OpenCode's bash config).
+      return change.affects("kernl.agentCommands") || change.affects("kernl.terminal.cliAgents") || change.affects("kernl.browser.cliAgents");
   }
 }

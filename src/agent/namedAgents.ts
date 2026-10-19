@@ -1,15 +1,18 @@
 import { readdir, readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { homedir } from "node:os";
+import { basename, join, relative, sep } from "node:path";
 import { ToolMessage } from "@langchain/core/messages";
 import { createMiddleware } from "langchain";
+import { type AgentFolder, shown } from "../sources/types";
 import { splitFrontmatter } from "./instructions";
 
 /**
  * Named agents: Markdown files in `~/.kernl/agents/` (the user's) and `.kernl/agents/`
  * (the project's, trusted workspaces only; a project agent replaces a user agent of the same name).
  * Frontmatter: `name`, `description`, optional `tools`, optional `model`. The body is the prompt.
- * Claude Code subagents (`~/.claude/agents/`, `.claude/agents/`) load too, translated by
- * `fromClaudeAgent`; on the same name, `.kernl/` wins over `.claude/`.
+ * Claude Code subagents load too (the Sources settings: `~/.claude/agents/`, enabled plugins' agents,
+ * the project's `.claude/agents/`), translated by `fromClaudeAgent`; on the same name, `.kernl/` wins
+ * over Claude Code's.
  * An agent can only have fewer tools than Deep Agents, never more, and every action it takes
  * still goes through the approval gate.
  */
@@ -27,7 +30,6 @@ export interface NamedAgent {
 }
 
 export const AGENTS_DIR = ".kernl/agents";
-export const CLAUDE_AGENTS_DIR = ".claude/agents";
 const NAME = /^[a-z0-9-]+$/;
 
 /** Claude Code tool names (without a `(specifier)`) and the kernl tool group each one needs. Reading is always allowed. */
@@ -112,13 +114,14 @@ async function loadDir(dir: string, label: string, parse = parseAgent): Promise<
   return { agents, problems };
 }
 
-/** Later sources win on the same name: ~/.claude, ~/.kernl, then the project's .claude and .kernl. */
-export async function loadNamedAgents(src: { userDir: string; claudeDir: string; projectRoot: string; trusted: boolean }): Promise<{ agents: NamedAgent[]; problems: string[] }> {
+/** Later sources win on the same name: Claude Code's user-level folders, ~/.kernl, then the project's Claude Code folders and .kernl. */
+export async function loadNamedAgents(src: { userDir: string; claudeFolders: readonly AgentFolder[]; projectRoot: string; trusted: boolean }): Promise<{ agents: NamedAgent[]; problems: string[] }> {
   const none = { agents: [], problems: [] };
+  const claude = (f: AgentFolder) => loadDir(f.dir, f.project ? `/${relative(src.projectRoot, f.dir).split(sep).join("/")}` : shown(f.dir, homedir()), fromClaudeAgent);
   const sources = [
-    await loadDir(join(src.claudeDir, "agents"), "~/.claude/agents", fromClaudeAgent),
+    ...(await Promise.all(src.claudeFolders.filter((f) => !f.project).map(claude))),
     await loadDir(join(src.userDir, "agents"), "~/.kernl/agents"),
-    src.trusted ? await loadDir(join(src.projectRoot, CLAUDE_AGENTS_DIR), `/${CLAUDE_AGENTS_DIR}`, fromClaudeAgent) : none,
+    ...(src.trusted ? await Promise.all(src.claudeFolders.filter((f) => f.project).map(claude)) : []),
     src.trusted ? await loadDir(join(src.projectRoot, AGENTS_DIR), `/${AGENTS_DIR}`) : none,
   ];
   const byName = new Map<string, NamedAgent>();

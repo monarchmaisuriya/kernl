@@ -8,12 +8,17 @@
 //   session-mode has no config options; confirms set_mode with a current_mode_update
 //   crash        exits with code 3 during the prompt
 //   cancel-on-reject  like write, but ends the turn as "cancelled" after a rejection (OpenCode does this)
+//   kernl-tools  calls the first tool of the "kernl" MCP server it was given (over HTTP, with its headers),
+//                asks permission for that call the way Codex does (title mcp.kernl.<tool>), and runs a
+//                command in its own shell, streaming its output only as terminal_output_delta (Codex)
+// FAKE_MCP_HTTP=1 advertises HTTP MCP servers. Every new, loaded, or forked session logs the MCP servers and _meta it got.
 // FAKE_LOAD=1 advertises session/load; loading replays one old message (the client must drop it).
 // FAKE_FORK=1 advertises session/fork (unstable); a fork is "<id>-fork".
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
+import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 
 const scenario = process.env.FAKE_SCENARIO ?? "write";
 const log = (line: string) => process.env.FAKE_LOG && appendFileSync(process.env.FAKE_LOG, `${line}\n`);
@@ -22,27 +27,40 @@ let mode = "auto";
 /** Set by session/cancel during the current prompt turn. */
 let cancelled = false;
 let sessionCount = 0;
+/** The MCP servers the last session was given. */
+let mcpServers: any[] = [];
+const setupLog = (what: string, p: any) => {
+  mcpServers = p.mcpServers ?? [];
+  log(`${what} mcp=${mcpServers.map((s: any) => `${s.name}:${s.type ?? "stdio"}`).join(",") || "none"} meta=${JSON.stringify(p._meta ?? null)}`);
+};
 
 const modeOption = () => ({ id: "mode", name: "Mode", type: "select", currentValue: mode, options: [{ value: "default", name: "Manual" }, { value: "auto", name: "Auto" }] });
 
 new acp.AgentSideConnection((conn) => ({
   async initialize() {
-    return { protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: { loadSession: process.env.FAKE_LOAD === "1", sessionCapabilities: process.env.FAKE_FORK === "1" ? { fork: {} } : {} }, authMethods: [] };
+    return {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      agentCapabilities: { loadSession: process.env.FAKE_LOAD === "1", sessionCapabilities: process.env.FAKE_FORK === "1" ? { fork: {} } : {}, mcpCapabilities: { http: process.env.FAKE_MCP_HTTP === "1" } },
+      authMethods: [],
+    };
   },
   async newSession(p: any) {
     cwd = p.cwd;
     log(`newSession cwd=${cwd}`);
+    setupLog("setup new", p);
     sessionCount++;
     if (scenario === "session-mode") return { sessionId: `s${sessionCount}`, modes: { currentModeId: "auto", availableModes: [{ id: "auto", name: "Auto" }, { id: "read-only", name: "Read-only" }] } };
     return { sessionId: `s${sessionCount}`, configOptions: [modeOption()] } as any;
   },
   async unstable_forkSession(p: any) {
     log(`forkSession ${p.sessionId}`);
+    setupLog("setup fork", p);
     return { sessionId: `${p.sessionId}-fork`, configOptions: [modeOption()] } as any;
   },
   async loadSession(p: any) {
     cwd = p.cwd;
     log(`loadSession ${p.sessionId}`);
+    setupLog("setup load", p);
     await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-OLD-MESSAGE" } } as any });
     return { configOptions: [modeOption()] } as any;
   },
@@ -91,6 +109,8 @@ new acp.AgentSideConnection((conn) => ({
       const grep = `cd ${cwd} && grep -n useRewards src`;
       await send({ sessionUpdate: "tool_call", toolCallId: "x1", title: grep, kind: "execute", status: "in_progress", rawInput: { command: grep, description: "Find usages of useRewards" } });
       await send({ sessionUpdate: "tool_call_update", toolCallId: "x1", status: "completed", content: [{ type: "content", content: { type: "text", text: "```console\nsrc/a.ts:3\n```" } }] });
+      // Claude Code's post-tool hook: a status-less update that can come after the result.
+      await send({ sessionUpdate: "tool_call_update", toolCallId: "x1", _meta: { claudeCode: { toolName: "Bash" } } });
       await send({ sessionUpdate: "tool_call", toolCallId: "e1", title: "Edit src/a.ts", kind: "edit", status: "in_progress" });
       await send({ sessionUpdate: "tool_call_update", toolCallId: "e1", status: "completed", content: [{ type: "diff", path: join(cwd, "src/a.ts"), oldText: "a\nb\n", newText: "a\nB\nc\n" }] });
       await send({ sessionUpdate: "plan", entries: [{ content: "Read the hook", status: "completed", priority: "high" }, { content: "Explain it", status: "in_progress", priority: "medium" }] });
@@ -100,6 +120,34 @@ new acp.AgentSideConnection((conn) => ({
       mode = "plan";
       await send({ sessionUpdate: "config_option_update", configOptions: [modeOption()] });
       await send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } });
+      return { stopReason: "end_turn" };
+    }
+    if (scenario === "kernl-tools") {
+      const send = (update: any) => conn.sessionUpdate({ sessionId, update });
+      const kernl = mcpServers.find((s: any) => s.name === "kernl" && s.type === "http");
+      if (kernl) {
+        const headers = Object.fromEntries((kernl.headers ?? []).map((h: any) => [h.name, h.value]));
+        const client = new MultiServerMCPClient({ mcpServers: { kernl: { transport: "http", url: kernl.url, headers } }, throwOnLoadError: true, prefixToolNameWithServerName: false } as any);
+        const [first] = await client.getTools();
+        await send({ sessionUpdate: "tool_call", toolCallId: "k1", title: `mcp.kernl.${first.name}`, kind: "other", status: "pending", rawInput: { command: "echo from agent" } });
+        const answer: any = await conn.requestPermission({
+          sessionId,
+          toolCall: { toolCallId: "k1", title: "MCP tool call approval", kind: "other" } as any,
+          options: [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "decline", name: "Decline", kind: "reject_once" },
+          ],
+        });
+        log(`kernl tool permission ${answer.outcome.optionId ?? answer.outcome.outcome}`);
+        const out = await first.invoke({ command: "echo from agent" });
+        await client.close();
+        await send({ sessionUpdate: "tool_call_update", toolCallId: "k1", status: "completed", content: [{ type: "content", content: { type: "text", text: String(typeof out === "string" ? out : JSON.stringify(out)) } }] });
+      }
+      // A command in the agent's own shell: its output arrives only as chunks, then its exit.
+      await send({ sessionUpdate: "tool_call", toolCallId: "sh1", title: "Run npm test", kind: "execute", status: "in_progress", rawInput: { command: "npm test" }, _meta: { terminal_info: { cwd, terminal_id: "sh1" } } });
+      await send({ sessionUpdate: "tool_call_update", toolCallId: "sh1", _meta: { terminal_output_delta: { data: "1 passing\r\n", terminal_id: "sh1" } } });
+      await send({ sessionUpdate: "tool_call_update", toolCallId: "sh1", _meta: { terminal_output_delta: { data: "\x1b[32mok\x1b[0m\r\n", terminal_id: "sh1" } } });
+      await send({ sessionUpdate: "tool_call_update", toolCallId: "sh1", status: "completed", _meta: { terminal_exit: { exit_code: 0, signal: null, terminal_id: "sh1" } } });
       return { stopReason: "end_turn" };
     }
     if (scenario === "crash") {

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ApprovalGate, isSensitivePath } from "../../src/gate/approvalGate";
 import { gatedTool, toolRule } from "../../src/gate/gatedTool";
 import { PendingApprovals } from "../../src/gate/pendingApprovals";
+import { parseRules } from "../../src/gate/rules";
 import { runScript, toolCall, workspace } from "../support/harness";
 
 test("credential-looking file names are sensitive", () => {
@@ -57,4 +58,15 @@ test("gatedTool asks before an 'ask' tool runs, never runs it on rejection, and 
   assert.deepEqual(asked, [{ kind: "tool", tool: "browser_navigate", args: { url: "http://x" } }, { kind: "tool", tool: "browser_navigate", args: { url: "http://x" } }]);
   assert.equal(toolRule(gatedTool(inner, gate(true), "allow")), "allow");
   assert.equal(toolRule(inner), undefined);
+});
+
+test("Bypass (a CLI agent calling kernl's tools) skips the card, but a deny rule still refuses", async () => {
+  const asked: unknown[] = [];
+  const denied: string[] = [];
+  const gate = new ApprovalGate({ ask: async (_id, r) => (asked.push(r), false) }, { rules: () => parseRules({ deny: ["run(rm *)"] }, []).rules, mode: () => "bypass", denied: (_r, rule) => denied.push(rule) });
+  assert.equal(await gate.request({ kind: "execute", command: "npm test" }), true);
+  assert.equal(await gate.request({ kind: "tool", tool: "browser_click", args: {} }), true);
+  assert.equal(await gate.request({ kind: "execute", command: "rm -rf build" }), false);
+  assert.deepEqual(asked, []);
+  assert.equal(denied.length, 1);
 });

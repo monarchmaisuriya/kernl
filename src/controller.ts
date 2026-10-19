@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import * as vscode from "vscode";
 import { CLI_AGENT_IDS, type CliAgentId, isCliAgentId } from "./acp/agents";
 import { resolveCommand } from "./acp/commands";
@@ -22,6 +23,9 @@ import { agentLogins, manageProviders, pickModel } from "./providerManager";
 import { KeyStore } from "./providers/keys";
 import { createChatModel, isProviderId, type ProviderId, resolveProvider, settingsProblem } from "./providers/registry";
 import { SessionStore, transcriptText } from "./sessions";
+import { loadSources, sourceRoots, sourceSettings, sourcesReport } from "./sources";
+import { KernlToolServer } from "./mcp/kernlServer";
+import { type McpServer, settingServers } from "./mcp/servers";
 import { panelSnapshot, toApprovalCard } from "./ui/approvalCards";
 import { AgentPanel } from "./ui/panel";
 import { PanelPrompts } from "./ui/panelPrompts";
@@ -40,9 +44,13 @@ function userCustomisationDir() {
   return process.env.KERNL_USER_DIR || join(homedir(), ".kernl");
 }
 
-/** Claude Code's own config folder, where it keeps agents/ and skills/. */
-function claudeConfigDir() {
-  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+/** A URL's host, for a prompt (the path or query can carry a token). */
+function hostOf(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "an address that isn't a valid URL";
+  }
 }
 
 function approvalRules() {
@@ -66,6 +74,10 @@ function readSettings() {
     agentCommands: c.get<unknown>("agentCommands", {}),
     harness: c.get<string>("harness", "deepagents"),
     thinkingDisplay: c.get<string>("thinkingDisplay", "auto"),
+    sources: sourceSettings(c),
+    mcpToolTimeoutSeconds: c.get<number>("mcp.toolTimeoutSeconds", 60),
+    terminal: { cliAgents: c.get<string>("terminal.cliAgents", "kernl") === "agent" ? ("agent" as const) : ("kernl" as const), outputLimit: c.get<number>("terminal.outputLimit", 30_000) },
+    browser: { cliAgents: c.get<boolean>("browser.cliAgents", true), timeoutSeconds: c.get<number>("browser.timeoutSeconds", 30) },
   };
 }
 
@@ -82,6 +94,10 @@ export class Controller implements vscode.Disposable {
   private requests = new Map<string, { workspace: WorkspaceRuntime; request: GateRequest }>();
   private workspaces = new Map<string, WorkspaceRuntime>();
   private sharedBrowser: IntegratedBrowser | undefined;
+  /** kernl's tools for the CLI agents (one MCP server for the window, one token per workspace). */
+  private toolServer = new KernlToolServer((line) => this.log.info(line));
+  /** Project MCP servers the user said "not now" to in this window (by fingerprint). */
+  private declinedServers = new Set<string>();
   private disposables: vscode.Disposable[] = [];
   private host: RuntimeHost;
   private commands: WorkspaceCommands;
@@ -118,7 +134,9 @@ export class Controller implements vscode.Disposable {
       sessions,
       checkpoints: new Checkpoints(join(context.globalStorageUri.fsPath, "checkpoints")),
       userDir: userCustomisationDir(),
-      claudeDir: claudeConfigDir(),
+      sources: (root, trusted) => this.loadSources(root, trusted),
+      allowProjectServer: (server) => this.allowProjectServer(server),
+      kernlTools: (tools) => this.toolServer.register(tools),
       apiKey: (provider) => (isProviderId(provider) ? this.keys.get(provider) : Promise.resolve(undefined)),
       agentEnv: async (id) => {
         const env = credentialEnv(id, await this.agentCredentials.get(id), join(context.globalStorageUri.fsPath, "agent-config"));
@@ -126,7 +144,7 @@ export class Controller implements vscode.Disposable {
         return env;
       },
       trusted: () => vscode.workspace.isTrusted,
-      browser: () => (this.sharedBrowser ??= new IntegratedBrowser()),
+      browser: () => (this.sharedBrowser ??= new IntegratedBrowser(() => readSettings().browser.timeoutSeconds * 1000)),
       workspacesChanged: () => this.postWorkspaces(),
     };
     this.commands = new WorkspaceCommands({
@@ -159,15 +177,23 @@ export class Controller implements vscode.Disposable {
 
   /** Instruction and agent files: in every workspace folder, and the user's own folder. One save can fire several events; they become one rebuild. */
   private watchCustomisationFiles(): vscode.Disposable[] {
+    const roots = sourceRoots();
     let timer: NodeJS.Timeout | undefined;
     const changed = () => {
       clearTimeout(timer);
       timer = setTimeout(() => void this.refreshNamedAgents().then(() => (this.inputsChanged({ kind: "customisation" }), this.postSkills())), 300);
     };
     const watchers = [
-      vscode.workspace.createFileSystemWatcher("**/{AGENTS.md,.kernl/**,.claude/agents/**,.claude/skills/**}"),
+      vscode.workspace.createFileSystemWatcher("**/{AGENTS.md,CLAUDE.md,.kernl/**,.claude/**,.mcp.json,.agents/skills/**,.codex/config.toml,.opencode/skills/**,opencode.json,opencode.jsonc}"),
       vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(userCustomisationDir()), "**")),
-      vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(claudeConfigDir()), "{agents,skills}/**")),
+      // The other agents' own setup (the Sources settings read it).
+      ...[
+        [roots.claudeDir, "{agents/**,skills/**,commands/**,CLAUDE.md,settings.json,plugins/installed_plugins.json}"],
+        [dirname(roots.claudeJson), basename(roots.claudeJson)],
+        [roots.codexDir, "config.toml"],
+        [join(roots.home, ".agents"), "skills/**"],
+        [roots.opencodeDir, "{opencode.json,opencode.jsonc,skills/**}"],
+      ].map(([dir, glob]) => vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(dir), glob))),
     ];
     for (const w of watchers) w.onDidChange(changed), w.onDidCreate(changed), w.onDidDelete(changed);
     return [...watchers, { dispose: () => clearTimeout(timer) }];
@@ -382,7 +408,7 @@ export class Controller implements vscode.Disposable {
     type Item = vscode.QuickPickItem & { id?: string };
     const items: Item[] = [
       { label: "$(add) New conversation" },
-      ...sessions.map((s) => ({ label: `${s.id === ws.sessionId ? "$(check) " : ""}${s.title}`, description: `${s.messages} message(s) · ${label(s.harness)} · ${ago(s.updatedAt)}`, id: s.id })),
+      ...sessions.map((s) => ({ label: `${s.id === ws.sessionId ? "$(check) " : ""}${s.title}`, description: `${messages(s.messages)} · ${label(s.harness)} · ${ago(s.updatedAt)}`, id: s.id })),
     ];
     const picked = await this.prompts.pick(items, { title: `Conversations in ${ws.view().label}` });
     if (!picked) return;
@@ -444,7 +470,7 @@ export class Controller implements vscode.Disposable {
     await ws.saveSession();
     const sessions = (await this.host.sessions.list(ws.sessionKey)).filter((s) => s.id !== ws.sessionId);
     if (!sessions.length) return void vscode.window.showInformationMessage("No other conversations in this workspace yet.");
-    const picked = await this.prompts.pick(sessions.map((s) => ({ label: s.title, description: `${s.messages} message(s)`, id: s.id })), { title: "Attach a conversation" });
+    const picked = await this.prompts.pick(sessions.map((s) => ({ label: s.title, description: messages(s.messages), id: s.id })), { title: "Attach a conversation" });
     const record = picked && (await this.host.sessions.load(ws.sessionKey, picked.id));
     if (record) this.panel.post({ type: "addAttachments", items: [{ kind: "text", path: `Conversation: ${record.title}`, text: transcriptText(record) }] });
   }
@@ -490,15 +516,22 @@ export class Controller implements vscode.Disposable {
     if (!uris.length) return;
     const shown = this.workspace(this.active);
     if (!shown) return;
-    const { attachments, outside } = await resolveUris(shown.root, uris);
+    const { attachments, outside, unusable } = await resolveUris(shown.root, uris);
     if (attachments.length) this.panel.post({ type: "addAttachments", items: attachments });
     if (outside.length) void vscode.window.showWarningMessage(outsideMessage(outside, shown, [...this.workspaces.values()]));
+    if (unusable.length) {
+      // Links, or items from a remote window: nothing here can be attached as a file.
+      this.log.info(`couldn't attach ${unusable.length} dropped item(s) that aren't local files: ${unusable.slice(0, 5).join(", ")}`);
+      void vscode.window.showWarningMessage(`kernl attaches files in this window's folders; couldn't attach ${unusable.slice(0, 3).join(", ")}${unusable.length > 3 ? ` and ${unusable.length - 3} more` : ""}.`);
+    }
     await this.panel.reveal();
   }
 
   private async postSkills() {
     const root = this.activeFolder()?.root ?? "";
-    this.panel.post({ type: "skills", items: await listSkills({ userDir: userCustomisationDir(), claudeDir: claudeConfigDir(), projectRoot: root, trusted: vscode.workspace.isTrusted && !!root }) });
+    const trusted = vscode.workspace.isTrusted && !!root;
+    const { imports, commandsDir } = await this.loadSources(root, trusted);
+    this.panel.post({ type: "skills", items: await listSkills({ userDir: userCustomisationDir(), imported: imports.skillFolders, commandsDir, projectRoot: root, trusted }) });
   }
 
   /** The command (walkthrough, palette): same menu as the agent chip, for the shown workspace. */
@@ -540,8 +573,55 @@ export class Controller implements vscode.Disposable {
 
   private async refreshNamedAgents() {
     const root = this.activeFolder()?.root;
-    const { agents } = await loadNamedAgents({ userDir: userCustomisationDir(), claudeDir: claudeConfigDir(), projectRoot: root ?? "", trusted: vscode.workspace.isTrusted && !!root });
+    const trusted = vscode.workspace.isTrusted && !!root;
+    const { imports } = await this.loadSources(root ?? "", trusted);
+    const { agents } = await loadNamedAgents({ userDir: userCustomisationDir(), claudeFolders: imports.agentFolders, projectRoot: root ?? "", trusted });
     this.namedHarnesses = agents.map((a) => ({ id: NAMED_AGENT_PREFIX + a.name, label: `kernl: ${a.name}` }));
+  }
+
+  /** What kernl's own agent reuses from Claude Code, Codex, and OpenCode for one folder (the Sources settings). */
+  private loadSources(root: string, trusted: boolean) {
+    return loadSources(sourceRoots(), { root, trusted }, readSettings().sources, join(this.context.globalStorageUri.fsPath, "command-skills"));
+  }
+
+  /**
+   * A project's MCP server (.mcp.json, .codex/config.toml, opencode.json) starts only after you allow it
+   * once in this workspace. The answer is kept for that exact server: if its command or URL changes, kernl asks again.
+   * "Not now" is kept until the window closes.
+   */
+  private async allowProjectServer(server: McpServer): Promise<boolean> {
+    const key = `kernl.allowedMcpServer.${server.name}`;
+    const fingerprint = createHash("sha256").update(JSON.stringify(server.connection)).digest("hex");
+    if (this.context.workspaceState.get(key) === fingerprint) return true;
+    if (this.declinedServers.has(fingerprint)) return false;
+    const c = server.connection;
+    const what = "command" in c ? `runs the program ${c.command}` : `connects to ${hostOf(c.url)}`;
+    const pick = await vscode.window.showWarningMessage(
+      `Start the project's MCP server "${server.name}"?`,
+      { modal: true, detail: `${server.origin} adds an MCP server that ${what}. kernl's agent starts it only if you allow it; each of its tools still asks before it runs.` },
+      "Allow",
+    );
+    if (pick === "Allow") {
+      await this.context.workspaceState.update(key, fingerprint);
+      return true;
+    }
+    this.declinedServers.add(fingerprint);
+    return false;
+  }
+
+  /** The Sources view: what kernl's own agent uses from the other agents' setup for the shown folder, as a Markdown document. */
+  async showSources() {
+    const root = this.activeFolder()?.root ?? "";
+    const trusted = vscode.workspace.isTrusted && !!root;
+    const { imports } = await this.loadSources(root, trusted);
+    let own: string[] = [];
+    try {
+      own = settingServers(readSettings().mcpServers).map((s) => s.name);
+    } catch (err: any) {
+      imports.skipped.push({ item: "kernl.mcpServers", origin: "Settings", reason: err?.message ?? String(err) });
+    }
+    const doc = await vscode.workspace.openTextDocument({ language: "markdown", content: sourcesReport(imports, { mcpServers: own }) });
+    await vscode.window.showTextDocument(doc, { preview: true });
   }
 
   private postWorkspaces(focus?: string) {
@@ -570,14 +650,18 @@ export class Controller implements vscode.Disposable {
   }
 
   /** A tool row's file: opened in the editor (at the line when the agent gave one); only files inside the workspace. */
+  /**
+   * Opens a file a tool row names, in the editor that suits it (text, image, ...). Only files in the
+   * window's own folders: an agent's output can name any path, and a click shouldn't open one
+   * outside what you've opened in VS Code.
+   */
   private async openLocation(workspaceId: string, path: string, line?: number) {
     const ws = this.workspace(workspaceId);
     if (!ws) return;
-    const file = isAbsolute(path) ? path : join(ws.root, path);
-    const inside = relative(ws.root, file);
-    if (inside.startsWith("..") || isAbsolute(inside)) return void vscode.window.showWarningMessage(`kernl only opens files inside ${ws.label}: ${path}`);
+    const uri = vscode.Uri.file(isAbsolute(path) ? path : join(ws.root, path));
+    if (!vscode.workspace.getWorkspaceFolder(uri)) return void vscode.window.showWarningMessage(`kernl only opens files inside this window's folders: ${path}`);
     const position = line !== undefined && line > 0 ? new vscode.Position(line - 1, 0) : undefined;
-    await vscode.window.showTextDocument(vscode.Uri.file(file), { selection: position && new vscode.Range(position, position), preview: true });
+    await vscode.commands.executeCommand("vscode.open", uri, { selection: position && new vscode.Range(position, position), preview: true });
   }
 
   private closeApproval(id: string) {
@@ -639,9 +723,10 @@ export class Controller implements vscode.Disposable {
       case "pickAttachments":
         return this.anchored("attach", () => this.pickAttachments());
       case "dropUris":
-        // A drop that attached nothing: log what it carried, so the next "drop does nothing" can be diagnosed.
-        if (!m.uris.length) return void this.log.info(`a drop on the panel attached nothing; it carried: ${(m.types ?? []).join(", ") || "no data"}`);
         return this.attachUris(m.uris);
+      case "dropIgnored":
+        // Logged, so the next "a drop does nothing" can be diagnosed from what it carried.
+        return void this.log.info(`a drop on the panel attached nothing; it carried: ${m.types.join(", ") || "no data"}`);
       case "restore":
         return this.anchored(`restore:${m.messageId}`, () => this.restore(m.workspace, m.messageId));
       case "pickJob":
@@ -873,6 +958,10 @@ export class Controller implements vscode.Disposable {
   dispose() {
     for (const ws of this.workspaces.values()) ws.dispose();
     void this.sharedBrowser?.dispose();
+    void this.toolServer.dispose();
     for (const d of this.disposables) d.dispose();
   }
 }
+
+/** "1 message", "3 messages". */
+const messages = (n: number) => `${n} message${n === 1 ? "" : "s"}`;

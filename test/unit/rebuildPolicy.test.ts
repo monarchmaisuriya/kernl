@@ -52,3 +52,14 @@ test("an instruction or agent file change rebuilds Deep Agents workspaces only",
   assert.equal(needsRebuild(worktree("deepagents"), { kind: "customisation" }), true);
   assert.equal(needsRebuild(main("claude-code"), { kind: "customisation" }), false);
 });
+
+test("the Terminal and Browser settings for CLI agents rebuild CLI workspaces; Sources and MCP settings rebuild Deep Agents ones", () => {
+  for (const key of ["kernl.terminal.cliAgents", "kernl.browser.cliAgents"]) {
+    assert.equal(needsRebuild(worktree("claude-code"), settings([key])), true, key);
+    assert.equal(needsRebuild(worktree("deepagents"), settings([key])), false, key);
+  }
+  for (const key of ["kernl.sources.claudeCode.skills", "kernl.mcp.toolTimeoutSeconds"]) {
+    assert.equal(needsRebuild(worktree("deepagents"), settings([key])), true, key);
+    assert.equal(needsRebuild(worktree("codex"), settings([key])), false, key);
+  }
+});

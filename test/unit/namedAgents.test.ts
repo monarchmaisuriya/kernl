@@ -22,7 +22,11 @@ function dirs(user: Record<string, string>, project: Record<string, string>, cla
   put(join(projectRoot, ".kernl/agents"), project);
   put(join(claudeDir, "agents"), claude.user);
   put(join(projectRoot, ".claude/agents"), claude.project);
-  return { userDir, claudeDir, projectRoot };
+  const claudeFolders = [
+    { dir: join(claudeDir, "agents"), origin: "Claude Code: ~/.claude/agents", project: false },
+    { dir: join(projectRoot, ".claude/agents"), origin: "Claude Code: project .claude/agents", project: true },
+  ];
+  return { userDir, claudeFolders, projectRoot };
 }
 
 const REVIEWER = "---\ndescription: Reviews changes; never edits\ntools: [run]\nmodel: small-model\n---\nYou review diffs and report problems.\n";

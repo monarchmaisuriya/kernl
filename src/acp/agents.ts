@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { KERNL_SERVER_NAME } from "../mcp/kernlServer";
 import type { PermissionMode } from "../modes";
 import { resolveCommand } from "./commands";
 
@@ -127,15 +128,40 @@ export function isCliAgentId(value: unknown): value is CliAgentId {
   return typeof value === "string" && (CLI_AGENT_IDS as readonly string[]).includes(value);
 }
 
+/** How a CLI agent uses kernl's tools (the Terminal and Browser settings). */
+export interface KernlToolUse {
+  /** kernl's tools are offered to the agent at all (an MCP server named "kernl"). */
+  tools: boolean;
+  /** Commands go through kernl's run_in_terminal: the agent's own shell tool is off (Claude Code, OpenCode; Codex keeps its shell). */
+  terminal: boolean;
+}
+
+/**
+ * Claude Code's session options: kernl's tools run without Claude Code's own prompt (kernl's gate
+ * asks, so you see one card), and with kernl's terminal its Bash tool is off. Other agents: none.
+ */
+export function sessionMeta(id: CliAgentId, use: KernlToolUse): Record<string, unknown> | undefined {
+  if (id !== "claude-code" || !use.tools) return undefined;
+  return { claudeCode: { options: { allowedTools: [`mcp__${KERNL_SERVER_NAME}`], ...(use.terminal ? { disallowedTools: ["Bash"] } : {}) } } };
+}
+
+/** OpenCode's permission config with its bash tool denied, so its commands go through kernl's terminal. */
+export function denyOpencodeBash(config: string | undefined): string {
+  const parsed = config ? JSON.parse(config) : {};
+  return JSON.stringify({ ...parsed, permission: { ...(parsed.permission ?? {}), bash: "deny" } });
+}
+
 /**
  * The launch for an agent: the user's override from kernl.agentCommands, else the default.
  * `credentialEnv` (a stored API key) is layered on top of either; nothing overrides the
- * permission mode's environment (OpenCode's ask-forcing config).
+ * permission mode's environment (OpenCode's ask-forcing config, with bash denied when its
+ * commands go through kernl's terminal).
  */
-export function resolveLaunch(id: CliAgentId, overrides: unknown, credentialEnv: Record<string, string> = {}, mode: PermissionMode = "ask"): Launch | { error: string } {
+export function resolveLaunch(id: CliAgentId, overrides: unknown, credentialEnv: Record<string, string> = {}, mode: PermissionMode = "ask", use?: KernlToolUse): Launch | { error: string } {
   const spec = CLI_AGENTS[id];
   const override = (overrides as Record<string, any> | undefined)?.[id];
-  const forced: Record<string, string> = (spec.modes[mode] ?? spec.modes.ask).env ?? {};
+  const forced: Record<string, string> = { ...((spec.modes[mode] ?? spec.modes.ask).env ?? {}) };
+  if (id === "opencode" && use?.tools && use.terminal) forced.OPENCODE_CONFIG_CONTENT = denyOpencodeBash(forced.OPENCODE_CONFIG_CONTENT);
   let base: Launch | { error: string };
   if (override === undefined) base = spec.launch();
   else if (typeof override?.command !== "string" || (override.args !== undefined && !Array.isArray(override.args))) {

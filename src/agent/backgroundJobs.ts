@@ -3,6 +3,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import type { ApprovalGate } from "../gate/approvalGate";
 import { gatedTool } from "../gate/gatedTool";
+import { NO_PAGER } from "../terminal/output";
 
 /**
  * Long-running commands the kernl agent starts and keeps going between messages: dev servers,
@@ -42,7 +43,7 @@ export class BackgroundJobs {
     const id = `job-${this.next++}`;
     const shell = process.env.SHELL || "/bin/sh";
     // Its own process group, so stopping it also stops whatever it started (npm -> node, etc.).
-    const child = spawn(shell, ["-lc", command], { cwd: this.cwd, detached: true, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    const child = spawn(shell, ["-lc", command], { cwd: this.cwd, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...NO_PAGER } });
     const view: JobView = { id, name: name?.trim() || command.slice(0, 40), command, status: "running", exitCode: null };
     const job: Job = { ...view, child, output: "", display: this.display(view) };
     const take = (chunk: Buffer) => {

@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { ApprovalGate } from "../../src/gate/approvalGate";
 import { toolRule } from "../../src/gate/gatedTool";
-import { loadMcpTools, toMcpConnections } from "../../src/mcp/servers";
+import { loadMcpTools, mergeServers, type McpServer, settingServers } from "../../src/mcp/servers";
 
 const serverScript = resolve(__dirname, "mcpShoutServer.mjs");
 
@@ -13,7 +13,8 @@ async function withShoutTool(approve: boolean, fn: (shout: any, callLog: string,
   const callLog = join(mkdtempSync(join(tmpdir(), "kernl-mcp-")), "calls.txt");
   const asked: unknown[] = [];
   const gate = new ApprovalGate({ ask: async (_id, r) => (asked.push(r), approve) }, { rules: () => [] });
-  const { tools, close } = await loadMcpTools({ shout: { command: process.execPath, args: [serverScript], env: { SHOUT_CALL_LOG: callLog } } }, gate);
+  const servers = settingServers({ shout: { command: process.execPath, args: [serverScript], env: { SHOUT_CALL_LOG: callLog } } });
+  const { tools, close } = await loadMcpTools(servers, gate, { timeoutMs: 30_000, allowProjectServer: async () => true });
   try {
     const shout = tools.find((t) => t.name.includes("shout"));
     assert.ok(shout, `tools loaded: ${tools.map((t) => t.name)}`);
@@ -41,7 +42,53 @@ test("an approved MCP tool call runs on the server and returns its result", asyn
 });
 
 test("a malformed server setting names the server", () => {
-  assert.throws(() => toMcpConnections({ broken: { cmd: "x" } }), /kernl.mcpServers.broken to have a "command" or a "url"/);
-  assert.throws(() => toMcpConnections([]), /Expected kernl.mcpServers to be an object/);
-  assert.deepEqual(toMcpConnections({}), {});
+  assert.throws(() => settingServers({ broken: { cmd: "x" } }), /kernl.mcpServers.broken to have a "command" or a "url"/);
+  assert.throws(() => settingServers([]), /Expected kernl.mcpServers to be an object/);
+  assert.deepEqual(settingServers({}), []);
+});
+
+const shoutServer = (name: string, project: boolean): McpServer => ({ name, origin: project ? "Claude Code: project .mcp.json" : "kernl.mcpServers", project, connection: { command: process.execPath, args: [serverScript], env: {} } });
+const askNever = new ApprovalGate({ ask: async () => false }, { rules: () => [] });
+
+test("a server that can't start is reported with its reason, and the others still load", async () => {
+  const broken: McpServer = { name: "broken", origin: "Codex: ~/.codex/config.toml", project: false, connection: { command: join(tmpdir(), "kernl-no-such-program"), args: [] } };
+  const { tools, failures, close } = await loadMcpTools([broken, shoutServer("shout", false)], askNever, { timeoutMs: 30_000, allowProjectServer: async () => true });
+  try {
+    assert.ok(tools.some((t) => t.name.includes("shout")), `tools loaded: ${tools.map((t) => t.name)}`);
+    assert.deepEqual(failures.map((f) => [f.server, f.origin]), [["broken", "Codex: ~/.codex/config.toml"]]);
+  } finally {
+    await close();
+  }
+});
+
+test("a server that never answers is given up on after the timeout", async () => {
+  // A program that never speaks MCP (it ends by itself after 3 s, so the test leaves nothing running).
+  const silent: McpServer = { name: "silent", origin: "kernl.mcpServers", project: false, connection: { command: process.execPath, args: ["-e", "setTimeout(() => {}, 3000)"] } };
+  const started = Date.now();
+  const { tools, failures, close } = await loadMcpTools([silent], askNever, { timeoutMs: 500, allowProjectServer: async () => true });
+  await close();
+  assert.deepEqual(tools, []);
+  assert.match(failures[0]?.reason ?? "", /didn't answer within/);
+  assert.ok(Date.now() - started < 2_000, `gave up after ${Date.now() - started} ms`);
+});
+
+test("a project server starts only when allowed; your own servers never ask", async () => {
+  const asked: string[] = [];
+  const { tools, failures, close } = await loadMcpTools([shoutServer("mine", false), shoutServer("theirs", true)], askNever, {
+    timeoutMs: 30_000,
+    allowProjectServer: async (s) => (asked.push(s.name), false),
+  });
+  await close();
+  assert.deepEqual(asked, ["theirs"]);
+  assert.ok(tools.every((t) => !t.name.includes("theirs")) && tools.some((t) => t.name.includes("mine")));
+  assert.deepEqual(failures.map((f) => [f.server, f.reason]), [["theirs", "not allowed to start in this workspace"]]);
+});
+
+test("kernl.mcpServers wins over an imported server of the same name, and the clash is reported", () => {
+  const { servers, skipped } = mergeServers(settingServers({ db: { url: "http://localhost:1/mcp" } }), [
+    { name: "db", origin: "Claude Code: ~/.claude.json", project: false, connection: { command: "x", args: [] } },
+    { name: "docs", origin: "Codex: ~/.codex/config.toml", project: false, connection: { url: "http://localhost:2/mcp", transport: "http" } },
+  ]);
+  assert.deepEqual(servers.map((s) => [s.name, s.origin]), [["db", "kernl.mcpServers"], ["docs", "Codex: ~/.codex/config.toml"]]);
+  assert.deepEqual(skipped, [{ item: "MCP server db", origin: "Claude Code: ~/.claude.json", reason: "same name as the one from kernl.mcpServers" }]);
 });
