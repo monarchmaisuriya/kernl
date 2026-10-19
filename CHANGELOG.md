@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-19
+
 ### Added
 
 - Agents can read your terminals: `terminal_list`, `terminal_read` (the commands run in any terminal since VS Code started, yours included, with output, folder, and exit code), and `terminal_selection`. Reading doesn't ask; kernl's known secrets are removed from the output. See [terminal and browser](docs/guides/terminal-and-browser.md).
@@ -107,7 +109,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/pushowl/kernl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/pushowl/kernl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/pushowl/kernl/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pushowl/kernl/releases/tag/v0.1.0
