@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-19
+
 ### Added
 
 - **kernl: Show connections**: every agent login, stored key, MCP server (claude.ai connectors included), and Claude Code plugin, with its state, what its source said, when it was checked, and a fix (Log in, Set key, Check now). Also in the panel's `...` menu, and as a warning button beside the agent chip.
@@ -83,6 +85,7 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/pushowl/kernl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/pushowl/kernl/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pushowl/kernl/releases/tag/v0.1.0
