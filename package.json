@@ -19,7 +19,9 @@
     "vscode": "^1.140.0"
   },
   "main": "./out/extension.cjs",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",

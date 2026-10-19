@@ -31,7 +31,10 @@ import { createChatModel, type ProviderAuth, type ProviderSettings, type Resolve
 import { jobTerminal } from "./terminal/jobTerminal";
 import { CommandMirror } from "./terminal/mirror";
 import { TerminalRunner } from "./terminal/runner";
-import { runInTerminalTool } from "./terminal/tool";
+import type { CoreTerminalTools } from "./terminal/coreTools";
+import type { TerminalHistory } from "./terminal/history";
+import { terminalReadTools } from "./terminal/readTools";
+import { runInTerminalTool, sendInputTool } from "./terminal/tool";
 import { gatedTool } from "./gate/gatedTool";
 import type { AgentOptionView, Attachment, HostToPanel, SendMode, WorkspaceView } from "./ui/protocol";
 import type { Checkpoints } from "./checkpoints";
@@ -97,6 +100,12 @@ export interface RuntimeHost {
   trusted(): boolean;
   browser(): IntegratedBrowser;
   workspacesChanged(): void;
+  /** The window's terminals and what ran in them (see src/terminal/history.ts). */
+  terminalHistory(): TerminalHistory;
+  /** VS Code's own active-terminal tools (screen and selection), when present. */
+  coreTerminalTools(): CoreTerminalTools | undefined;
+  /** Removes kernl's known secrets (stored keys, header values) from text an agent will read. */
+  scrub(text: string): string;
   /** VS Code's per-window state (workspaceState): the CLI agents' remembered model, thinking, and fast-mode choices. */
   state: Pick<vscode.Memento, "get" | "update">;
 }
@@ -988,9 +997,11 @@ export class WorkspaceRuntime {
     const tools: StructuredToolInterface[] = [];
     if (s.terminal.cliAgents === "kernl") {
       tools.push(gatedTool(runInTerminalTool(this.toolGate, (command, signal) => this.kernlTerminal().run(command, signal)) as any, this.toolGate, "allow"));
+      tools.push(gatedTool(sendInputTool(this.toolGate, (text, signal) => this.kernlTerminal().sendInput(text, signal)) as any, this.toolGate, "allow"));
       tools.push(...jobTools(this.backgroundJobs(), this.toolGate));
     }
     if (s.browser.cliAgents) tools.push(...browserTools(this.host.browser(), this.toolGate));
+    tools.push(...terminalReadTools(this.host.terminalHistory(), this.toolGate, this.host.coreTerminalTools(), this.host.scrub));
     return tools;
   }
 
@@ -1087,7 +1098,14 @@ export class WorkspaceRuntime {
     const agent = buildAgent({
       ...common,
       workspaceBackend: new GatedBackend(this.root, this.gate, new VscodeWorkspaceFiles(), this.kernlTerminal().run),
-      tools: [...thinking, ...jobTools(this.backgroundJobs(), this.gate), ...browser, ...mcp.tools],
+      tools: [
+        ...thinking,
+        ...jobTools(this.backgroundJobs(), this.gate),
+        gatedTool(sendInputTool(this.gate, (text, signal) => this.kernlTerminal().sendInput(text, signal)) as any, this.gate, "allow"),
+        ...terminalReadTools(this.host.terminalHistory(), this.gate, this.host.coreTerminalTools(), this.host.scrub),
+        ...browser,
+        ...mcp.tools,
+      ],
       loadProjectRules: true,
     });
     this.host.log.info(`[${this.label}] Deep Agents ready: ${s.provider}/${(resolveProvider(s) as ResolvedProvider).model}, ${mcp.tools.length} MCP tool(s)`);

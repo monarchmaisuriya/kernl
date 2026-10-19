@@ -1,6 +1,53 @@
 import * as vscode from "vscode";
 import WebSocket from "ws";
+import { type AxNode, outline, type Snapshot } from "./snapshot";
 import { assertNavigableUrl } from "./urlPolicy";
+
+/**
+ * Called just before kernl brings its tab to the front (which takes keyboard focus); the function it
+ * returns puts focus back and says where ("their editor"), or undefined when it couldn't.
+ */
+export type FocusReturn = () => () => Promise<string | undefined>;
+
+/** Focus goes back to the text editor that had it; anything else (a terminal, another view) can't be told apart, so it stays. */
+export const editorFocusReturn: FocusReturn = () => {
+  const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+  if (!(tab?.input instanceof vscode.TabInputText)) return async () => undefined;
+  const { uri } = tab.input;
+  const viewColumn = tab.group.viewColumn;
+  return async () => (await vscode.window.showTextDocument(uri, { viewColumn, preserveFocus: false }), "their editor");
+};
+
+/** How an action's input reached the page; `note` says what kernl had to do about its tab, for the agent. */
+export interface InputResult {
+  via: "input" | "script";
+  note?: string;
+}
+
+/** VS Code's commands that focus editor group 1 to 8. */
+const FOCUS_GROUP = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth"].map((n) => `workbench.action.focus${n}EditorGroup`);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Run on an element: what a click at (x, y) would hit instead of it ("" when it's the element or inside
+ * it). Shadow DOM is searched from the element's own root. Elements inside a frame aren't checked: the
+ * point is in the top page's coordinates.
+ */
+const HIT_TEST = `function(x, y) {
+  if (window !== window.top) return "";
+  const root = this.getRootNode();
+  const hit = (typeof root.elementFromPoint === "function" ? root : document).elementFromPoint(x, y);
+  if (!hit) return "it isn't on screen";
+  if (hit === this || this.contains(hit)) return "";
+  const text = (hit.getAttribute("aria-label") || hit.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 60);
+  return "it's covered by <" + hit.tagName.toLowerCase() + (hit.id ? "#" + hit.id : "") + ">" + (text ? " \\"" + text + "\\"" : "");
+}`;
+
+/** A console error, an uncaught exception, or a failed request, collected between actions. */
+export interface PageEvent {
+  kind: "console" | "exception" | "request";
+  text: string;
+}
 
 /**
  * VS Code's integrated browser, driven over CDP. The only file that knows the mechanism:
@@ -17,9 +64,42 @@ export class IntegratedBrowser implements vscode.Disposable {
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   /** Every CDP method sent, in order. Lets tests prove a rejected action sent nothing. */
   readonly sentMethods: string[] = [];
+  /** Element references from this page's snapshots (ref -> the page's node); a navigation makes them stale. */
+  private refs = new Map<string, { backendNodeId: number; role: string; name: string }>();
+  /** Each element's ref (page node -> ref), so every snapshot gives it the same one. */
+  private refByNode = new Map<number, string>();
+  /** Refs are numbered for the browser's whole life: a ref is never given to another element, even on another page. */
+  private refCount = 0;
+  private refOf = (backendNodeId: number) => {
+    let ref = this.refByNode.get(backendNodeId);
+    if (!ref) (ref = `e${++this.refCount}`), this.refByNode.set(backendNodeId, ref);
+    return ref;
+  };
+  private events: PageEvent[] = [];
+  /** kernl's browser tab, as VS Code reported it opening (VS Code keeps the same object while it's open). */
+  private tab: vscode.Tab | undefined;
+  /** Requests in flight, for waiting until the page settles after an action. */
+  private inflight = new Set<string>();
 
-  /** `timeoutMs` is read for every call: how long one browser action (or a page load) may take. */
-  constructor(private timeoutMs: () => number = () => 30_000) {}
+  /**
+   * A session that ends on its own (the user closed the tab) is forgotten, so the next call opens a new
+   * tab. Its connection is closed too: js-debug keeps the proxy's WebSocket open after the page is gone.
+   */
+  private sessionEnded = vscode.debug.onDidTerminateDebugSession((s) => {
+    if (!this.session || (s !== this.session && s !== this.session.parentSession)) return;
+    this.session = undefined;
+    this.tab = undefined;
+    this.ws?.close();
+  });
+
+  /**
+   * `timeoutMs` is read for every call: how long one browser action (or a page load) may take.
+   * `returnFocus` says where keyboard focus goes back after kernl brings its tab to the front.
+   */
+  constructor(
+    private timeoutMs: () => number = () => 30_000,
+    private returnFocus: FocusReturn = editorFocusReturn,
+  ) {}
 
   get sessionType(): string | undefined {
     return this.session?.type;
@@ -33,9 +113,12 @@ export class IntegratedBrowser implements vscode.Disposable {
   }
 
   private async open(): Promise<void> {
-    // A session left from a closed tab or a dropped connection is ended before a new one starts.
-    if (this.session) await vscode.debug.stopDebugging(this.session.parentSession ?? this.session).then(undefined, () => undefined);
-    this.session = undefined;
+    // A dropped connection to a tab that's still open reconnects to that tab, so no second tab opens.
+    if (this.session) {
+      const ws = await this.proxy(this.session).catch(() => undefined);
+      if (ws) return this.attach(ws);
+      await this.stopSession();
+    }
     const child = new Promise<vscode.DebugSession>((resolve, reject) => {
       const timer = setTimeout(() => {
         sub.dispose();
@@ -48,23 +131,44 @@ export class IntegratedBrowser implements vscode.Disposable {
         resolve(s);
       });
     });
+    // The first browser tab VS Code opens after the launch is the session's (VS Code shows browser tabs to
+    // extensions with no input type); the event can come after the session starts, so it's watched a while.
+    this.tab = undefined;
+    const watch = vscode.window.tabGroups.onDidChangeTabs((e) => {
+      const tab = e.opened.find((t) => t.input === undefined);
+      if (tab) (this.tab = tab), watch.dispose();
+    });
+    setTimeout(() => watch.dispose(), 10_000);
     const launched = await vscode.debug.startDebugging(
       undefined,
       { type: "editor-browser", request: "launch", name: "kernl Browser", url: "about:blank" },
       { noDebug: true, suppressDebugToolbar: true, suppressDebugView: true, suppressDebugStatusbar: true } as vscode.DebugSessionOptions,
     );
-    if (!launched) throw new Error("VS Code refused to start the integrated browser (editor-browser debug session)");
+    if (!launched) {
+      watch.dispose();
+      throw new Error("VS Code refused to start the integrated browser (editor-browser debug session)");
+    }
     this.session = await child;
-    const proxy = await this.session.customRequest("requestCDPProxy");
+    await this.attach(await this.proxy(this.session));
+  }
+
+  /** A WebSocket to the tab's page, through js-debug's CDP proxy. */
+  private async proxy(session: vscode.DebugSession): Promise<WebSocket> {
+    const proxy = await session.customRequest("requestCDPProxy");
     const ws = new WebSocket(`ws://${proxy.host}:${proxy.port}${proxy.path ?? ""}`);
     await new Promise<void>((resolve, reject) => {
       ws.once("open", () => resolve());
       ws.once("error", reject);
     });
+    return ws;
+  }
+
+  private async attach(ws: WebSocket): Promise<void> {
     // After it opens, an error is followed by "close", which fails the waiting calls; nothing else to do.
     ws.on("error", () => {});
     ws.on("message", (raw) => {
       const msg = JSON.parse(String(raw));
+      if (msg.id === undefined && msg.method) return this.onEvent(msg.method, msg.params ?? {});
       const waiter = msg.id !== undefined ? this.pending.get(msg.id) : undefined;
       if (!waiter) return;
       this.pending.delete(msg.id);
@@ -77,6 +181,242 @@ export class IntegratedBrowser implements vscode.Disposable {
       this.ws = undefined;
     });
     this.ws = ws;
+    // Console errors, uncaught exceptions, and failed requests are reported with the next action's result.
+    // js-debug shares its connection to the tab, so its proxy forwards events only to a client that
+    // subscribes to them (JsDebug.subscribe); enabling a domain alone delivers none.
+    // Without it the connection can't report page changes, so it isn't kept.
+    await this.send("JsDebug.subscribe", { events: ["Runtime.*", "Log.*", "Network.*", "Page.*"] }).catch((err) => {
+      ws.close();
+      throw new Error(`The integrated browser's debugger didn't let kernl follow the page (JsDebug.subscribe: ${err.message})`);
+    });
+    for (const domain of ["Runtime.enable", "Log.enable", "Network.enable", "Page.enable"]) await this.send(domain).catch(() => {});
+  }
+
+  /** Ends the debug session; one that already ended (its tab was closed) counts as stopped. */
+  private async stopSession(): Promise<void> {
+    const session = this.session;
+    this.session = undefined;
+    this.tab = undefined;
+    if (session) await vscode.debug.stopDebugging(session.parentSession ?? session).then(undefined, () => undefined);
+  }
+
+  private onEvent(method: string, p: any) {
+    const add = (e: PageEvent) => this.events.length < 50 && this.events.push({ ...e, text: e.text.slice(0, 300) });
+    switch (method) {
+      case "Runtime.consoleAPICalled":
+        if (p.type === "error" || p.type === "assert") add({ kind: "console", text: (p.args ?? []).map((a: any) => a.value ?? a.description ?? "").join(" ") });
+        return;
+      case "Runtime.exceptionThrown":
+        add({ kind: "exception", text: p.exceptionDetails?.exception?.description ?? p.exceptionDetails?.text ?? "exception" });
+        return;
+      case "Log.entryAdded":
+        if (p.entry?.level === "error") add({ kind: "console", text: p.entry.text ?? "" });
+        return;
+      case "Network.requestWillBeSent":
+        this.inflight.add(p.requestId);
+        return;
+      case "Network.responseReceived":
+        if (p.response?.status >= 400) add({ kind: "request", text: `${p.response.status} ${p.response.url}` });
+        return;
+      case "Network.loadingFinished":
+        this.inflight.delete(p.requestId);
+        return;
+      case "Network.loadingFailed":
+        this.inflight.delete(p.requestId);
+        if (!p.canceled) add({ kind: "request", text: `failed (${p.errorText}) ${p.type ?? ""}`.trim() });
+        return;
+      case "Page.frameNavigated":
+        if (!p.frame?.parentId) this.refs.clear(), this.refByNode.clear();
+        return;
+    }
+  }
+
+  /** Console errors and failed requests since the last call. */
+  takeEvents(): PageEvent[] {
+    return this.events.splice(0);
+  }
+
+  /** Waits until the page has loaded and its network has been quiet for 500 ms (at most `maxMs`). */
+  async settle(maxMs = 5_000): Promise<void> {
+    const deadline = Date.now() + maxMs;
+    let quietSince = Date.now();
+    while (Date.now() < deadline) {
+      const ready = await this.evaluate<string>("document.readyState").catch(() => "loading");
+      if (ready !== "complete" || this.inflight.size) quietSince = Date.now();
+      else if (Date.now() - quietSince >= 500) return;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
+  /** The page as an outline of what a person sees and can act on, each element with a ref for the actions. */
+  async snapshot(): Promise<Snapshot> {
+    const { nodes } = await this.send("Accessibility.getFullAXTree");
+    const page = await this.evaluate<{ href: string; title: string }>("({href: location.href, title: document.title})");
+    const snap = outline(nodes as AxNode[], page, this.refOf);
+    for (const [ref, node] of snap.refs) this.refs.set(ref, node);
+    return snap;
+  }
+
+  /** A ref from this page's snapshots, or why it can't be used. */
+  private node(ref: string) {
+    const n = this.refs.get(ref);
+    if (!n) throw new Error(`No element ${ref} on this page (it changed since that snapshot): take a new browser_snapshot.`);
+    return n;
+  }
+
+  /** The element a ref names on the page, for approval cards: 'button "Accept all"'; undefined for an unknown ref. */
+  describeRef(ref: string): string | undefined {
+    const n = this.refs.get(ref);
+    return n ? `${n.role}${n.name ? ` "${n.name}"` : ""}` : undefined;
+  }
+
+  /**
+   * Real input (a click, a key, typed text), checked by `attempt` to have reached the page. VS Code
+   * sometimes stops passing real input to a browser tab that isn't in front (seen after browser debug
+   * sessions were restarted); kernl then brings its tab to the front (which takes keyboard focus), tries
+   * again, and puts focus back.
+   */
+  private async withRealInput(attempt: () => Promise<boolean>): Promise<{ ok: boolean; note?: string }> {
+    if (await attempt()) return { ok: true };
+    const restore = this.returnFocus();
+    if (!(await this.showTab())) return { ok: false, note: "kernl's browser tab wasn't taking input, and kernl couldn't bring it to the front" };
+    let ok = false;
+    let back: string | undefined;
+    try {
+      ok = await attempt();
+    } finally {
+      // Focus goes back even when the retry fails (an element found covered once the tab is in front).
+      back = await restore().catch(() => undefined);
+    }
+    const focus = back ? `and put the user's focus back in ${back}` : "and the user's focus stayed on that tab";
+    return { ok, note: `kernl's browser tab wasn't taking input: kernl brought it to the front ${focus}` };
+  }
+
+  /** Shows kernl's tab in its editor group (focusing that group); false when it isn't open or can't be shown. */
+  private async showTab(): Promise<boolean> {
+    const tab = this.tab;
+    const index = tab ? tab.group.tabs.indexOf(tab) : -1;
+    const focusGroup = tab ? FOCUS_GROUP[tab.group.viewColumn - 1] : undefined;
+    if (!tab || index < 0 || !focusGroup) return false;
+    await vscode.commands.executeCommand(focusGroup);
+    await vscode.commands.executeCommand("workbench.action.openEditorAtIndex", index);
+    await sleep(300);
+    return tab.group.activeTab === tab;
+  }
+
+  /** The note for an action that fell back to the page's script. */
+  private scriptNote(note: string | undefined) {
+    return `${note ?? "kernl's browser tab wasn't taking input"}; kernl used the page's script instead (some pages ignore that)`;
+  }
+
+  /**
+   * Clicks an element with real mouse events at its center (scrolled into view), checking the element got
+   * the click; one that didn't, even with kernl's tab in front, is clicked through the page's script.
+   * Something else at that point (a banner, a dialog, a sticky bar) isn't clicked: the error says what's there.
+   */
+  async clickRef(ref: string): Promise<InputResult> {
+    const { backendNodeId } = this.node(ref);
+    const { object } = await this.send("DOM.resolveNode", { backendNodeId });
+    const real = await this.withRealInput(async () => {
+      await this.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {});
+      await this.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){ window.__kernlClicked = false; this.addEventListener('click', () => (window.__kernlClicked = true), { once: true, capture: true }); }" });
+      const { model } = await this.send("DOM.getBoxModel", { backendNodeId });
+      const q = model.content as number[];
+      const x = (q[0] + q[2] + q[4] + q[6]) / 4;
+      const y = (q[1] + q[3] + q[5] + q[7]) / 4;
+      const covered = await this.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: HIT_TEST, arguments: [{ value: x }, { value: y }], returnByValue: true });
+      if (covered.result?.value) throw new Error(`Didn't click ${this.describeRef(ref) ?? ref}: ${covered.result.value}. Close or scroll past it, then take a new browser_snapshot.`);
+      await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+      await this.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
+      await this.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 });
+      // A click that loaded a new page arrived too: that page has no mark (undefined, not false), or can't be asked yet.
+      return this.evaluate<boolean>("window.__kernlClicked !== false").catch(() => true);
+    });
+    if (real.ok) return { via: "input", note: real.note };
+    await this.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){ this.click(); }" });
+    return { via: "script", note: this.scriptNote(real.note) };
+  }
+
+  /**
+   * Types into a field like a person: focus, replace what's there, insert the text as real input (so
+   * pages that track keystrokes, React ones included, see it); a field that still doesn't hold it gets
+   * the value set through the page's own setter. Enter afterwards when `submit`.
+   */
+  async typeRef(ref: string, text: string, submit = false): Promise<InputResult> {
+    const { backendNodeId } = this.node(ref);
+    const { object } = await this.send("DOM.resolveNode", { backendNodeId });
+    const call = (fn: string, args: unknown[] = []) => this.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: fn, arguments: args.map((value) => ({ value })), returnByValue: true });
+    const real = await this.withRealInput(async () => {
+      await this.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {});
+      await this.send("DOM.focus", { backendNodeId });
+      await call("function(){ if (typeof this.select === 'function') this.select(); else if (this.isContentEditable) document.execCommand('selectAll'); }");
+      await this.send("Input.insertText", { text });
+      const held = await call("function(t){ const v = 'value' in this ? this.value : this.textContent; return String(v ?? '').includes(t); }", [text]);
+      return held.result?.value === true;
+    });
+    let result: InputResult = { via: "input", note: real.note };
+    if (!real.ok) {
+      await call(
+        "function(t){ const proto = Object.getPrototypeOf(this); const set = Object.getOwnPropertyDescriptor(proto, 'value')?.set; if (set) set.call(this, t); else this.textContent = t; this.dispatchEvent(new Event('input', {bubbles: true})); this.dispatchEvent(new Event('change', {bubbles: true})); }",
+        [text],
+      );
+      result = { via: "script", note: this.scriptNote(real.note) };
+    }
+    if (!submit) return result;
+    const enter = await this.pressKey("Enter");
+    return enter.via === "script" ? enter : { via: result.via, note: result.note ?? enter.note };
+  }
+
+  /**
+   * Presses a key on the focused element (Enter, Tab, Escape, arrows, Backspace, a letter) as real
+   * input, checking the page got it; otherwise the page's script dispatches the key (and Enter in a
+   * form submits it).
+   */
+  async pressKey(key: string): Promise<InputResult> {
+    const named: Record<string, { code: string; vk: number; text?: string }> = {
+      Enter: { code: "Enter", vk: 13, text: "\r" },
+      Tab: { code: "Tab", vk: 9 },
+      Escape: { code: "Escape", vk: 27 },
+      Backspace: { code: "Backspace", vk: 8 },
+      Delete: { code: "Delete", vk: 46 },
+      ArrowUp: { code: "ArrowUp", vk: 38 },
+      ArrowDown: { code: "ArrowDown", vk: 40 },
+      ArrowLeft: { code: "ArrowLeft", vk: 37 },
+      ArrowRight: { code: "ArrowRight", vk: 39 },
+      PageDown: { code: "PageDown", vk: 34 },
+      PageUp: { code: "PageUp", vk: 33 },
+      Space: { code: "Space", vk: 32, text: " " },
+    };
+    const k = named[key] ?? (key.length === 1 ? { code: `Key${key.toUpperCase()}`, vk: key.toUpperCase().charCodeAt(0), text: key } : undefined);
+    if (!k) throw new Error(`Unknown key "${key}": use Enter, Tab, Escape, Backspace, Delete, Space, an arrow (ArrowUp...), PageUp, PageDown, or a single character.`);
+    const base = { key: key === "Space" ? " " : key, code: k.code, windowsVirtualKeyCode: k.vk };
+    const real = await this.withRealInput(async () => {
+      await this.evaluate("window.__kernlKey = false; window.addEventListener('keydown', () => (window.__kernlKey = true), { once: true, capture: true })");
+      await this.send("Input.dispatchKeyEvent", { type: k.text ? "keyDown" : "rawKeyDown", ...base, ...(k.text ? { text: k.text } : {}) });
+      await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+      // A key that loaded a new page (Enter in a form) arrived too: that page has no mark (undefined, not false), or can't be asked yet.
+      return this.evaluate<boolean>("window.__kernlKey !== false").catch(() => true);
+    });
+    if (real.ok) return { via: "input", note: real.note };
+    await this.evaluate(
+      `(() => { const el = document.activeElement ?? document.body; const init = { key: ${JSON.stringify(base.key)}, code: ${JSON.stringify(k.code)}, bubbles: true, cancelable: true };
+        const go = el.dispatchEvent(new KeyboardEvent('keydown', init)); el.dispatchEvent(new KeyboardEvent('keyup', init));
+        if (go && init.key === 'Enter' && el.form && el.tagName !== 'TEXTAREA') el.form.requestSubmit(); })()`,
+    );
+    return { via: "script", note: this.scriptNote(real.note) };
+  }
+
+  /** Scrolls the page up or down by about a screen. */
+  async scroll(direction: "up" | "down"): Promise<void> {
+    await this.evaluate(`window.scrollBy({ top: ${direction === "down" ? "" : "-"}window.innerHeight * 0.8 })`);
+  }
+
+  /** Goes back one page in this tab's history; false when there's nothing to go back to. */
+  async back(): Promise<boolean> {
+    const { currentIndex, entries } = await this.send("Page.getNavigationHistory");
+    if (currentIndex <= 0) return false;
+    await this.send("Page.navigateToHistoryEntry", { entryId: entries[currentIndex - 1].id });
+    return true;
   }
 
   /** One CDP call; it fails after the browser timeout instead of waiting forever (a page script that never settles). */
@@ -121,8 +461,10 @@ export class IntegratedBrowser implements vscode.Disposable {
   }
 
   async dispose() {
+    this.sessionEnded.dispose();
+    // Ending the debug session leaves its tab open; closing the page closes the tab.
+    if (this.ws?.readyState === WebSocket.OPEN) await this.send("Page.close").catch(() => {});
     this.ws?.close();
-    if (this.session) await vscode.debug.stopDebugging(this.session.parentSession ?? this.session);
-    this.session = undefined;
+    await this.stopSession();
   }
 }

@@ -60,6 +60,17 @@ test("gatedTool asks before an 'ask' tool runs, never runs it on rejection, and 
   assert.equal(toolRule(inner), undefined);
 });
 
+test("the card can show more than the agent sent (the element a ref names); the tool still gets only the agent's arguments", async () => {
+  let got: unknown;
+  const inner = tool(async (a) => ((got = a), "clicked"), { name: "browser_click", description: "d", schema: z.object({ element: z.string(), ref: z.string() }) });
+  const asked: unknown[] = [];
+  const gate = new ApprovalGate({ ask: async (_id, r) => (asked.push(r), true) }, { rules: () => [] });
+  const shown = (a: { ref: string }) => ({ ...a, onPage: `button "Delete account" (${a.ref})` });
+  assert.equal(await gatedTool(inner, gate, "ask", shown).invoke({ element: "Cancel button", ref: "e4" }), "clicked");
+  assert.deepEqual(asked, [{ kind: "tool", tool: "browser_click", args: { element: "Cancel button", ref: "e4", onPage: 'button "Delete account" (e4)' } }]);
+  assert.deepEqual(got, { element: "Cancel button", ref: "e4" });
+});
+
 test("Bypass (a CLI agent calling kernl's tools) skips the card, but a deny rule still refuses", async () => {
   const asked: unknown[] = [];
   const denied: string[] = [];

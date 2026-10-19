@@ -31,3 +31,16 @@ test("before the agent sends what it acts on, a row names a generic object, neve
   assert.equal(browserRowTitle(describeBrowserCall("mcp__kernl__browser_click", undefined)!), "Browser: click an element");
   assert.equal(browserRowTitle(describeBrowserCall("browser_type", { text: "x" })!), "Browser: type into a field");
 });
+
+test("an element is named by what it is on the page; the card also shows the agent's words and how it's found", () => {
+  const click = describeBrowserCall("browser_click", { element: "Accept cookies button", ref: "e3", onPage: 'button "Accept All Cookies"' })!;
+  assert.equal(browserCardTitle(click), 'Click button "Accept All Cookies" in kernl\'s browser');
+  assert.equal(click.detail, 'button "Accept All Cookies"\nthe agent calls it: Accept cookies button\nref e3');
+  // A CLI agent's row has only the agent's arguments: its words for the element.
+  assert.equal(browserRowTitle(describeBrowserCall("mcp__kernl__browser_click", { element: "Accept cookies button", ref: "e3" })!), "Browser: click Accept cookies button");
+  const type = describeBrowserCall("browser_type", { element: "Search box", ref: "e1", onPage: 'searchbox "Search"', text: "loyalty", submit: true })!;
+  assert.equal(type.detail, 'searchbox "Search"\nthe agent calls it: Search box\nref e1\nloyalty\n(then Enter)');
+  assert.equal(browserCardTitle(describeBrowserCall("browser_press_key", { key: "Escape" })!), "Press Escape in kernl's browser");
+  assert.equal(browserRowTitle(describeBrowserCall("browser_snapshot", {})!), "Browser: look at the page");
+  assert.equal(browserRowTitle(describeBrowserCall("browser_back", {})!), "Browser: go back");
+});

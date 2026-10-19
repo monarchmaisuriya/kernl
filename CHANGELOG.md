@@ -4,6 +4,28 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- Agents can read your terminals: `terminal_list`, `terminal_read` (the commands run in any terminal since VS Code started, yours included, with output, folder, and exit code), and `terminal_selection`. Reading doesn't ask; kernl's known secrets are removed from the output. See [terminal and browser](docs/guides/terminal-and-browser.md).
+- A command waiting for input (`[y/N]`, a password, "Press any key") comes back as "waiting for input" instead of hanging until the timeout; `terminal_send_input` answers it or stops it.
+- Commands run in the kernl terminal without shell integration too (macOS and Linux), with output and exit code.
+- `browser_snapshot`: the page as an outline with a ref for each button, link, and field. `browser_click` and `browser_type` take a ref and use real mouse and text input; `browser_press_key`, `browser_scroll`, and `browser_back` are new. Each action waits for the page to settle and reports the new page and any console errors or failed requests.
+- Real clicks, keys, and typing are checked to reach the page. When kernl's tab isn't taking input, kernl brings it to the front, tries again, and puts your focus back in your editor or the kernl panel; only then does it use the page's script, and it says so.
+
+### Changed
+
+- kernl starts with VS Code (so terminal commands are recorded from the start).
+- Browser approval cards name the element as the page has it, with the agent's description below.
+- A command kernl stopped (Stop or timeout) is reported as stopped, not as a failure exit code.
+
+### Fixed
+
+- An approved browser click always hits the element shown on the card: an element keeps its ref across snapshots, and a ref is never reused for another element.
+- kernl no longer clicks an element something else covers (a banner, a dialog): it says what covers it.
+- `terminal_read` hides the output of a command that names a credential-like file (`cat .env`), as reading that file asks first.
+- Commands kernl stops leave no script or output files behind (terminals without shell integration).
+- kernl's browser no longer leaves tabs behind: a dropped connection reconnects to the same tab, and closing kernl's browser closes its tab. A tab you closed yourself no longer makes kernl's cleanup fail.
+
 ## [0.3.0] - 2026-10-19
 
 ### Added

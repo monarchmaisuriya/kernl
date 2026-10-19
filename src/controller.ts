@@ -6,6 +6,8 @@ import type * as acp from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 import { CLI_AGENT_IDS, type CliAgentId, isCliAgentId, resolveLaunch } from "./acp/agents";
 import { claudeSessionOpenElsewhere, sessionStore } from "./acp/sessionStores";
+import { coreTerminalTools } from "./terminal/coreTools";
+import { TerminalHistory } from "./terminal/history";
 import type { Attachment } from "./ui/protocol";
 import { DRAFT_TEXT_LIMIT, type Draft, draftToKeep } from "./ui/draft";
 import { resolveCommand } from "./acp/commands";
@@ -15,7 +17,7 @@ import { loadNamedAgents } from "./agent/namedAgents";
 import type { InputChange } from "./agent/rebuildPolicy";
 import { listSkills } from "./agent/skills";
 import { outsideMessage, resolveUris, searchWorkspace, toAttachment } from "./attachmentSearch";
-import { IntegratedBrowser } from "./browser/integratedBrowser";
+import { editorFocusReturn, IntegratedBrowser } from "./browser/integratedBrowser";
 import { Checkpoints } from "./checkpoints";
 import type { GateRequest } from "./gate/approvalGate";
 import { parseRules } from "./gate/rules";
@@ -114,6 +116,8 @@ export class Controller implements vscode.Disposable {
   private requests = new Map<string, { workspace: WorkspaceRuntime; request: GateRequest }>();
   private workspaces = new Map<string, WorkspaceRuntime>();
   private sharedBrowser: IntegratedBrowser | undefined;
+  /** Whether kernl's panel has keyboard focus (the panel reports it), so focus can go back there. */
+  private panelHasKeyboard = false;
   /** Every connection's status (agents, keys, MCP servers, plugins); the agent chip, menu, and Connections view read it. */
   readonly connections = new ConnectionMonitor();
   /** "kernl" in the status bar: opens the kernl menu, and warns when a connection needs the user. */
@@ -122,6 +126,8 @@ export class Controller implements vscode.Disposable {
   private toolServer = new KernlToolServer((line) => this.log.info(line));
   /** Remote MCP servers that wanted a sign-in in this window (OAuth): kernl's agent skips them. */
   private signInRequired = new SignInRequired();
+  /** Every command run in this window's terminals, recorded from activation (see src/terminal/history.ts). */
+  private readonly terminalHistory: TerminalHistory;
   /** The CLI agents' session lists, per agent and folder (`<agent>\n<root>`); dropped when the agent's store changes. */
   private agentSessionLists = new Map<string, { at: number; sessions: acp.SessionInfo[] }>();
   /** Project MCP servers the user said "not now" to in this window (by fingerprint). */
@@ -146,6 +152,17 @@ export class Controller implements vscode.Disposable {
   private namedHarnesses: { id: string; label: string }[] = [];
 
   constructor(private context: vscode.ExtensionContext) {
+    // First, before anything slower: commands are recorded from activation (VS Code startup) on.
+    this.terminalHistory = new TerminalHistory(
+      {
+        onDidStartTerminalShellExecution: vscode.window.onDidStartTerminalShellExecution,
+        onDidEndTerminalShellExecution: vscode.window.onDidEndTerminalShellExecution,
+        onDidCloseTerminal: vscode.window.onDidCloseTerminal,
+        terminals: () => vscode.window.terminals,
+        activeTerminal: () => vscode.window.activeTerminal,
+      },
+      (text) => this.redactor.scrub(text),
+    );
     this.keys = new KeyStore(context.secrets, this.redactor);
     this.agentCredentials = new AgentCredentials(context.secrets, this.redactor);
     const sessions = new SessionStore(join(context.globalStorageUri.fsPath, "sessions"));
@@ -178,9 +195,12 @@ export class Controller implements vscode.Disposable {
         return env;
       },
       trusted: () => vscode.workspace.isTrusted,
-      browser: () => (this.sharedBrowser ??= new IntegratedBrowser(() => readSettings().browser.timeoutSeconds * 1000)),
+      browser: () => (this.sharedBrowser ??= new IntegratedBrowser(() => readSettings().browser.timeoutSeconds * 1000, () => this.focusReturn())),
       workspacesChanged: () => this.postWorkspaces(),
       state: context.workspaceState,
+      terminalHistory: () => this.terminalHistory,
+      coreTerminalTools: () => coreTerminalTools,
+      scrub: (text) => this.redactor.scrub(text),
     };
     this.commands = new WorkspaceCommands({
       log: this.log,
@@ -462,6 +482,14 @@ export class Controller implements vscode.Disposable {
 
   /** The mode chip's menu. Bypass asks first; a mode the agent can't confirm leaves the old one in place. */
   /** The unsent message, kept for this window (VS Code's workspaceState) until it's sent or cleared. */
+  /** Where keyboard focus goes back after kernl brings its browser tab to the front: kernl's panel when it had it, else the editor's. */
+  private focusReturn() {
+    if (this.panelHasKeyboard && vscode.window.state.focused) {
+      return async () => (await this.panel.reveal(), "the kernl panel");
+    }
+    return editorFocusReturn();
+  }
+
   private async keepDraft(text: string, attachments: Attachment[]) {
     const { draft, dropped } = draftToKeep(String(text ?? ""), Array.isArray(attachments) ? attachments : []);
     if (dropped) this.log.info(`draft: ${dropped} long text attachment(s) not kept (over ${DRAFT_TEXT_LIMIT} characters in total)`);
@@ -1299,6 +1327,9 @@ export class Controller implements vscode.Disposable {
         return this.setMode(m.workspace, m.mode);
       case "draft":
         return this.keepDraft(m.text, m.attachments);
+      case "keyboardFocus":
+        this.panelHasKeyboard = m.inPanel;
+        return;
       case "pickAgentOption": {
         const kind = this.workspace(m.workspace)?.view().agentOptions?.find((o) => o.id === m.id)?.kind;
         return this.anchored(kind === "thinking" ? "thinking" : "model", () => this.pickAgentOption(m.workspace, m.id));
@@ -1548,6 +1579,7 @@ export class Controller implements vscode.Disposable {
     for (const ws of this.workspaces.values()) ws.dispose();
     void this.sharedBrowser?.dispose();
     void this.toolServer.dispose();
+    this.terminalHistory.dispose();
     for (const d of this.disposables) d.dispose();
   }
 }

@@ -55,7 +55,7 @@ Lists refresh when an agent's session store changes on disk (watched only as a s
 
 ## Terminal and browser
 
-CLI agents use kernl's own tools through a small MCP server kernl runs on this machine (only on `127.0.0.1`, with a token per workspace; a web page can't reach it). The tools are `run_in_terminal`, the background job tools, and the browser tools. They ask through kernl's approvals like the kernl agent's tools, so your approval rules apply. Settings:
+CLI agents use kernl's own tools through a small MCP server kernl runs on this machine (only on `127.0.0.1`, with a token per workspace; a web page can't reach it). The tools are `run_in_terminal` and `terminal_send_input`, the background job tools, the terminal reading tools (`terminal_list`, `terminal_read`, `terminal_selection`), and the browser tools; see [terminal and browser](terminal-and-browser.md). Actions ask through kernl's approvals like the kernl agent's tools, so your approval rules apply. Settings:
 
 - **`kernl.terminal.cliAgents`**: `kernl` (default) runs the agents' commands in the workspace's visible "kernl" terminal in VS Code; `agent` leaves each agent its own shell.
 - **`kernl.browser.cliAgents`**: offer kernl's integrated browser tools to CLI agents (default on).

@@ -270,6 +270,8 @@ export type PanelToHost =
   | { type: "menuPick"; id: string; index?: number }
   /** The mode chip's menu: switch this workspace's permission mode. */
   | { type: "setMode"; workspace: string; mode: string }
+  /** The panel gained or lost keyboard focus: where kernl puts focus back after bringing its browser tab to the front. */
+  | { type: "keyboardFocus"; inPanel: boolean }
   /** The message box's text and attachments, a moment after they change ("" once sent): kept so a restart doesn't lose them. */
   | { type: "draft"; text: string; attachments: Attachment[] }
   /** A CLI agent's model or thinking chip: open its choices. */
@@ -283,7 +285,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

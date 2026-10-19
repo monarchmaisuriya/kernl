@@ -54,6 +54,13 @@ test("the panel announces it is ready as soon as it loads", () => {
   assert.deepEqual(p.sent, [{ type: "ready" }]);
 });
 
+test("the panel tells the host when it gains and loses keyboard focus (kernl puts focus back there after showing its browser tab)", () => {
+  const p = loadPanel();
+  p.window.dispatchEvent(new p.window.FocusEvent("focus"));
+  p.window.dispatchEvent(new p.window.FocusEvent("blur"));
+  assert.deepEqual(p.sent.slice(1), [{ type: "keyboardFocus", inPanel: true }, { type: "keyboardFocus", inPanel: false }]);
+});
+
 test("an empty workspace shows the empty state with its agent's disclosure, until the first message", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN, WT], "wt:fix"));

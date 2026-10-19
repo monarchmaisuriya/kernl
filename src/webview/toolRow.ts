@@ -32,8 +32,12 @@ const DESCRIBE: Record<string, (a: Record<string, unknown>) => ToolDescription> 
   stop_background_job: (a) => ({ action: "Stopping background job", target: str(a.id) }),
   list_background_jobs: () => ({ action: "Listing background jobs" }),
   browser_navigate: (a) => ({ action: "Opening", target: str(a.url) }),
-  browser_click: (a) => ({ action: "Clicking", target: str(a.selector) }),
-  browser_type: (a) => ({ action: "Typing into", target: str(a.selector) }),
+  browser_click: (a) => ({ action: "Clicking", target: str(a.element) || str(a.selector) }),
+  browser_type: (a) => ({ action: "Typing into", target: str(a.element) || str(a.selector) }),
+  browser_press_key: (a) => ({ action: "Pressing", target: str(a.key) }),
+  browser_back: () => ({ action: "Going back" }),
+  browser_scroll: (a) => ({ action: `Scrolling ${str(a.direction) || "the page"}` }),
+  browser_snapshot: () => ({ action: "Looking at the page" }),
   browser_read_page: () => ({ action: "Reading the page" }),
   browser_screenshot: () => ({ action: "Taking a screenshot" }),
 };
@@ -66,7 +70,8 @@ function humanize(name: string) {
 const KIND_OF_TOOL: Record<string, string> = {
   ls: "search", glob: "search", grep: "search", read_file: "read", write_file: "edit", edit_file: "edit", execute: "execute",
   start_background_job: "execute", check_background_job: "read", stop_background_job: "execute", list_background_jobs: "read",
-  browser_navigate: "fetch", browser_click: "fetch", browser_type: "fetch", browser_read_page: "fetch", browser_screenshot: "fetch", task: "think",
+  browser_navigate: "fetch", browser_click: "fetch", browser_type: "fetch", browser_press_key: "fetch", browser_back: "fetch", browser_scroll: "fetch",
+  browser_snapshot: "fetch", browser_read_page: "fetch", browser_screenshot: "fetch", task: "think",
 };
 const KIND_ICON: Record<string, IconName> = {
   read: "file", edit: "pencil", delete: "trash", move: "branch", search: "search", execute: "terminal", think: "kernl", fetch: "globe", switch_mode: "shield",

@@ -575,6 +575,9 @@ app.addEventListener("dragleave", (e) => {
   // Leaving the panel itself (no element to go to) ends it whatever the count says.
   if (!dragDepth || !e.relatedTarget) (dragDepth = 0), showDropTarget(false);
 });
+// Whether the panel has keyboard focus: kernl puts focus back here after bringing its browser tab to the front.
+window.addEventListener("focus", () => send({ type: "keyboardFocus", inPanel: true }));
+window.addEventListener("blur", () => send({ type: "keyboardFocus", inPanel: false }));
 // A drag can end without a dragleave here (VS Code takes the panel's pointer events when Shift is released).
 window.addEventListener("dragend", () => ((dragDepth = 0), showDropTarget(false)));
 app.addEventListener("dragover", (e) => e.preventDefault());

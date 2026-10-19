@@ -22,6 +22,12 @@ export function toApprovalCard(id: string, ws: { id: string; label: string }, r:
       // kernl's own browser tools in plain words; any other tool (an MCP server's) shows its name and arguments.
       const browser = describeBrowserCall(r.tool, r.args);
       if (browser) return card({ title: browserCardTitle(browser), detail: clip(browser.detail), hasDiff: false });
+      if (r.tool === "terminal_send_input") {
+        const text = String((r.args as { text?: unknown })?.text ?? "");
+        return text.trim().toLowerCase() === "ctrl-c"
+          ? card({ title: "Stop the command waiting in the kernl terminal (Ctrl+C)", detail: "Ctrl+C", hasDiff: false })
+          : card({ title: "Type into the command waiting in the kernl terminal", detail: clip(text), hasDiff: false });
+      }
       return card({ title: `Use tool ${r.tool}`, detail: clip(JSON.stringify(r.args, null, 2)), hasDiff: false });
     }
     case "agent":

@@ -24,8 +24,27 @@ export function runInTerminalTool(gate: ApprovalGate, run: (command: string, sig
     {
       name: "run_in_terminal",
       description:
-        "Run a shell command in the workspace's terminal in VS Code (the user sees it run) and return its output and exit code. Use it for every command: builds, tests, git, package managers. For a dev server, watcher, or anything that keeps running, use start_background_job instead.",
+        "Run a shell command in the workspace's terminal in VS Code (the user sees it run) and return its output and exit code. Use it for every command: builds, tests, git, package managers. For a dev server, watcher, or anything that keeps running, use start_background_job instead. If the command stops to ask something, the result says it's waiting for input: answer with terminal_send_input.",
       schema: z.object({ command: z.string().describe("The shell command, run in the workspace folder") }) as any,
+    },
+  );
+}
+
+/**
+ * Answers a command in the kernl terminal that stopped to wait for input (run_in_terminal said so):
+ * a line of text and Enter, or "ctrl-c" to stop it. Asks first, like a command.
+ */
+export function sendInputTool(gate: ApprovalGate, sendInput: (text: string, signal?: AbortSignal) => Promise<ExecuteResponse>) {
+  return tool(
+    async ({ text }: { text: string }, config) => {
+      if (!(await gate.request({ kind: "tool", tool: "terminal_send_input", args: { text } }))) return "rejected by user";
+      return executeResult(await sendInput(text, config?.signal));
+    },
+    {
+      name: "terminal_send_input",
+      description:
+        'Answer a command in the kernl terminal that is waiting for input (run_in_terminal or execute said "waiting for input"): type a line of text followed by Enter, or "ctrl-c" to stop the command. Returns what the command printed after that.',
+      schema: z.object({ text: z.string().describe('The line to type, or "ctrl-c" to stop the command') }) as any,
     },
   );
 }

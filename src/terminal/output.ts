@@ -19,3 +19,13 @@ export function cleanTerminalOutput(raw: string, maxChars = 30_000): { text: str
 
 /** Agent commands run with no pager: `git log` or `man` would otherwise wait in `less` for a key the agent can't press. */
 export const NO_PAGER = { PAGER: "cat", GIT_PAGER: "cat" };
+
+/**
+ * A last output line that asks for something: a question, a [y/N], a password or passphrase, "press
+ * any key", or a label ending in ":" (Username:), or an interactive picker's "? ... ›". Checked only after the output has been quiet a while.
+ */
+export function looksLikePrompt(line: string): boolean {
+  const l = line.trim();
+  if (!l) return false;
+  return /\?\s*(\[[^\]]*\]|\([^)]*\))?\s*$/.test(l) || /\[(y\/n|y\/N|Y\/n|yes\/no)\]|\((y\/n|yes\/no)\)/i.test(l) || /password|passphrase|press (any key|enter|return)/i.test(l) || /:\s*$/.test(l) || /^\?\s/.test(l) || /[›❯]\s*$/.test(l);
+}
