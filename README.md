@@ -6,10 +6,20 @@ Every change it can make waits for your click, unless you pick a permission mode
 
 ## Install (team, from VSIX)
 
+Download `kernl-X.Y.Z.vsix` from the [latest release](https://github.com/pushowl/kernl/releases/latest), then:
+
+```bash
+code --install-extension kernl-X.Y.Z.vsix --force
+```
+
+Or build it yourself:
+
 ```bash
 npm ci && npm run package
 code --install-extension kernl.vsix
 ```
+
+What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 Requires VS Code 1.140 or newer. The integrated-browser tools are verified on VS Code 1.142.
 
@@ -34,6 +44,6 @@ For Ollama or another OpenAI-compatible server, use provider `openai-compatible`
 
 - **Using kernl:** [the panel](docs/guides/panel.md), [permission modes](docs/guides/permission-modes.md), [model providers](docs/guides/providers.md), [approvals](docs/guides/approvals.md), [customisation files](docs/guides/customisation.md), [CLI agents](docs/guides/cli-agents.md), [workspaces](docs/guides/workspaces.md)
 - **How it's built:** [architecture](docs/architecture/overview.md)
-- **Working on kernl:** [building](docs/development/building.md), [testing](docs/development/testing.md), [upgrading](docs/development/upgrading.md)
+- **Working on kernl:** [building](docs/development/building.md), [testing](docs/development/testing.md), [upgrading](docs/development/upgrading.md), [releasing](docs/development/releasing.md)
 - **Limits:** [known issues](docs/known-issues/README.md)
 - **History:** [plans](docs/plans/) and [research](docs/research/); see the [docs index](docs/README.md)
