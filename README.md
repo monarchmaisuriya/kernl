@@ -1,3 +1,5 @@
+<img src="media/icon.png" alt="kernl icon" width="128">
+
 # kernl
 
 A VS Code desktop extension: a coding agent (Deep Agents) that uses **your own model key** and works in
