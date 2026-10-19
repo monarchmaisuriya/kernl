@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
 ### Added
 
 - kernl's own agent reuses your Claude Code, Codex, and OpenCode setup: skills, Claude Code commands (as skills), subagents, CLAUDE.md and `.claude/rules`, OpenCode instructions, MCP servers, and enabled Claude Code plugins. Switch each kind in Settings > kernl > Sources. Project files load only in trusted workspaces, and a project's MCP server asks once before it first starts.
@@ -49,5 +51,6 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/pushowl/kernl/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pushowl/kernl/releases/tag/v0.1.0
