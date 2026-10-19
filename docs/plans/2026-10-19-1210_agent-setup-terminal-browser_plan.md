@@ -1,7 +1,7 @@
 # Reuse the agents' setup, modular settings, and a robust terminal and browser for every agent
 
 - Date: 2026-10-19 12:10
-- Status: done (the live check in M's window comes with the release)
+- Status: done
 - Repos: kernl   Folders: `src/agent/`, `src/acp/`, `src/mcp/`, `src/terminal/`, `src/browser/`, `src/`, `package.json`, `docs/`, `test/`
 - Files: new `src/sources/` (one importer per agent), new `src/mcp/kernlServer.ts`, `src/mcp/servers.ts`, `src/agent/skills.ts`, `src/agent/namedAgents.ts`, `src/agent/instructions.ts`, `src/acp/acpRunner.ts`, `src/acp/agents.ts`, `src/terminal/runner.ts`, `src/browser/integratedBrowser.ts`, `src/workspaceRuntime.ts`, `src/controller.ts`, `package.json`, `docs/guides/customisation.md`, `docs/guides/cli-agents.md`, `docs/known-issues/README.md`, tests
 - Research: `docs/research/2026-10-19-1200_agent-setup-terminal-browser_research.md`
@@ -203,7 +203,7 @@ Each module is behind its settings; defaults per question 4. Rollback: revert an
 - [x] Browser timeouts and reconnect, terminal caps, terminal per workspace, pager variables, MCP timeouts. Done: unit tests; VS Code checks.
 
 ### Finish
-- [ ] Docs (customisation, CLI agents, known issues), changelog entries, suites, package, install, live check in M's window.
+- [x] Docs (customisation, CLI agents, known issues), changelog entries, suites, package, install, live check in M's window.
 
 ## Standardized review
 
@@ -229,6 +229,7 @@ Each module is behind its settings; defaults per question 4. Rollback: revert an
 - Part 2: `src/sources/` importers for Claude Code (skills, commands, agents, CLAUDE.md and rules, MCP, enabled plugins), Codex (skills, MCP), and OpenCode (skills, MCP, instructions); commands become skills in kernl's storage; each MCP server loads on its own with a timeout, and a project server asks once; "kernl: Show loaded sources".
 - Part 3: `src/mcp/kernlServer.ts` (one local MCP server per window, a token per workspace, Origin and Host checked) with run_in_terminal, the job tools, and the browser tools through each workspace's gate; sessions get it on new, load, and fork; Claude Code's Bash and OpenCode's bash are off with kernl's terminal; Codex's own commands stream into a read-only mirror terminal and their rows; an agent's permission request for kernl's own tool gets no second card; a CLI agent in Bypass gets no card from kernl's tools (deny rules still apply).
 - Part 4: browser calls time out (`kernl.browser.timeoutSeconds`) and a dropped connection reopens once (no second tab); terminal output is capped while it streams (`kernl.terminal.outputLimit`), commands run with `PAGER=cat` and `GIT_PAGER=cat`, each folder and worktree gets its own named terminal, and the shell integration warning opens its setting. Docs: customisation, CLI agents, approvals, known issues, panel.
+- Live check on M's setup (before release): hidden `.bucket-*` synced-skill folders were skipped, and servers Claude Code signs in to by itself (Notion, Slack, Datadog) are recognized by their "sign in first" answer, logged once, and listed in the Sources view. Released in 0.2.0.
 
 ## Open questions
 

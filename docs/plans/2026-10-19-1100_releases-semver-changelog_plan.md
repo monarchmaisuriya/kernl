@@ -1,7 +1,7 @@
 # Releases, semantic versions, and a changelog
 
 - Date: 2026-10-19 11:00
-- Status: in progress (part 3 of 3: the release)
+- Status: done
 - Repos: kernl   Folders: repo root, `scripts/`, `docs/development/`
 - Files: new `CHANGELOG.md`, new `scripts/release.mjs`, `package.json` (version, `release` script), `package-lock.json` (version), new `docs/development/releasing.md`, `docs/README.md`, `README.md` (one link)
 - Subagents: none
@@ -104,7 +104,7 @@ Local files first (changelog, script, doc), committed. The release itself (tags,
 
 ### Part 3: release 0.2.0 (after M's OK)
 
-- [ ] Tag `v0.1.0` at `6ea9b17`; run the release for 0.2.0; push; create the GitHub release with the VSIX. Done: `gh release view v0.2.0` shows the VSIX and notes.
+- [x] Tag `v0.1.0` at `6ea9b17`; run the release for 0.2.0; push; create the GitHub release with the VSIX. Done: `gh release view v0.2.0` shows the VSIX and notes.
 
 ## Standardized review
 
@@ -117,6 +117,7 @@ Local files first (changelog, script, doc), committed. The release itself (tags,
 
 - Part 1: `CHANGELOG.md` (0.2.0 entries under "Unreleased", moved by the script at release), `docs/development/releasing.md`, links from `docs/README.md` and `README.md`; the VSIX includes the changelog.
 - Part 2: `scripts/release.mjs` (`npm run release -- <level> [--dry-run] [--trailer]`) with the changelog step in `scripts/changelog.mjs` and its unit test; refusals checked for uncommitted changes and a missing level, and for an empty "Unreleased" in the unit test.
+- Part 3: `v0.1.0` tags `6ea9b17`; 0.2.0 was released with the script (`v0.2.0` on `1119e47`), pushed with `main`, and published at https://github.com/pushowl/kernl/releases/tag/v0.2.0 with `kernl-0.2.0.vsix`. A first local 0.2.0 was undone (with M's OK) after the live check found two defects, which were fixed first.
 
 Decided by M on 2026-10-19: option A, 0.1.0 is the first commit, this release is 0.2.0.
 
