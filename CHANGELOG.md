@@ -4,6 +4,16 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- `read_thread`: an agent reads any part of a conversation tagged in its own conversation, by turn numbers or by words (kernl's agent and the CLI agents through kernl's tools). It doesn't ask; only tagged conversations can be read.
+- `@` tags the CLI agents' own sessions too (those never opened in kernl), read through the agent when the message is sent.
+
+### Changed
+
+- A tagged conversation's text starts with a numbered outline of every turn, so a long thread's whole shape shows even when its middle is left out.
+- Typing after `@` stays fast with many conversations: listing reads only conversations that changed since the last time.
+
 ## [0.5.0] - 2026-10-20
 
 ### Added

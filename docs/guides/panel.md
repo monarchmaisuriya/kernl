@@ -40,7 +40,7 @@
 - **Composer:**
   - `+` attaches Files & Folders, another Conversation, a GitHub Issue, or a Pull Request;
   - `@` autocompletes workspace paths; picked files and folders appear as highlighted `@path` mentions in your message (Backspace removes a whole mention);
-  - `@` also finds conversations, from every workspace of the window and every agent (shown with the agent, workspace, and when it was last active). A picked one shows as a chip. On Send, the agent gets that conversation as text, read at that moment: its first request and its newest turns, up to 20,000 characters, with a note of how many turns were left out. Any agent and model provider can read it, since every conversation is kept in one format;
+  - `@` also finds conversations, from every workspace of the window and every agent (shown with the agent, workspace, and when it was last active), and the CLI agents' own sessions there that kernl hasn't opened ("Claude Code session"). A picked one shows as a chip. On Send, the agent gets that conversation as text, read at that moment (an agent's own session is read through the agent): a numbered outline of every turn, its first request, and its newest turns, up to 20,000 characters. The agent can read any other turn with its `read_thread` tool, by number or by words; it reads only conversations tagged in its own conversation. Any agent and model provider can read it, since every conversation is kept in one format;
   - the file open in the editor is offered as a dashed "+ file" suggestion;
   - `/` lists skills (kernl agent);
   - right-click files or folders in the Explorer and pick **Add to kernl chat** (several at once with a multi-selection); a file from another folder of the window names that folder: switch to it with the workspace chip;

@@ -32,6 +32,7 @@ const badge = (path: string) => (path.includes(".") ? path.split(".").pop()!.sli
 /** A tagged conversation's agent, workspace, and age, for its popover row and chip: "Claude Code · Develop · 2 h ago". */
 export function threadDetail(a: Attachment, now = Date.now()): string {
   if (!a.thread) return "";
+  if (!a.thread.updatedAt) return `${a.thread.agent} · ${a.thread.workspace}`;
   const minutes = Math.max(0, Math.round((now - a.thread.updatedAt) / 60_000));
   const ago = minutes < 1 ? "just now" : minutes < 60 ? `${minutes} min ago` : minutes < 48 * 60 ? `${Math.round(minutes / 60)} h ago` : `${Math.round(minutes / 1440)} d ago`;
   return `${a.thread.agent} · ${a.thread.workspace} · ${ago}`;

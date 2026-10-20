@@ -214,6 +214,7 @@ export class Controller implements vscode.Disposable {
       terminalHistory: () => this.terminalHistory,
       coreTerminalTools: () => coreTerminalTools,
       scrub: (text) => this.redactor.scrub(text),
+      knownRoot: (root) => [...this.workspaces.values()].some((w) => w.root === root),
     };
     this.commands = new WorkspaceCommands({
       log: this.log,
@@ -1131,20 +1132,41 @@ export class Controller implements vscode.Disposable {
   }
 
   /**
-   * The conversations kernl kept in the window's workspaces (folders and worktrees), any agent, newest
-   * first, except the one `shown` is in; with a `query`, those whose title contains it.
+   * What "@" and + > Conversations can tag, newest first, except the conversation `shown` is in: the
+   * conversations kernl kept in the window's workspaces (folders and worktrees; any agent), and each ready
+   * CLI agent's own sessions there that kernl hasn't opened (from the lists Conversations fetches). With a
+   * `query`, those whose title contains it; with none (just "@"), lists that are missing or old are asked
+   * for in the background, so they're there a keystroke later.
    */
   private async threadCandidates(shown: WorkspaceRuntime, query = ""): Promise<Attachment[]> {
-    const agents = [...HARNESSES, ...this.namedHarnesses];
+    const harnesses = [...HARNESSES, ...this.namedHarnesses];
+    const labelOf = (id: string) => harnesses.find((h) => h.id === id)?.label ?? id;
+    const matches = (title: string) => title.toLowerCase().includes(query.toLowerCase());
+    const agents = vscode.workspace.getConfiguration("kernl").get<boolean>("sessions.importFromAgents", true) ? CLI_AGENT_IDS.filter((a) => this.readiness(a).ready) : [];
     const seen = new Set<string>();
     const out: Attachment[] = [];
     for (const ws of this.workspaces.values()) {
-      if (seen.has(ws.sessionKey)) continue;
+      if (ws.tabOf || seen.has(ws.sessionKey)) continue;
       seen.add(ws.sessionKey);
-      for (const s of await this.host.sessions.list(ws.sessionKey)) {
-        if (s.id === shown.sessionId || !s.title.toLowerCase().includes(query.toLowerCase())) continue;
-        const agent = agents.find((h) => h.id === s.harness)?.label ?? s.harness;
-        out.push({ kind: "thread", path: s.title, thread: { workspaceKey: ws.sessionKey, id: s.id, agent, workspace: ws.label, updatedAt: s.updatedAt } });
+      const kept = await this.host.sessions.list(ws.sessionKey);
+      for (const s of kept) {
+        if (s.id === shown.sessionId || !matches(s.title)) continue;
+        out.push({ kind: "thread", path: s.title, thread: { workspaceKey: ws.sessionKey, id: s.id, agent: labelOf(s.harness), workspace: ws.label, updatedAt: s.updatedAt } });
+      }
+      const linked = new Set(kept.map((s) => s.agentSessionId).filter(Boolean));
+      for (const agent of agents) {
+        const cached = this.agentSessionLists.get(`${agent}\n${ws.root}`);
+        if (!query && (!cached || Date.now() - cached.at >= AGENT_SESSIONS_TTL_MS)) void this.listAgentSessions(ws, agent, labelOf(agent));
+        for (const session of cached?.sessions ?? []) {
+          const title = session.title?.trim() || "Untitled session";
+          if (linked.has(session.sessionId) || !matches(title)) continue;
+          const updated = session.updatedAt ? Date.parse(session.updatedAt) : NaN;
+          out.push({
+            kind: "thread",
+            path: title,
+            thread: { workspaceKey: ws.sessionKey, id: session.sessionId, agent: `${labelOf(agent)} session`, workspace: ws.label, updatedAt: Number.isNaN(updated) ? 0 : updated, agentSession: { agent, sessionId: session.sessionId, root: ws.root } },
+          });
+        }
       }
     }
     return out.sort((a, b) => b.thread!.updatedAt - a.thread!.updatedAt);

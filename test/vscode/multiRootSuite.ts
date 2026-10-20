@@ -118,7 +118,7 @@ export async function run() {
     await sending;
     const reply = delivered.slice(from).filter((m) => m.type === "text" && m.workspace === "folder:alpha").map((m) => m.delta).join("");
     assert.match(reply, /\[texts: Thread: write hello\.txt => Conversation: write hello\.txt \(Claude Code, in beta; last active .* UTC\)/);
-    assert.match(reply, /Thread: deleted one => \[thread no longer available: it was deleted\]/);
+    assert.match(reply, /Thread: deleted one => \[thread not available: it was deleted\]/);
     assert.deepEqual(delivered.slice(from).find((m) => m.type === "userMessage")?.attachments, [thread, gone], "the message keeps the references");
   });
 

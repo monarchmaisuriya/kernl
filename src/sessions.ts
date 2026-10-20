@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type Attachment, type HostToPanel, PREVIEW_TYPES } from "./ui/protocol";
 
@@ -159,6 +159,13 @@ export class SessionStore {
     }
   }
 
+  /**
+   * Each folder's summaries as last read, with the file's size and modification time: a listing parses
+   * only files that are new or changed since (this window's saves, or another window's), so typing after
+   * "@" stays fast with many conversations.
+   */
+  private summaries = new Map<string, Map<string, { size: number; mtimeMs: number; summary: SessionSummary }>>();
+
   /** Newest first. */
   async list(workspaceKey: string): Promise<SessionSummary[]> {
     let names: string[] = [];
@@ -167,14 +174,25 @@ export class SessionStore {
     } catch (err: any) {
       if (err?.code !== "ENOENT") throw err;
     }
-    const out: SessionSummary[] = [];
+    const known = this.summaries.get(workspaceKey) ?? new Map();
+    const next = new Map<string, { size: number; mtimeMs: number; summary: SessionSummary }>();
     for (const n of names) {
-      const s = await this.load(workspaceKey, n.slice(0, -5));
+      const id = n.slice(0, -5);
+      const meta = await stat(join(this.folder(workspaceKey), n)).catch(() => undefined);
+      if (!meta) continue;
+      const cached = known.get(id);
+      if (cached && cached.size === meta.size && cached.mtimeMs === meta.mtimeMs) {
+        next.set(id, cached);
+        continue;
+      }
+      const s = await this.load(workspaceKey, id);
       if (!s) continue;
       const agentSessionId = s.importedFrom?.sessionId ?? (s.history as { sessionId?: unknown } | undefined)?.sessionId;
-      out.push({ id: s.id, title: s.title, harness: s.harness, updatedAt: s.updatedAt, messages: s.events.filter((e) => e.type === "userMessage").length, ...(typeof agentSessionId === "string" ? { agentSessionId } : {}) });
+      const summary = { id: s.id, title: s.title, harness: s.harness, updatedAt: s.updatedAt, messages: s.events.filter((e) => e.type === "userMessage").length, ...(typeof agentSessionId === "string" ? { agentSessionId } : {}) };
+      next.set(id, { size: meta.size, mtimeMs: meta.mtimeMs, summary });
     }
-    return out.sort((a, b) => b.updatedAt - a.updatedAt);
+    this.summaries.set(workspaceKey, next);
+    return [...next.values()].map((e) => e.summary).sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   async remove(workspaceKey: string, id: string): Promise<void> {
@@ -203,6 +221,7 @@ export class SessionStore {
   }
 
   async clear(): Promise<void> {
+    this.summaries.clear();
     await rm(this.dir, { recursive: true, force: true });
   }
 }
@@ -242,20 +261,40 @@ function turnText(events: readonly TranscriptEvent[]): string {
   return lines.join("\n");
 }
 
-/**
- * A stored conversation as text for an agent in another conversation (any agent, any provider: the
- * transcript has one shape whatever ran it). Within `max` characters: a header, the first turn (what
- * the conversation set out to do), then the newest turns that fit, saying how many in between were
- * left out; a newest turn too long to fit keeps its end.
- */
-export function threadExcerpt(s: SessionRecord, about: { agent: string; workspace: string }, max: number): string {
+/** A conversation's turns as text (the user's message, then the reply, tool calls, and errors), in order: what an excerpt and read_thread show. */
+export function threadTurns(events: readonly TranscriptEvent[]): string[] {
   const turns: TranscriptEvent[][] = [];
-  for (const e of s.events) {
+  for (const e of events) {
     if (e.type === "userMessage" || !turns.length) turns.push([]);
     turns[turns.length - 1].push(e);
   }
-  const texts = turns.map(turnText).filter(Boolean);
-  const head = `Conversation: ${s.title} (${about.agent}, in ${about.workspace}; last active ${new Date(s.updatedAt).toISOString().slice(0, 16).replace("T", " ")} UTC)`;
+  return turns.map(turnText).filter(Boolean);
+}
+
+/** A turn's request, short, for an outline line. */
+const requestOf = (turn: string) => turn.split("\n")[0].replace(/^User: /, "").replace(/\s+/g, " ").slice(0, 80);
+
+/** What a tagged thread is called, and how read_thread names it. */
+export interface ThreadAbout {
+  title: string;
+  updatedAt: number;
+  agent: string;
+  workspace: string;
+  /** The handle read_thread takes for it. */
+  handle: string;
+}
+
+/**
+ * A tagged conversation as text for an agent in another conversation (any agent, any provider: the
+ * transcript has one shape whatever ran it). Within `max` characters: a header, an outline of every
+ * turn (so the whole thread's shape shows), the first turn (what it set out to do), then the newest
+ * turns that fit, saying how many in between were left out and how to read them (read_thread).
+ */
+export function threadExcerpt(events: readonly TranscriptEvent[], about: ThreadAbout, max: number): string {
+  const texts = threadTurns(events);
+  // An agent's session may not say when it was last active: then the header doesn't either.
+  const when = about.updatedAt ? `; last active ${new Date(about.updatedAt).toISOString().slice(0, 16).replace("T", " ")} UTC` : "";
+  const head = `Conversation: ${about.title} (${about.agent}, in ${about.workspace}${when})\nThread handle for read_thread: ${about.handle}`;
   if (!texts.length) return `${head}\n(no messages)`;
   const cut = (text: string, room: number, keep: "start" | "end") => {
     if (text.length <= room) return text;
@@ -263,9 +302,13 @@ export function threadExcerpt(s: SessionRecord, about: { agent: string; workspac
     const n = Math.max(0, room - marker.length);
     return keep === "start" ? text.slice(0, n) + marker : marker + text.slice(text.length - n);
   };
+  // The outline only when something will be left out; a short thread is shown whole.
+  const whole = texts.join("\n\n");
+  const outline = head.length + whole.length + 2 <= max ? "" : cut(`Outline (${texts.length} turns):\n${texts.map((t, i) => `${i + 1}. ${requestOf(t)}`).join("\n")}`, Math.min(3_000, Math.floor(max / 6)), "start");
+  if (!outline) return `${head}\n\n${whole}`;
   // The first turn gets at most a quarter of the room, so the newest turns always have most of it.
   const first = cut(texts[0], Math.floor(max / 4), "start");
-  let room = max - head.length - first.length - 80;
+  let room = max - head.length - outline.length - first.length - 160;
   const newest: string[] = [];
   for (let i = texts.length - 1; i > 0 && room > 0; i--) {
     const text = texts[i].length <= room ? texts[i] : newest.length ? "" : cut(texts[i], room, "end");
@@ -274,5 +317,44 @@ export function threadExcerpt(s: SessionRecord, about: { agent: string; workspac
     room -= text.length + 2;
   }
   const leftOut = texts.length - 1 - newest.length;
-  return [head, first, ...(leftOut ? [`[${leftOut} earlier turn${leftOut === 1 ? "" : "s"} left out]`] : []), ...newest].join("\n\n");
+  const note = leftOut ? [`[turns 2-${texts.length - newest.length} left out: read them with read_thread (thread ${about.handle}, turns "2-${texts.length - newest.length}" or a search)]`] : [];
+  return [head, outline, `1. ${first}`, ...note, ...newest.map((t, i) => `${texts.length - newest.length + 1 + i}. ${t}`)].join("\n\n");
+}
+
+/**
+ * read_thread's answer: the turns asked for ("7", "4-9"; numbered as in the outline) or the turns that
+ * contain every word of `search`, within `max` characters, saying what was cut and how to read on.
+ */
+export function threadPage(texts: readonly string[], ask: { turns?: string; search?: string }, max: number): string {
+  if (!texts.length) return "This conversation has no messages.";
+  let picked: number[];
+  if (ask.turns?.trim()) {
+    const m = /^\s*(\d+)\s*(?:-\s*(\d+))?\s*$/.exec(ask.turns);
+    if (!m) return `turns must be a number or a range like "4-9" (the thread has turns 1-${texts.length}).`;
+    const from = Math.max(1, Number(m[1]));
+    const to = Math.min(texts.length, Number(m[2] ?? m[1]));
+    if (from > to) return `The thread has turns 1-${texts.length}.`;
+    picked = Array.from({ length: to - from + 1 }, (_, i) => from - 1 + i);
+  } else if (ask.search?.trim()) {
+    const words = ask.search.toLowerCase().split(/\s+/).filter(Boolean);
+    picked = texts.flatMap((t, i) => (words.every((w) => t.toLowerCase().includes(w)) ? [i] : []));
+    if (!picked.length) return `No turn mentions "${ask.search}" (the thread has turns 1-${texts.length}).`;
+  } else {
+    picked = texts.map((_, i) => i);
+  }
+  const out: string[] = [];
+  let room = max;
+  for (const i of picked) {
+    const text = `${i + 1}. ${texts[i]}`;
+    if (text.length > room) {
+      // The first turn asked for is shown cut; later ones wait for the next call.
+      if (!out.length) out.push(`${text.slice(0, Math.max(0, room - 80))}\n[...the rest of turn ${i + 1} is past the limit]`);
+      const nextTurn = out.length && out[out.length - 1].startsWith(`${i + 1}. `) ? i + 2 : i + 1;
+      if (nextTurn <= texts.length) out.push(`[stopped at the limit: read on from turn ${nextTurn} of ${texts.length}]`);
+      break;
+    }
+    out.push(text);
+    room -= text.length + 2;
+  }
+  return out.join("\n\n");
 }

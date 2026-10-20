@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { AIMessage } from "@langchain/core/messages";
 import { buildAgent } from "../../src/agent/createAgent";
 import { AgentSession } from "../../src/agent/session";
-import { cutHistory, SessionStore, threadExcerpt } from "../../src/sessions";
+import { cutHistory, SessionStore, threadExcerpt, threadPage, threadTurns } from "../../src/sessions";
 import { workspace } from "../support/harness";
 import { ScriptedChatModel } from "../support/scriptedModel";
 
@@ -68,9 +68,9 @@ test("cutting history stops right before the chosen user turn", () => {
   assert.equal(cutHistory({ sessionId: "x" }, 1), undefined, "a CLI agent's session can't be cut");
 });
 
-const about = { agent: "Claude Code", workspace: "Develop" };
+const about = (s: { title: string; updatedAt: number }) => ({ title: s.title, updatedAt: s.updatedAt, agent: "Claude Code", workspace: "Develop", handle: "h-1" });
 
-test("a tagged conversation becomes text any agent reads: a header, then each turn's request, reply, and tool calls", () => {
+test("a short tagged conversation is sent whole: a header with its handle, then each turn's request, reply, and tool calls", () => {
   const s = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))).create("claude-code");
   s.title = "Fix login";
   s.updatedAt = Date.UTC(2026, 9, 19, 14, 5);
@@ -82,37 +82,69 @@ test("a tagged conversation becomes text any agent reads: a header, then each tu
     { type: "finished", workspace: "main", reason: "done" },
   );
   assert.equal(
-    threadExcerpt(s, about, 20_000),
-    "Conversation: Fix login (Claude Code, in Develop; last active 2026-10-19 14:05 UTC)\n\nUser: Why does login loop? [attached: src/session.ts]\nAssistant: The redirect\n[tool: read_file]\nAssistant: runs first.",
+    threadExcerpt(s.events, about(s), 20_000),
+    "Conversation: Fix login (Claude Code, in Develop; last active 2026-10-19 14:05 UTC)\nThread handle for read_thread: h-1\n\nUser: Why does login loop? [attached: src/session.ts]\nAssistant: The redirect\n[tool: read_file]\nAssistant: runs first.",
   );
 });
 
-test("a long conversation keeps its first request and newest turns within the limit, and says how many turns were left out", () => {
+test("a long conversation keeps an outline of every turn, its first request, and its newest turns within the limit, and says how to read the rest", () => {
   const s = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))).create("deepagents");
   s.title = "Big refactor";
   for (let i = 1; i <= 40; i++) {
     s.events.push({ type: "userMessage", workspace: "main", text: `request ${i}` }, { type: "text", workspace: "main", delta: `reply ${i} ${"x".repeat(900)}` });
   }
-  const text = threadExcerpt(s, about, 10_000);
+  const text = threadExcerpt(s.events, about(s), 10_000);
   assert.ok(text.length <= 10_000, `${text.length} characters`);
-  assert.match(text, /User: request 1\n/, "the goal");
-  assert.match(text, /User: request 40\n/, "the newest turn");
-  const kept = [...text.matchAll(/User: request (\d+)\n/g)].map((m) => Number(m[1]));
-  const leftOut = Number(/\[(\d+) earlier turns left out\]/.exec(text)?.[1]);
-  assert.equal(kept.length - 1 + leftOut, 39, "every later turn is either kept or counted");
-  assert.deepEqual(kept.slice(1), kept.slice(1).sort((a, b) => a - b), "in order");
-  assert.equal(kept.at(-1), 40);
+  const outline = /Outline \(40 turns\):\n([\s\S]*?)\n\n/.exec(text)![1].split("\n");
+  assert.equal(outline.length, 40, "every turn is in the outline");
+  assert.equal(outline[19], "20. request 20");
+  assert.match(text, /\n\n1\. User: request 1\n/, "the goal");
+  assert.match(text, /\n\n40\. User: request 40\n/, "the newest turn, numbered as in the outline");
+  const note = /\[turns 2-(\d+) left out: read them with read_thread \(thread h-1, turns "2-\d+" or a search\)\]/.exec(text);
+  assert.ok(note, "how to read the rest");
+  assert.match(text, new RegExp(`\\n\\n${Number(note![1]) + 1}\\. User: request ${Number(note![1]) + 1}\\n`), "the turns after the gap are all there");
 });
 
-test("a newest turn too long for the limit keeps its end; an empty conversation says so", () => {
-  const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-")));
-  const s = store.create("codex");
-  s.title = "Logs";
-  s.events.push({ type: "userMessage", workspace: "main", text: "start" }, { type: "userMessage", workspace: "main", text: `huge ${"y".repeat(30_000)} THE END` });
-  const text = threadExcerpt(s, about, 5_000);
-  assert.ok(text.length <= 5_000);
-  assert.match(text, /\[\.\.\.start of this turn left out\]\n[y]+ THE END$/);
-  assert.match(threadExcerpt(store.create("codex"), about, 5_000), /\(no messages\)$/);
+test("read_thread's page: a range or one turn, the turns mentioning all the words, and a note to read on at the limit", () => {
+  const texts = Array.from({ length: 12 }, (_, i) => `User: request ${i + 1}${i === 6 ? " about the login redirect" : ""}\nAssistant: ${"y".repeat(1_000)}`);
+  assert.match(threadPage(texts, { turns: "4-5" }, 30_000), /^4\. User: request 4\n[\s\S]*\n\n5\. User: request 5\n/);
+  assert.ok(!/6\. User/.test(threadPage(texts, { turns: "4-5" }, 30_000)));
+  assert.match(threadPage(texts, { search: "LOGIN redirect" }, 30_000), /^7\. User: request 7 about the login redirect/);
+  assert.equal(threadPage(texts, { search: "nothing like this" }, 30_000), 'No turn mentions "nothing like this" (the thread has turns 1-12).');
+  assert.equal(threadPage(texts, { turns: "x" }, 30_000), 'turns must be a number or a range like "4-9" (the thread has turns 1-12).');
+  const limited = threadPage(texts, {}, 3_200);
+  assert.match(limited, /\[stopped at the limit: read on from turn 4 of 12\]$/);
+  assert.ok(limited.length <= 3_300);
+  assert.deepEqual(threadTurns([]), []);
+});
+
+test("listing conversations reads only files that are new or changed since the last listing (another window's change included)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kernl-list-"));
+  const store = new SessionStore(dir);
+  const records = ["a", "b", "c"].map((t) => {
+    const r = store.create("deepagents");
+    r.events.push({ type: "userMessage", workspace: "main", text: `talk ${t}` });
+    return r;
+  });
+  for (const r of records) await store.save("ws", r);
+  let reads = 0;
+  const load = store.load.bind(store);
+  store.load = (key: string, id: string) => (reads++, load(key, id));
+  assert.equal((await store.list("ws")).length, 3);
+  assert.equal(reads, 3, "the first listing reads each file");
+  reads = 0;
+  await store.list("ws");
+  assert.equal(reads, 0, "nothing changed: nothing read");
+  // Another window renames a conversation in the same store.
+  const other = new SessionStore(dir);
+  const changed = (await other.load("ws", records[1].id))!;
+  changed.agentTitle = "Renamed elsewhere";
+  await new Promise((r) => setTimeout(r, 20));
+  await other.save("ws", changed);
+  await other.remove("ws", records[2].id);
+  const listed = await store.list("ws");
+  assert.equal(reads, 1, "only the changed file is read again");
+  assert.deepEqual(listed.map((s) => s.title).sort(), ["Renamed elsewhere", "talk a"], "the change shows, the removed one is gone");
 });
 
 test("queued messages are kept per workspace with their attachments, don't show up as conversations, and an empty queue removes them", async () => {

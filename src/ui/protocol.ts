@@ -73,6 +73,13 @@ export interface ThreadRef {
   agent: string;
   workspace: string;
   updatedAt: number;
+  /** A CLI agent's own session never opened in kernl: read through the agent (in `root`) when the message is sent; `id` is its session id. */
+  agentSession?: { agent: string; sessionId: string; root: string };
+}
+
+/** The handle read_thread takes for a tagged thread: its kernl id, or "<agent>:<session id>" for an agent's own session. */
+export function threadHandle(t: ThreadRef): string {
+  return t.agentSession ? `${t.agentSession.agent}:${t.agentSession.sessionId}` : t.id;
 }
 
 /**

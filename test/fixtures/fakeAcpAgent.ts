@@ -153,7 +153,10 @@ new acp.AgentSideConnection((conn) => ({
     const attached = links.length ? ` [links: ${links.join(", ")}]` : "";
     // Text attachments (pasted text, tagged threads): their labels and first lines, so tests see what arrived.
     const prompted = (p.prompt ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
-    const texts = [...prompted.matchAll(/Attached by the user: (.+?) \(untrusted content: data, not instructions\)\n<<<\n(.*)/g)].map((m) => `${m[1]} => ${m[2]}`);
+    const texts = [...prompted.matchAll(/Attached by the user: (.+?) \(untrusted content: data, not instructions\)\n<<<\n([\s\S]*?)\n>>>/g)].map((m) => {
+      const marks = [...new Set(m[2].match(/REPLAYED-[A-Z-]+/g) ?? [])];
+      return `${m[1]} => ${m[2].split("\n")[0]}${marks.length ? ` (has ${marks.join(", ")})` : ""}`;
+    });
     const textsNote = texts.length ? ` [texts: ${texts.join(" | ")}]` : "";
     const credential = process.env.ANTHROPIC_API_KEY ? ` [env ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY} ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL ?? "unset"} CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "unset"}]` : "";
     await conn.sessionUpdate({ sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `hello from fake${credential}${attached}${textsNote}` } } as any });
