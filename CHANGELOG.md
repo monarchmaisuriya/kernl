@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-20
+
 ### Changed
 
 - The tab strip is redesigned: compact pills with the full title (up to 200 px), the shown tab filled like the message box, and a state slot that shows a spinner while a tab works, a warning dot while it waits for you, and an accent dot when it finished while you were in another tab. × appears on hover or focus instead of hiding the state. The strip scrolls sideways when full, with `+` always in view. Middle-click closes a tab, double-click on empty space opens one, and the keyboard follows the tabs pattern (one Tab stop; arrows, Home, End; Delete closes).
@@ -207,7 +209,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/pushowl/kernl/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/pushowl/kernl/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/pushowl/kernl/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/pushowl/kernl/compare/v0.8.0...v0.8.1
