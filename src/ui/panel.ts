@@ -16,6 +16,9 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   private delivered = new vscode.EventEmitter<HostToPanel>();
   /** Every message that actually reached a ready webview (used by the integration tests). */
   readonly onDidDeliver = this.delivered.event;
+  /** Each reveal (it takes keyboard focus), with where it was called from: the integration suite's timeline shows what moved focus. */
+  private revealed = new vscode.EventEmitter<string>();
+  readonly onDidReveal = this.revealed.event;
 
   private view: vscode.WebviewView | undefined;
   private hidden = new vscode.EventEmitter<void>();
@@ -64,6 +67,7 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   }
 
   async reveal() {
+    this.revealed.fire(new Error("reveal").stack?.split("\n").slice(2, 6).map((l) => l.trim()).join(" <- ") ?? "");
     await vscode.commands.executeCommand(`${PANEL_VIEW_ID}.focus`);
   }
 }

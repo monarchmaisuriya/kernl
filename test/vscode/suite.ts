@@ -57,7 +57,8 @@ async function check(name: string, fn: () => Promise<void>) {
     results.push(`PASS  ${name}`);
     console.log(`[check] PASS: ${name}`);
   } catch (e: any) {
-    const lines = timeline.slice(from).slice(-40);
+    // From 15 lines before the check: what happened just before it (focus moving, say) can explain a failure.
+    const lines = timeline.slice(Math.max(0, from - 15)).slice(-55);
     results.push(`FAIL  ${name}\n      ${String(e?.message ?? e).split("\n").filter((l) => l.trim()).slice(0, 8).join("\n      ")}\n      timeline (ms):\n        ${lines.join("\n        ")}`);
     console.log(`[check] FAIL: ${name}`);
   } finally {
@@ -197,6 +198,16 @@ export async function run() {
     }
   });
 
+  // What moves keyboard focus, in the timeline: commands like Undo act on whatever has focus, so a failing check shows who had it.
+  {
+    const t = (await ext.activate()).testing;
+    t.onPanelFocus((inPanel: boolean) => timeline.push(`${at()} focus: kernl's panel ${inPanel ? "has" : "lost"} keyboard focus`));
+    t.onReveal((caller: string) => timeline.push(`${at()} focus: kernl reveals its panel (focus) from ${caller}`));
+    vscode.window.onDidChangeActiveTextEditor((e) => timeline.push(`${at()} focus: active editor -> ${e ? e.document.uri.path.split("/").pop() : "none"}`));
+    vscode.window.onDidChangeWindowState((s) => timeline.push(`${at()} focus: window focused=${s.focused}`));
+    vscode.window.onDidChangeActiveTerminal((term) => timeline.push(`${at()} focus: active terminal -> ${term?.name ?? "none"}`));
+    vscode.window.tabGroups.onDidChangeTabs((e) => timeline.push(`${at()} focus: tabs opened=[${e.opened.map((x) => x.label).join(", ")}] changed=[${e.changed.map((x) => x.label + (x.isActive ? "*" : "")).join(", ")}]`));
+  }
   const files = new VscodeWorkspaceFiles();
 
   await check("approved edit applies exactly the previewed text through the editor, and Undo reverts it", async () => {
@@ -208,6 +219,9 @@ export async function run() {
     assert.equal(readFileSync(join(root, "edit.txt"), "utf8"), shown.after);
     const doc = await vscode.workspace.openTextDocument(join(root, "edit.txt"));
     await vscode.window.showTextDocument(doc);
+    // Undo acts on whatever has keyboard focus (being the active editor isn't enough), as Cmd+Z does: focus the editor, as a user would be in it.
+    await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
+    timeline.push(`${at()} focus: undo in edit.txt (the active editor ${vscode.window.activeTextEditor?.document === doc ? "is" : "isn't"} edit.txt)`);
     await vscode.commands.executeCommand("undo");
     assert.equal(doc.getText(), "hello world\n");
   });

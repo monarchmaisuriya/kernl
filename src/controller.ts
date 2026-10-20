@@ -123,6 +123,8 @@ export class Controller implements vscode.Disposable {
   private sharedBrowser: IntegratedBrowser | undefined;
   /** Whether kernl's panel has keyboard focus (the panel reports it), so focus can go back there. */
   private panelHasKeyboard = false;
+  /** The panel gaining or losing keyboard focus (the integration suite's timeline shows it). */
+  private panelFocus = new vscode.EventEmitter<boolean>();
   /** kernl's skills for the shown folder: the names kernl's own agent offers on "/" (see agentCommandNames). */
   private skillNames: readonly string[] = [];
   /** Every connection's status (agents, keys, MCP servers, plugins); the agent chip, menu, and Connections view read it. */
@@ -1618,6 +1620,7 @@ export class Controller implements vscode.Disposable {
         return this.keepDraft(m.text, m.attachments);
       case "keyboardFocus":
         this.panelHasKeyboard = m.inPanel;
+        this.panelFocus.fire(m.inPanel);
         return;
       case "pickAgentOption": {
         const kind = this.workspace(m.workspace)?.view().agentOptions?.find((o) => o.id === m.id)?.kind;
@@ -1883,6 +1886,9 @@ export class Controller implements vscode.Disposable {
     return {
       receive: (m: PanelToHost) => this.onPanelMessage(m),
       onDidDeliver: this.panel.onDidDeliver,
+      /** kernl's panel gaining or losing keyboard focus, and each reveal (which takes focus) with its caller. */
+      onPanelFocus: this.panelFocus.event,
+      onReveal: this.panel.onDidReveal,
       usePrompts: (p: Prompts) => (this.prompts = p),
       /** Back to the real prompts (in-panel menus), after usePrompts. */
       usePanelPrompts: () => (this.prompts = this.panelPrompts),
