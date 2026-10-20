@@ -28,7 +28,7 @@ import { isPermissionMode } from "./modes";
 import { agentLogins, manageProviders, pickModel } from "./providerManager";
 import { KeyStore } from "./providers/keys";
 import { type CustomProvider, createChatModel, customProviders, effectiveModelOptions, isProviderId, missingSecretHeader, type ProviderId, profileKey, providerApi, resolveProvider, settingsProblem, THINKING_LEVELS, type ThinkingLevel } from "./providers/registry";
-import { type SessionRecord, SessionStore, transcriptText } from "./sessions";
+import { type SessionRecord, SessionStore } from "./sessions";
 import { loadSources, sourceRoots, sourceSettings, sourcesReport } from "./sources";
 import { KernlToolServer } from "./mcp/kernlServer";
 import { type AgentCheckDeps, agentBinary, agentLabel, agentProblem, checkAgent, LOGIN_ARGS } from "./connections/agentChecks";
@@ -43,6 +43,7 @@ import { blocks, type ConnectionStatus } from "./connections/types";
 import { type McpServer, SIGN_IN_REASON, SignInRequired, settingServers } from "./mcp/servers";
 import { panelSnapshot, toApprovalCard } from "./ui/approvalCards";
 import { AgentPanel } from "./ui/panel";
+import { type ConversationPick, conversationRows } from "./ui/conversationRows";
 import { PanelPrompts } from "./ui/panelPrompts";
 import { type HarnessView, httpUrl, type MenuAnchor, type PanelToHost } from "./ui/protocol";
 import { ProposalDiffs } from "./ui/proposalDiffs";
@@ -73,6 +74,8 @@ const DRAFT_KEY = "kernl.draft";
 
 /** How long an agent's session list is reused when its store hasn't changed (a change empties it at once). */
 const AGENT_SESSIONS_TTL_MS = 5 * 60_000;
+/** Where the open tabs are kept for the window (workspaceState): workspace id -> its tabs' numbers and conversations. */
+const TABS_KEY = "kernl.tabs";
 
 function approvalRules() {
   const s = readSettings();
@@ -148,6 +151,12 @@ export class Controller implements vscode.Disposable {
   private multiRoot = false;
   /** Each worktree workspace's folder (the top-level workspace whose repository it belongs to). */
   private worktreeFolder = new Map<string, string>();
+  /** When each tab was last shown: at kernl.tabs.max, the one shown longest ago (and idle) closes. */
+  private tabUsed = new Map<string, number>();
+  /** The highest tab number used for each workspace in this window. */
+  private tabNumbers = new Map<string, number>();
+  /** Tabs restored after a reload: the conversation each opens when it's first shown. */
+  private tabConversation = new Map<string, string>();
   /** Named agents (from ~/.kernl/agents and the main folder's .kernl/agents) offered in the agent picker. */
   private namedHarnesses: { id: string; label: string }[] = [];
 
@@ -432,10 +441,11 @@ export class Controller implements vscode.Disposable {
         if (!isNotARepository(err)) this.fail(`Could not load workspaces for ${folder.name}`, err);
       }
     }
+    this.restoreTabs();
     // Start on the folder of the file being edited.
     const editing = vscode.window.activeTextEditor?.document.uri;
     const folderOfEditor = editing && vscode.workspace.getWorkspaceFolder(editing)?.uri.fsPath;
-    this.active = [...this.workspaces.values()].find((w) => !w.info && w.root === folderOfEditor)?.id ?? this.workspaces.keys().next().value ?? MAIN;
+    this.active = [...this.workspaces.values()].find((w) => !w.info && !w.tabOf && w.root === folderOfEditor)?.id ?? this.workspaces.keys().next().value ?? MAIN;
     await this.refreshNamedAgents();
     this.postWorkspaces(this.active);
     void this.postSkills();
@@ -454,7 +464,92 @@ export class Controller implements vscode.Disposable {
 
   /** The folder (top-level workspace) a workspace belongs to: itself, or a worktree's folder. */
   private folderIdOf(id: string): string {
-    return this.worktreeFolder.get(id) ?? id;
+    const tabOf = this.workspaces.get(id)?.tabOf;
+    return tabOf ? this.folderIdOf(tabOf) : (this.worktreeFolder.get(id) ?? id);
+  }
+
+  /** A workspace's tabs, itself first, then by number. */
+  private tabsOf(workspace: string): WorkspaceRuntime[] {
+    const tabs = [...this.workspaces.values()].filter((w) => w.tabOf === workspace);
+    const n = (w: WorkspaceRuntime) => Number(w.id.slice(w.id.lastIndexOf("~") + 1));
+    return [this.workspaces.get(workspace)!, ...tabs.sort((a, b) => n(a) - n(b))].filter(Boolean);
+  }
+
+  /**
+   * A new tab for the shown workspace: another session in the same folder, with its own conversation,
+   * agent, and queue. At kernl.tabs.max (0: no limit) the tab shown longest ago that is idle (not
+   * running, no card, nothing queued) closes first; its conversation stays in Conversations.
+   */
+  private async newTab() {
+    const base = this.workspace(this.workspace(this.active)?.tabOf ?? this.active);
+    if (!base) return;
+    const tabs = this.tabsOf(base.id);
+    const max = Math.max(0, Math.floor(vscode.workspace.getConfiguration("kernl").get<number>("tabs.max", 5)));
+    if (max && tabs.length >= max) {
+      const idle = tabs.filter((t) => t.tabOf && !t.running && !t.approvals.size && !t.view().queue.length).sort((a, b) => (this.tabUsed.get(a.id) ?? 0) - (this.tabUsed.get(b.id) ?? 0));
+      if (!idle.length) {
+        this.panel.post({ type: "notice", workspace: this.active, text: `All ${tabs.length} tabs are busy (kernl.tabs.max is ${max}): close one, or raise kernl.tabs.max.` });
+        return;
+      }
+      await this.closeTab(idle[0].id, false);
+    }
+    const tab = this.addTab(base);
+    this.active = tab.id;
+    this.tabUsed.set(tab.id, Date.now());
+    this.postWorkspaces(tab.id);
+  }
+
+  /**
+   * A tab numbered `n` (a restored one), or the next number never used in this window: a closed tab's
+   * number isn't given again, since the panel keeps each id's transcript while the window is open.
+   */
+  private addTab(base: WorkspaceRuntime, n?: number): WorkspaceRuntime {
+    let number = n ?? Math.max(1, this.tabNumbers.get(base.id) ?? 1) + 1;
+    while (this.workspaces.has(`${base.id}~${number}`)) number++;
+    this.tabNumbers.set(base.id, Math.max(number, this.tabNumbers.get(base.id) ?? 1));
+    return this.track(new WorkspaceRuntime(`${base.id}~${number}`, `${base.label} · tab ${number}`, base.root, base.harness, this.host, base.info, base.followsHarnessSetting, base.id));
+  }
+
+  /** Closes a tab (never a workspace's first); a running one asks first. Its conversation stays in Conversations. */
+  private async closeTab(id: string, ask = true) {
+    const tab = this.workspace(id);
+    if (!tab?.tabOf) return;
+    if (ask && tab.running && !(await this.prompts.confirm("Stop the agent and close this tab?", "Its conversation stays in Conversations.", "Stop and close"))) return;
+    if (tab.running) await tab.stop();
+    await tab.saveSession();
+    const siblings = this.tabsOf(tab.tabOf);
+    const next = siblings[siblings.indexOf(tab) - 1] ?? this.workspace(tab.tabOf)!;
+    tab.dispose();
+    this.workspaces.delete(id);
+    this.tabUsed.delete(id);
+    this.tabConversation.delete(id);
+    void this.host.sessions.saveQueue(tab.queueKey, []).catch((err) => this.log.error("could not remove a closed tab's queue", err));
+    if (this.active === id) this.active = next.id;
+    this.postWorkspaces(this.active);
+  }
+
+  /** The open tabs and their conversations, kept for the window so they come back after a reload. */
+  private saveTabs() {
+    const tabs: Record<string, { n: number; conversation: string }[]> = {};
+    for (const w of this.workspaces.values()) {
+      if (!w.tabOf) continue;
+      (tabs[w.tabOf] ??= []).push({ n: Number(w.id.slice(w.id.lastIndexOf("~") + 1)), conversation: this.tabConversation.get(w.id) ?? w.sessionId });
+    }
+    void this.context.workspaceState.update(TABS_KEY, tabs);
+  }
+
+  /** Tabs open before the reload come back; each opens its conversation when it's first shown. */
+  private restoreTabs() {
+    const saved = this.context.workspaceState.get<Record<string, { n: number; conversation: string }[]>>(TABS_KEY) ?? {};
+    for (const [workspace, tabs] of Object.entries(saved)) {
+      const base = this.workspace(workspace);
+      if (!base || base.tabOf) continue;
+      for (const t of tabs) {
+        if (!Number.isInteger(t.n) || t.n < 2 || this.workspaces.has(`${workspace}~${t.n}`)) continue;
+        const tab = this.addTab(base, t.n);
+        if (typeof t.conversation === "string") this.tabConversation.set(tab.id, t.conversation);
+      }
+    }
   }
 
   /** The shown workspace's folder: whose repository new worktrees come from, and whose skills and agents are offered. */
@@ -790,23 +885,6 @@ export class Controller implements vscode.Disposable {
    * (ACP session/list) unless its list is cached and its store hasn't changed since. An agent that
    * can't list is left out (logged).
    */
-  private async agentSessions(ws: WorkspaceRuntime): Promise<{ agent: CliAgentId; session: acp.SessionInfo }[]> {
-    if (!vscode.workspace.getConfiguration("kernl").get<boolean>("sessions.importFromAgents", true)) return [];
-    const lists = await Promise.all(
-      CLI_AGENT_IDS.map(async (agent) => {
-        if (!(await this.readiness(agent)).ready) return [];
-        const key = `${agent}\n${ws.root}`;
-        const cached = this.agentSessionLists.get(key);
-        if (cached && Date.now() - cached.at < AGENT_SESSIONS_TTL_MS) return cached.sessions.map((session) => ({ agent, session }));
-        const sessions = await ws.listAgentSessions(agent);
-        if (!sessions) return [];
-        this.agentSessionLists.set(key, { at: Date.now(), sessions });
-        return sessions.map((session) => ({ agent, session }));
-      }),
-    );
-    return lists.flat();
-  }
-
   private watchCredentialFiles(): vscode.Disposable[] {
     const roots = sourceRoots();
     let timer: NodeJS.Timeout | undefined;
@@ -897,44 +975,61 @@ export class Controller implements vscode.Disposable {
   }
 
   /**
-   * The history button: this workspace's conversations, newest first, then the CLI agents' own
-   * sessions in this folder that kernl hasn't opened yet (started in a terminal or another app).
+   * The history button: the Conversations view, shown at once with this workspace's conversations.
+   * Each ready CLI agent's own sessions in this folder (started in a terminal or another app) join as
+   * that agent answers: a list fetched before shows straight away and is asked again when it's older
+   * than AGENT_SESSIONS_TTL_MS, so no agent's start holds the view up.
    */
   async showSessions() {
     const ws = this.workspace(this.active);
     if (!ws || ws.running) return;
+    await this.panel.reveal();
     await ws.saveSession();
-    const [sessions, agentSessions] = await Promise.all([this.host.sessions.list(ws.sessionKey), this.agentSessions(ws)]);
-    const label = (h: string) => this.harnessList().find((x) => x.id === h)?.label ?? h;
-    const ago = (t: number) => {
-      const m = Math.round((Date.now() - t) / 60000);
-      return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
-    };
-    const linked = new Set(sessions.map((s) => s.agentSessionId).filter(Boolean));
-    type Item = vscode.QuickPickItem & { id?: string; agent?: CliAgentId; session?: acp.SessionInfo };
-    const items: Item[] = [
-      { label: "$(add) New conversation" },
-      ...sessions.map((s) => ({ label: `${s.id === ws.sessionId ? "$(check) " : ""}${s.title}`, description: `${messages(s.messages)} · ${label(s.harness)} · ${ago(s.updatedAt)}`, id: s.id })),
-      ...agentSessions
-        .filter(({ session }) => !linked.has(session.sessionId))
-        .map(({ agent, session }) => ({
-          label: session.title?.trim() || "Untitled session",
-          description: [`${label(agent)} session`, session.updatedAt ? ago(Date.parse(session.updatedAt)) : undefined].filter(Boolean).join(" · "),
-          agent,
-          session,
-        })),
-    ];
-    const picked = await this.prompts.pick(items, { title: `Conversations in ${ws.view().label}` });
-    if (!picked) return;
-    if (picked.agent && picked.session) {
-      const record = this.host.sessions.create(picked.agent);
-      record.importedFrom = { agent: picked.agent, sessionId: picked.session.sessionId };
-      record.history = { sessionId: picked.session.sessionId };
-      if (picked.session.title?.trim()) record.agentTitle = picked.session.title.trim();
+    const kept = await this.host.sessions.list(ws.sessionKey);
+    const agents = vscode.workspace.getConfiguration("kernl").get<boolean>("sessions.importFromAgents", true) ? CLI_AGENT_IDS.filter((a) => this.readiness(a).ready) : [];
+    const labelOf = (h: string) => this.harnessList().find((x) => x.id === h)?.label ?? h;
+    const state = agents.map((agent) => {
+      const cached = this.agentSessionLists.get(`${agent}\n${ws.root}`);
+      return { id: agent, label: labelOf(agent), sessions: cached?.sessions, pending: !cached || Date.now() - cached.at >= AGENT_SESSIONS_TTL_MS };
+    });
+    const post = (open?: boolean) =>
+      this.panel.post({
+        type: "conversations",
+        workspace: ws.id,
+        title: `Conversations in ${ws.view().label}`,
+        rows: conversationRows({ kept, current: ws.sessionId, agents: state, label: labelOf, now: Date.now() }),
+        ...(open ? { open } : {}),
+      });
+    post(true);
+    for (const a of state.filter((x) => x.pending)) {
+      void (async () => {
+        const started = Date.now();
+        const sessions = await ws.listAgentSessions(a.id);
+        this.log.info(`[${ws.label}] ${a.label} ${sessions ? `listed ${sessions.length} session(s)` : "listed no sessions"} in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+        if (sessions) (this.agentSessionLists.set(`${a.id}\n${ws.root}`, { at: Date.now(), sessions }), (a.sessions = sessions));
+        a.pending = false;
+        post();
+      })();
+    }
+  }
+
+  /** A row picked in the Conversations view: a new conversation, one kernl kept, or a CLI agent's session not opened in kernl yet. */
+  private async openConversation(workspace: string, pick: ConversationPick) {
+    const ws = this.workspace(workspace);
+    if (!ws || ws.running) return;
+    if (pick.kind === "new") return void ws.newThread();
+    if (pick.kind === "agent") {
+      // Only a session the agent listed for this folder: the panel's rows carry nothing else.
+      const agent = CLI_AGENT_IDS.find((a) => a === pick.agent);
+      const session = agent && this.agentSessionLists.get(`${agent}\n${ws.root}`)?.sessions.find((s) => s.sessionId === pick.sessionId);
+      if (!agent || !session) return;
+      const record = this.host.sessions.create(agent);
+      record.importedFrom = { agent, sessionId: session.sessionId };
+      record.history = { sessionId: session.sessionId };
+      if (session.title?.trim()) record.agentTitle = session.title.trim();
       return this.openAgentSession(ws, record);
     }
-    if (!picked.id) return void ws.newThread();
-    const record = await this.host.sessions.load(ws.sessionKey, picked.id);
+    const record = await this.host.sessions.load(ws.sessionKey, pick.id);
     if (!record || record.id === ws.sessionId) return;
     if (record.importedFrom) return this.openAgentSession(ws, record);
     if (record.harness !== ws.harness && isHarness(record.harness)) await this.setHarness(ws.id, record.harness);
@@ -996,14 +1091,36 @@ export class Controller implements vscode.Disposable {
     await picked?.run();
   }
 
-  /** Another conversation in this workspace, attached as text. */
+  /** Another conversation, from any workspace of the window and any agent, tagged as a thread. */
   private async pickSessionAttachment(ws: WorkspaceRuntime) {
     await ws.saveSession();
-    const sessions = (await this.host.sessions.list(ws.sessionKey)).filter((s) => s.id !== ws.sessionId);
-    if (!sessions.length) return void vscode.window.showInformationMessage("No other conversations in this workspace yet.");
-    const picked = await this.prompts.pick(sessions.map((s) => ({ label: s.title, description: messages(s.messages), id: s.id })), { title: "Attach a conversation" });
-    const record = picked && (await this.host.sessions.load(ws.sessionKey, picked.id));
-    if (record) this.panel.post({ type: "addAttachments", items: [{ kind: "text", path: `Conversation: ${record.title}`, text: transcriptText(record) }] });
+    const threads = await this.threadCandidates(ws);
+    if (!threads.length) return void vscode.window.showInformationMessage("No other conversations yet.");
+    const picked = await this.prompts.pick(
+      threads.map((t) => ({ label: t.path, description: `${t.thread!.agent} · ${t.thread!.workspace}`, thread: t })),
+      { title: "Tag a conversation" },
+    );
+    if (picked) this.panel.post({ type: "addAttachments", items: [picked.thread] });
+  }
+
+  /**
+   * The conversations kernl kept in the window's workspaces (folders and worktrees), any agent, newest
+   * first, except the one `shown` is in; with a `query`, those whose title contains it.
+   */
+  private async threadCandidates(shown: WorkspaceRuntime, query = ""): Promise<Attachment[]> {
+    const agents = [...HARNESSES, ...this.namedHarnesses];
+    const seen = new Set<string>();
+    const out: Attachment[] = [];
+    for (const ws of this.workspaces.values()) {
+      if (seen.has(ws.sessionKey)) continue;
+      seen.add(ws.sessionKey);
+      for (const s of await this.host.sessions.list(ws.sessionKey)) {
+        if (s.id === shown.sessionId || !s.title.toLowerCase().includes(query.toLowerCase())) continue;
+        const agent = agents.find((h) => h.id === s.harness)?.label ?? s.harness;
+        out.push({ kind: "thread", path: s.title, thread: { workspaceKey: ws.sessionKey, id: s.id, agent, workspace: ws.label, updatedAt: s.updatedAt } });
+      }
+    }
+    return out.sort((a, b) => b.thread!.updatedAt - a.thread!.updatedAt);
   }
 
   /** An open issue or pull request of the workspace's GitHub repository (origin), attached as text. */
@@ -1167,6 +1284,8 @@ export class Controller implements vscode.Disposable {
   }
 
   private postWorkspaces(focus?: string) {
+    // With no workspace (no usable folder yet) there's nothing to keep, and the saved tabs stay as they were.
+    if (this.workspaces.size) this.saveTabs();
     this.updateStatusItem();
     const problem = this.workspaces.size ? undefined : this.noWorkspaceReason();
     this.panel.post({ type: "workspaces", items: [...this.workspaces.values()].map((w) => w.view()), harnesses: this.harnessList(), focus, problem });
@@ -1254,6 +1373,9 @@ export class Controller implements vscode.Disposable {
           this.panel.post({ type: "finished", workspace: ws.id, reason: "error", message: `${r.problem} (Agent logins in the ... menu can help.)` });
           return;
         }
+        if (ws && !ws.running && [...this.workspaces.values()].some((o) => o !== ws && o.root === ws.root && o.running)) {
+          this.panel.post({ type: "notice", workspace: ws.id, text: "Another tab is also working in this folder: both may change the same files. A worktree workspace keeps work apart." });
+        }
         return ws?.submit(m.text, m.attachments ?? [], m.mode).catch((err) => {
           // Nothing was sent (e.g. this agent can't fork): put the message and its attachments back so they aren't lost.
           this.panel.post({ type: "setInput", workspace: ws.id, text: m.text });
@@ -1265,9 +1387,21 @@ export class Controller implements vscode.Disposable {
         return this.workspace(m.workspace)?.unqueue(m.id);
       case "sendQueued":
         return this.workspace(m.workspace)?.sendQueued(m.id);
+      case "newTab":
+        return this.newTab();
+      case "closeTab":
+        return this.closeTab(m.workspace);
+      case "editQueued":
+        return this.workspace(m.workspace)?.editingQueue(m.id, m.editing);
+      case "updateQueued":
+        return this.workspace(m.workspace)?.updateQueued(m.id, m.text);
       case "searchFiles": {
-        const root = this.workspace(this.active)?.root;
-        if (root) this.panel.post({ type: "fileMatches", query: m.query, items: await searchWorkspace(root, m.query) });
+        const ws = this.workspace(this.active);
+        if (!ws) return;
+        // Conversations come with files: first when the text matches a title, after the files otherwise.
+        const [files, threads] = await Promise.all([searchWorkspace(ws.root, m.query), this.threadCandidates(ws, m.query)]);
+        const tagged = threads.slice(0, 5);
+        this.panel.post({ type: "fileMatches", query: m.query, items: m.query ? [...tagged, ...files] : [...files, ...tagged] });
         return;
       }
       case "pickAttachments":
@@ -1303,6 +1437,8 @@ export class Controller implements vscode.Disposable {
         return this.openLocation(m.workspace, m.path, m.line);
       case "setKey":
         return this.setApiKey();
+      case "openConversation":
+        return this.openConversation(m.workspace, m.pick);
       case "showConnections":
         this.panel.post({ type: "connections", items: this.connections.list() });
         return this.checkConnections();
@@ -1313,6 +1449,10 @@ export class Controller implements vscode.Disposable {
       case "focus": {
         const folderBefore = this.folderIdOf(this.active);
         if (this.workspace(m.workspace)) this.active = m.workspace;
+        this.tabUsed.set(this.active, Date.now());
+        // A tab restored after a reload opens its conversation when it's first shown.
+        const conversation = this.tabConversation.get(this.active);
+        if (conversation) (this.tabConversation.delete(this.active), void this.openConversation(this.active, { kind: "kernl", id: conversation }));
         this.postActiveFile();
         this.prepareShown();
         // Skills and named agents come from the shown folder.
@@ -1398,11 +1538,13 @@ export class Controller implements vscode.Disposable {
     await this.commands.merge(ws.info);
   }
 
-  private async discard(id: string) {
+  private async discard(id: string): Promise<void> {
     const ws = this.workspace(id);
     if (!ws?.info) return;
+    if (ws.tabOf) return this.discard(ws.tabOf);
     if (await this.commands.discard(ws.info, () => ws.dispose())) {
       const folder = this.folderIdOf(id);
+      for (const tab of this.tabsOf(id).slice(1)) (tab.dispose(), this.workspaces.delete(tab.id), void this.host.sessions.saveQueue(tab.queueKey, []).catch(() => {}));
       this.workspaces.delete(id);
       this.worktreeFolder.delete(id);
       // Its queued messages go with it (a later worktree at the same path starts empty).
@@ -1460,8 +1602,9 @@ export class Controller implements vscode.Disposable {
   private async pickWorkspace() {
     type Item = vscode.QuickPickItem & { run: () => unknown };
     const state = (w: WorkspaceRuntime) => [w.running ? "running" : undefined, w.approvals.size ? `${w.approvals.size} waiting` : undefined].filter(Boolean).join(" · ");
-    const items: Item[] = [...this.workspaces.values()].map((w) => ({
-      label: `${w.id === this.active ? "$(check) " : ""}${w.label}`,
+    const shown = this.workspace(this.active)?.tabOf ?? this.active;
+    const items: Item[] = [...this.workspaces.values()].filter((w) => !w.tabOf).map((w) => ({
+      label: `${w.id === shown ? "$(check) " : ""}${w.label}`,
       description: [w.info?.branch, state(w)].filter(Boolean).join(" · ") || undefined,
       run: () => this.postWorkspaces(w.id),
     }));
@@ -1564,6 +1707,8 @@ export class Controller implements vscode.Disposable {
       /** Back to the real prompts (in-panel menus), after usePrompts. */
       usePanelPrompts: () => (this.prompts = this.panelPrompts),
       activeWorkspace: () => this.active,
+      /** What a folder change does: every workspace (and tab) rebuilt from the folders and the saved tabs. */
+      reloadWorkspaces: () => this.reloadWorkspaces(),
       /** A workspace's run state, part by part (for the integration tests' failure timeline). */
       runState: (workspace: string) => this.workspace(workspace)?.runState(),
       approvalRules: () => approvalRules(),
@@ -1584,5 +1729,3 @@ export class Controller implements vscode.Disposable {
   }
 }
 
-/** "1 message", "3 messages". */
-const messages = (n: number) => `${n} message${n === 1 ? "" : "s"}`;

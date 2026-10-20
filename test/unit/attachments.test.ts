@@ -10,6 +10,8 @@ import { ScriptedChatModel } from "../support/scriptedModel";
 test("the attachment note lists files and folders as workspace paths", () => {
   assert.equal(attachmentNote([]), "");
   assert.equal(attachmentNote([{ path: "src/app.ts", kind: "file" }, { path: "docs/", kind: "folder" }]), "\n\nAttached by the user (workspace paths; read them as needed):\n- /src/app.ts\n- /docs/ (folder)");
+  // A thread is read into text before the agent gets it; one that slipped through is never given as a workspace path.
+  assert.equal(attachmentNote([{ path: "Fix login", kind: "thread" }]), "");
 });
 
 test("the kernl agent receives the attachments with the message", async () => {

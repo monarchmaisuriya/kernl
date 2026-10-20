@@ -424,6 +424,12 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "List Claude Code's, Codex's, and OpenCode's own sessions for the folder in **Conversations** (started in a terminal or another app), and open them in kernl with their history. kernl asks each ready agent for its list (ACP `session/list`); it doesn't read their files."
+          },
+          "kernl.tabs.max": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 0,
+            "markdownDescription": "How many tabs a workspace can have open (its first tab included); `0` means no limit. At the limit, a new tab closes the tab shown longest ago that isn't working; its conversation stays in **Conversations**."
           }
         }
       },

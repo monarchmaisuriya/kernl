@@ -199,7 +199,7 @@ export class AcpRunner implements Runner {
       const sessionId = await this.ensureSession(conn);
       if (run.stopped) return this.o.events.finished("stopped");
       // resource_link is the one attachment form every ACP agent must accept; the text lists them too.
-      const links = attachments.filter((a) => a.kind !== "text").map((a) => ({ type: "resource_link" as const, uri: pathToFileURL(join(this.o.cwd, a.path)).href, name: a.path }));
+      const links = attachments.filter((a) => a.kind === "file" || a.kind === "folder").map((a) => ({ type: "resource_link" as const, uri: pathToFileURL(join(this.o.cwd, a.path)).href, name: a.path }));
       const result = await conn.prompt({ sessionId, prompt: [{ type: "text", text: text + attachmentNote(attachments) }, ...links] });
       // Only our own Stop means "stopped": some agents (OpenCode) end the turn as "cancelled"
       // after the user rejects a permission request, which is a finished turn, not a Stop.

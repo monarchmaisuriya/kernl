@@ -21,9 +21,9 @@ test("every role a rule uses is defined in the role block", () => {
   assert.deepEqual([...used].filter((v) => !defined.has(v)), []);
 });
 
-test("one accent: the send pill, primary buttons, the working mark, running dots, the plan step in progress, the context ring, and approval cards all use it", () => {
+test("one accent: the send arrow, primary buttons, the working mark, running dots, the plan step in progress, the context ring, and approval cards all use it", () => {
   const ruleFor = (selector: string) => rules.split("\n").find((l) => l.startsWith(selector))!;
-  for (const selector of [".send-group {", "button.primary {", ".working-mark {", ".dot {", '.plan-entry[data-status="in_progress"] .plan-mark', ".context-fill {", ".card {", ".card-head .icon"]) {
+  for (const selector of [".send.ready svg {", "button.primary {", ".working-mark {", ".dot {", '.plan-entry[data-status="in_progress"] .plan-mark', ".context-fill {", ".card {", ".card-head .icon"]) {
     assert.match(ruleFor(selector), /var\(--accent\)/, selector);
   }
   assert.ok(!/(?<![\w-])color:\s*var\(--accent\)\s*;/.test(rules.replace(/\.card-head \.icon \{[^}]*\}|\.working-mark \{[^}]*\}/g, "")), "the accent colors icons and fills, not text");

@@ -6,6 +6,8 @@ import { type AgentOptionView, type ApprovalCard, type HarnessView, type HostToP
 import { icon } from "./icons";
 import { attachmentChip, createAttachments } from "./attachments";
 import { createConnectionsView } from "./connections";
+import { createConversationsView } from "./conversations";
+import { createTabStrip } from "./tabs";
 import { MarkdownView } from "./markdown";
 import { createMenu } from "./menu";
 import { isPanelDrop } from "./dropData";
@@ -148,7 +150,8 @@ const fastChip = el("button", "chip fast");
 agentChip.dataset.anchor = "agent";
 modelChip.dataset.anchor = "model";
 thinkingChip.dataset.anchor = "thinking";
-const sendButton = iconButton("send", "Send", icon("send"));
+// Send looks and acts like + (a plain icon button); its menu opens on hover (see sendMenu.ts).
+const sendButton = iconButton("chip send", "Send", icon("send"));
 const attachButton = iconButton("chip attach", "Add files or folders", icon("plus"));
 attachButton.title = "Add files or folders (in the Explorer: right-click, Add to kernl chat)";
 attachButton.dataset.anchor = "attach";
@@ -162,15 +165,13 @@ function saveDraft(now = false) {
   if (now) save();
   else draftTimer = setTimeout(save, 400);
 }
-const sendMenu = createSendMenu((mode) => submit(mode));
-const sendGroup = el("div", "send-group");
-sendGroup.append(sendButton, sendMenu.button);
+const sendMenu = createSendMenu(sendButton, (mode) => submit(mode));
 const toolbar = el("div", "toolbar");
 // Shown next to the agent chip when the agent needs setup: opens Connections at that agent (the chip itself still switches agents).
 const setupButton = el("button", "chip setup");
 setupButton.hidden = true;
 setupButton.append(icon("warning", 14));
-toolbar.append(attachButton, modelChip, thinkingChip, fastChip, el("span", "spacer"), sendGroup);
+toolbar.append(attachButton, modelChip, thinkingChip, fastChip, el("span", "spacer"), sendButton);
 const context = el("div", "context-row");
 context.append(attachments.suggestion, attachments.chips);
 const inputWrap = el("div", "input-wrap");
@@ -208,7 +209,9 @@ const planBar = createPlanBar();
 // Where, who, how: the workspace, its agent (with its setup warning), then the agent's mode.
 footer.append(modeMenu.menu, workspaceChip, setupButton, agentChip, modeChip, jobsChip, el("span", "spacer"), contextRing.ring, usage);
 const connectionsView = createConnectionsView(send);
-app.append(banner, logs, planBar.bar, composer, footer, anchoredMenu.menu, connectionsView.view, politeAnnouncer, urgentAnnouncer);
+const conversationsView = createConversationsView(send, () => input.focus());
+const tabStrip = createTabStrip(send, (id) => select(id));
+app.append(banner, tabStrip.strip, logs, planBar.bar, composer, footer, anchoredMenu.menu, connectionsView.view, conversationsView.view, politeAnnouncer, urgentAnnouncer);
 
 const markdownActions = { openLink: (url: string) => send({ type: "openLink", url }), copy: (text: string) => send({ type: "copy", text }) };
 const panes = new Map<string, Pane>();
@@ -283,9 +286,8 @@ function render() {
   sendButton.title = sendLabel;
   sendButton.disabled = !p || (!running && !input.value.trim());
   sendMenu.update({ hasText: !!input.value.trim(), running, available: !!p });
-  // Send and its options are one pill: Stop paints it in the secondary colors; nothing to do mutes it.
-  sendGroup.classList.toggle("stop", running);
-  sendGroup.classList.toggle("off", sendButton.disabled && sendMenu.button.disabled);
+  // Something to send: the arrow takes the accent color (dimmed when empty, the stop square while running).
+  sendButton.classList.toggle("ready", !running && !sendButton.disabled);
   input.disabled = !p;
   renderQueue(p);
 
@@ -354,14 +356,18 @@ function render() {
     banner.append(icon("warning"), el("div", "problem", status.problem), actions);
   }
 
+  tabStrip.render([...panes.values()].map((q) => q.view), p?.view.id);
   if (p) {
-    const others = [...panes.values()].filter((q) => q !== p);
+    // The chip names the workspace (a tab shows its workspace's name); the tab strip shows its own tabs' states.
+    const base = p.view.tabOf ?? p.view.id;
+    const workspaceLabel = panes.get(base)?.view.label ?? p.view.label;
+    const others = [...panes.values()].filter((q) => (q.view.tabOf ?? q.view.id) !== base);
     const attention = others.some((q) => q.view.waiting > 0) ? "waiting" : others.some((q) => q.view.running) ? "running" : "";
-    workspaceChip.replaceChildren(icon(p.view.branch ? "branch" : "folder", 14), el("span", "chip-text", p.view.label));
+    workspaceChip.replaceChildren(icon(p.view.branch ? "branch" : "folder", 14), el("span", "chip-text", workspaceLabel));
     if (attention) workspaceChip.append(el("span", `dot ${attention}`));
     workspaceChip.append(icon("chevron", 14));
     workspaceChip.dataset.attention = attention;
-    const label = `Workspace: ${p.view.label}${attention ? ` (another workspace is ${attention === "waiting" ? "waiting for approval" : "running"})` : ""}`;
+    const label = `Workspace: ${workspaceLabel}${attention ? ` (another workspace is ${attention === "waiting" ? "waiting for approval" : "running"})` : ""}`;
     workspaceChip.setAttribute("aria-label", label);
     workspaceChip.title = p.view.branch ? `${label}\nBranch ${p.view.branch}` : label;
   }
@@ -387,15 +393,67 @@ function render() {
 }
 
 /** The queued messages above the input: each can be removed, or sent now once the queue has paused. */
+/** The queued message being edited: its workspace, id, and the text so far (kept across redraws). */
+let queueEdit: { workspace: string; id: string; text: string } | undefined;
+
+function endQueueEdit(save: boolean) {
+  const e = queueEdit;
+  if (!e) return;
+  queueEdit = undefined;
+  if (save) send({ type: "updateQueued", workspace: e.workspace, id: e.id, text: e.text });
+  send({ type: "editQueued", workspace: e.workspace, id: e.id, editing: false });
+  render();
+  input.focus();
+}
+
+/** A queued message being edited: Enter saves, Shift+Enter adds a line, Escape cancels. */
+function queueEditor(): HTMLElement {
+  const box = el("textarea", "queued-edit");
+  box.value = queueEdit!.text;
+  box.rows = Math.min(6, box.value.split("\n").length);
+  box.setAttribute("aria-label", "Edit the queued message");
+  box.addEventListener("input", () => queueEdit && (queueEdit.text = box.value));
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) (e.preventDefault(), endQueueEdit(true));
+    else if (e.key === "Escape") (e.preventDefault(), endQueueEdit(false));
+  });
+  // Drawn again on every update: keep the cursor in it.
+  queueMicrotask(() => {
+    box.focus();
+    box.selectionStart = box.selectionEnd = box.value.length;
+  });
+  return box;
+}
+
 function renderQueue(p: Pane | undefined) {
   const items = p?.view.queue ?? [];
+  // The message being edited was sent or removed meanwhile: the edit ends with it.
+  if (queueEdit && !(p && p.view.id === queueEdit.workspace && items.some((q) => q.id === queueEdit!.id))) queueEdit = undefined;
   queueList.hidden = items.length === 0;
   if (!p || !items.length) return queueList.replaceChildren();
   const head = el("div", "queue-head");
   head.append(icon("clock", 13), el("span", "", p.view.queuePaused ? `Queued (${items.length}), paused: send one to continue` : `Queued (${items.length}): sends when the agent finishes`));
   const rows = items.map((q) => {
     const row = el("div", "queued");
-    row.append(el("span", "queued-text", q.text));
+    if (queueEdit?.id === q.id) {
+      row.classList.add("editing");
+      const save = el("button", "link queued-save", "Save");
+      save.addEventListener("click", () => endQueueEdit(true));
+      const cancel = el("button", "link queued-cancel", "Cancel");
+      cancel.addEventListener("click", () => endQueueEdit(false));
+      row.append(queueEditor(), save, cancel);
+      return row;
+    }
+    const text = el("button", "queued-text", q.text);
+    text.title = "Edit (it won't send while you edit it)";
+    text.setAttribute("aria-label", `Edit queued message: ${q.text}`);
+    text.addEventListener("click", () => {
+      if (queueEdit) endQueueEdit(true);
+      queueEdit = { workspace: p.view.id, id: q.id, text: q.text };
+      send({ type: "editQueued", workspace: p.view.id, id: q.id, editing: true });
+      render();
+    });
+    row.append(text);
     if (q.attachments) row.append(el("span", "queued-badge", `+${q.attachments}`));
     if (p.view.queuePaused || !p.view.running) {
       const now = el("button", "link queued-send", "Send now");
@@ -483,6 +541,8 @@ function select(id: string) {
   if (!panes.has(id)) return;
   const changed = id !== active;
   active = id;
+  // The Conversations view lists one workspace's conversations: another workspace closes it.
+  if (changed && conversationsView.open && conversationsView.workspace !== id) conversationsView.hide();
   render();
   scroll();
   if (changed) send({ type: "focus", workspace: id });
@@ -690,6 +750,10 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
     case "connections":
       connectionsView.update(m.items);
       if (m.open || m.focus) connectionsView.show(m.focus);
+      return;
+    case "conversations":
+      conversationsView.update(m);
+      if (m.open) conversationsView.show();
       return;
   }
   const p = pane(m.workspace);

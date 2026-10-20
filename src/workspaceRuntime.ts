@@ -36,9 +36,9 @@ import type { TerminalHistory } from "./terminal/history";
 import { terminalReadTools } from "./terminal/readTools";
 import { runInTerminalTool, sendInputTool } from "./terminal/tool";
 import { gatedTool } from "./gate/gatedTool";
-import type { AgentOptionView, Attachment, HostToPanel, SendMode, WorkspaceView } from "./ui/protocol";
+import { type AgentOptionView, type Attachment, type HostToPanel, MAX_ATTACHED_TEXT, type SendMode, type WorkspaceView } from "./ui/protocol";
 import type { Checkpoints } from "./checkpoints";
-import { cutHistory, type QueuedMessage, replayTranscript, type SessionRecord, type SessionStore, type TranscriptEvent, turnsAfter } from "./sessions";
+import { cutHistory, type QueuedMessage, replayTranscript, type SessionRecord, type SessionStore, threadExcerpt, type TranscriptEvent, turnsAfter } from "./sessions";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, relative, sep } from "node:path";
 import type { WorkspaceInfo } from "./workspaces/worktrees";
@@ -167,6 +167,8 @@ export class WorkspaceRuntime {
   private queueSaving: Promise<void> = Promise.resolve();
   /** Set when a run was stopped or failed, or the conversation changed: the queue waits for Send now. */
   private queuePaused = false;
+  /** Queued messages open for editing in the panel: one doesn't send while it's being edited. */
+  private editingQueued = new Set<string>();
   /** How much the agent may do without asking (see modes.ts); checked against the agent's supported modes. */
   private permissionMode: PermissionMode = "ask";
   /** Edits the agent proposed or made, by tool call id, for a tool row's "View diff". */
@@ -182,7 +184,9 @@ export class WorkspaceRuntime {
     private host: RuntimeHost,
     readonly info?: WorkspaceInfo,
     /** Whether a change to kernl.harness switches this workspace's agent (a single folder's does; worktrees and multi-root folders keep their own). */
-    private followsHarnessSetting = info === undefined,
+    readonly followsHarnessSetting = info === undefined,
+    /** For a tab: its workspace's id (the first tab). A tab is another session in the same folder, with its own conversation and queue. */
+    readonly tabOf?: string,
   ) {
     this.approvals = new PendingApprovals(
       (approvalId, request) => host.showApproval(this, approvalId, request),
@@ -238,7 +242,7 @@ export class WorkspaceRuntime {
     const modeList = PERMISSION_MODES.filter((m) => modes[m]).map((m) => ({ id: m, label: MODE_INFO[m].label, icon: MODE_INFO[m].icon, description: modes[m]! }));
     const forkLimit = this.forkLimit();
     const agentOptions = this.agentOptions();
-    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused, mode: this.permissionMode, modes: modeList, ...(forkLimit ? { forkLimit } : {}), ...(agentOptions ? { agentOptions } : {}) };
+    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused, mode: this.permissionMode, modes: modeList, ...(forkLimit ? { forkLimit } : {}), ...(agentOptions ? { agentOptions } : {}), ...(this.tabOf ? { tabOf: this.tabOf } : {}), ...(this.conversationTitle ? { title: this.conversationTitle } : {}) };
   }
 
   private optionsKey(harness = this.harness) {
@@ -403,6 +407,22 @@ export class WorkspaceRuntime {
     this.queueChanged();
   }
 
+  /** A queued message's editing started or ended in the panel; when it ends, the queue carries on if it was waiting for it. */
+  editingQueue(id: string, editing: boolean) {
+    if (editing) return void this.editingQueued.add(id);
+    this.editingQueued.delete(id);
+    this.sendNextQueued();
+  }
+
+  /** A queued message's new text (empty removes it). */
+  updateQueued(id: string, text: string) {
+    const item = this.queue.find((q) => q.id === id);
+    if (!item) return;
+    if (!text.trim()) return this.unqueue(id);
+    item.text = text.trim();
+    this.queueChanged();
+  }
+
   /** Sends a queued message now; while the agent runs, it goes next. Either way the queue carries on. */
   sendQueued(id: string) {
     const item = this.queue.find((q) => q.id === id);
@@ -415,8 +435,9 @@ export class WorkspaceRuntime {
 
   private sendNextQueued() {
     if (this.queuePaused || this.running) return;
-    const next = this.queue.shift();
-    if (!next) return;
+    // The next message is being edited: it waits for the edit (editingQueue carries on).
+    if (!this.queue.length || this.editingQueued.has(this.queue[0].id)) return;
+    const next = this.queue.shift()!;
     this.queueChanged();
     void this.send(next.text, next.attachments);
   }
@@ -424,14 +445,14 @@ export class WorkspaceRuntime {
   /** Saves the queue and shows it. */
   private queueChanged() {
     const items = [...this.queue];
-    this.queueSaving = this.queueSaving.then(() => this.host.sessions.saveQueue(this.sessionKey, items)).catch((err) => this.host.log.error(`[${this.label}] could not save the queued messages`, err));
+    this.queueSaving = this.queueSaving.then(() => this.host.sessions.saveQueue(this.queueKey, items)).catch((err) => this.host.log.error(`[${this.label}] could not save the queued messages`, err));
     this.host.workspacesChanged();
   }
 
   /** Messages queued before the window reloaded come back paused: they were written for a conversation that is no longer on screen. */
   private async restoreQueue() {
     try {
-      const saved = await this.host.sessions.loadQueue(this.sessionKey);
+      const saved = await this.host.sessions.loadQueue(this.queueKey);
       if (!saved.length) return;
       this.queue = [...saved, ...this.queue];
       this.queuePaused = true;
@@ -466,10 +487,15 @@ export class WorkspaceRuntime {
     this.post(message);
     this.host.workspacesChanged();
     let checkpoint: string | undefined;
+    let forRunner: readonly Attachment[] = attachments;
     try {
       checkpoint = this.host.trusted() ? await this.host.checkpoints.snapshot(this.root, `before: ${trimmed.slice(0, 60)}`) : undefined;
     } catch (err) {
       this.host.log.error(`[${this.label}] snapshot failed; this message can't be restored`, err);
+    }
+    try {
+      // Tagged threads are read now, so the agent gets each as it is when the message is sent.
+      forRunner = await this.threadsAsText(attachments);
     } finally {
       this.starting = false;
     }
@@ -503,7 +529,7 @@ export class WorkspaceRuntime {
     this.lastFinish = undefined;
     // The kernl agent is told it's in plan mode (its gate refuses changes either way).
     const forAgent = !isCliAgentId(this.harness) && this.permissionMode === "plan" ? PLAN_NOTE + trimmed : trimmed;
-    const sending = runner.send(forAgent, attachments);
+    const sending = runner.send(forAgent, forRunner);
     this.host.workspacesChanged();
     await sending;
     await this.saveSession();
@@ -563,6 +589,34 @@ export class WorkspaceRuntime {
     this.permissionMode = this.supportedMode(this.permissionMode);
     this.session = this.host.sessions.create(harness);
     this.host.post({ type: "cleared", workspace: this.id });
+  }
+
+  /**
+   * Tagged threads as the text attachments every agent reads: each conversation's excerpt (scrubbed of
+   * kernl's known secrets: saved transcripts aren't), or a note when it's gone. The message itself keeps
+   * the reference, so its chip still names the thread.
+   */
+  private async threadsAsText(attachments: readonly Attachment[]): Promise<Attachment[]> {
+    return Promise.all(
+      attachments.map(async (a): Promise<Attachment> => {
+        if (a.kind !== "thread" || !a.thread) return a;
+        const record = await this.host.sessions.load(a.thread.workspaceKey, a.thread.id).catch(() => undefined);
+        const text = record ? this.host.scrub(threadExcerpt(record, a.thread, MAX_ATTACHED_TEXT)) : "[thread no longer available: it was deleted]";
+        return { kind: "text", path: `Thread: ${a.path}`, text };
+      }),
+    );
+  }
+
+  /** Where this workspace's queue is kept: the workspace's own key; a tab's adds its number, so tabs don't share a queue. */
+  get queueKey() {
+    return this.tabOf ? `${this.sessionKey}~${this.id.slice(this.id.lastIndexOf("~") + 1)}` : this.sessionKey;
+  }
+
+  /** The conversation's title for its tab: the agent's title, else the first message (short); undefined before one. */
+  get conversationTitle(): string | undefined {
+    if (this.session.agentTitle) return this.session.agentTitle;
+    const first = this.session.events.find((e) => e.type === "userMessage") as Extract<TranscriptEvent, { type: "userMessage" }> | undefined;
+    return first?.text.replace(/\s+/g, " ").slice(0, 60);
   }
 
   /** Where this workspace's sessions are stored: one folder per workspace root. */

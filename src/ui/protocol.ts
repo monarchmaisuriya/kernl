@@ -1,5 +1,6 @@
 // The only contract between the extension host and the panel webview. Both sides import this file.
 import type { ConnectionStatus, FixAction } from "../connections/types";
+import type { ConversationPick, ConversationRow } from "./conversationRows";
 
 export interface ApprovalCard {
   id: string;
@@ -51,10 +52,27 @@ export interface PlanEntryView {
  * (forward slashes). Text (a conversation, an issue, a pull request): `path` is its label and
  * `text` its content, which is untrusted data for the agent.
  */
+/**
+ * A message's context: a workspace file or folder (`path`), text (`path` is its label), or a thread:
+ * another conversation kernl kept, by reference (`path` is its title). A thread is read when the
+ * message is sent and reaches the agent as text.
+ */
 export interface Attachment {
   path: string;
-  kind: "file" | "folder" | "text";
+  kind: "file" | "folder" | "text" | "thread";
   text?: string;
+  thread?: ThreadRef;
+}
+
+/** Where a tagged conversation is kept, and what the composer shows about it. */
+export interface ThreadRef {
+  /** The session store's folder for its workspace (`WorkspaceRuntime.sessionKey`). */
+  workspaceKey: string;
+  id: string;
+  /** Its agent's name ("Claude Code") and workspace's label ("Develop"). */
+  agent: string;
+  workspace: string;
+  updatedAt: number;
 }
 
 /**
@@ -75,7 +93,7 @@ export interface SkillView {
 
 /** The attachments line every agent gets with a message, whatever else its protocol carries. */
 export function attachmentNote(attachments: readonly Attachment[]): string {
-  const paths = attachments.filter((a) => a.kind !== "text");
+  const paths = attachments.filter((a) => a.kind === "file" || a.kind === "folder");
   const texts = attachments.filter((a) => a.kind === "text");
   let note = "";
   if (paths.length) {
@@ -122,6 +140,10 @@ export interface WorkspaceView {
   forkLimit?: string;
   /** A CLI agent's model, thinking, and fast-mode switches (its last session's, before the first message); absent for kernl. */
   agentOptions?: AgentOptionView[];
+  /** A tab's workspace (its first tab); absent for a workspace itself. */
+  tabOf?: string;
+  /** The conversation's title, for its tab (absent before the first message). */
+  title?: string;
 }
 
 /** A CLI agent's own switch shown as a chip (see src/acp/agentOptions.ts). Fast mode's value is on (true) or off. */
@@ -220,6 +242,8 @@ export type HostToPanel =
   | { type: "menuClosed"; id: string }
   /** Every connection's status (the Connections view); `focus`: open the view at this row. */
   | { type: "connections"; items: ConnectionStatus[]; focus?: string; open?: boolean }
+  /** The Conversations view's rows for a workspace (sent again as each agent's sessions arrive); `open`: show the view. */
+  | { type: "conversations"; workspace: string; title: string; rows: ConversationRow[]; open?: boolean }
   /** A one-line note in the transcript, e.g. "Settings changed: the next message starts a new conversation." */
   | { type: "notice"; workspace: string; text: string };
 
@@ -252,6 +276,15 @@ export type PanelToHost =
   | { type: "openLocation"; workspace: string; path: string; line?: number }
   /** The Connections view opened (check everything now); `focus`: a row to show. */
   | { type: "showConnections"; focus?: string }
+  /** The tab strip: a new tab for the shown workspace, or close a tab. */
+  | { type: "newTab" }
+  | { type: "closeTab"; workspace: string }
+  /** A queued message's editing started (it won't send meanwhile) or ended. */
+  | { type: "editQueued"; workspace: string; id: string; editing: boolean }
+  /** A queued message's edited text (empty removes it). */
+  | { type: "updateQueued"; workspace: string; id: string; text: string }
+  /** A row picked in the Conversations view: open that conversation (or a new one) in the workspace. */
+  | { type: "openConversation"; workspace: string; pick: ConversationPick }
   /** A row's fix button: log in, set a key, check again, open settings, show sources. */
   | { type: "connectionAction"; action: FixAction; target: string }
   | { type: "showDiff"; id: string }
@@ -285,7 +318,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

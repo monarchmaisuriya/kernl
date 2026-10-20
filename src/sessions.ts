@@ -221,15 +221,15 @@ export function cutHistory(history: unknown, turn: number): unknown {
   return history;
 }
 
-/** A stored conversation as plain text, to attach to a message in another conversation. */
-export function transcriptText(s: SessionRecord): string {
-  const lines: string[] = [`Conversation: ${s.title}`];
+/** One turn of a stored conversation as plain text: the user's message, then the reply, tool calls, and errors. */
+function turnText(events: readonly TranscriptEvent[]): string {
+  const lines: string[] = [];
   let reply = "";
   const flush = () => {
     if (reply.trim()) lines.push(`Assistant: ${reply.trim()}`);
     reply = "";
   };
-  for (const e of s.events) {
+  for (const e of events) {
     if (e.type === "text") reply += e.delta;
     else {
       flush();
@@ -240,4 +240,39 @@ export function transcriptText(s: SessionRecord): string {
   }
   flush();
   return lines.join("\n");
+}
+
+/**
+ * A stored conversation as text for an agent in another conversation (any agent, any provider: the
+ * transcript has one shape whatever ran it). Within `max` characters: a header, the first turn (what
+ * the conversation set out to do), then the newest turns that fit, saying how many in between were
+ * left out; a newest turn too long to fit keeps its end.
+ */
+export function threadExcerpt(s: SessionRecord, about: { agent: string; workspace: string }, max: number): string {
+  const turns: TranscriptEvent[][] = [];
+  for (const e of s.events) {
+    if (e.type === "userMessage" || !turns.length) turns.push([]);
+    turns[turns.length - 1].push(e);
+  }
+  const texts = turns.map(turnText).filter(Boolean);
+  const head = `Conversation: ${s.title} (${about.agent}, in ${about.workspace}; last active ${new Date(s.updatedAt).toISOString().slice(0, 16).replace("T", " ")} UTC)`;
+  if (!texts.length) return `${head}\n(no messages)`;
+  const cut = (text: string, room: number, keep: "start" | "end") => {
+    if (text.length <= room) return text;
+    const marker = keep === "start" ? "\n[...rest of this turn left out]" : "[...start of this turn left out]\n";
+    const n = Math.max(0, room - marker.length);
+    return keep === "start" ? text.slice(0, n) + marker : marker + text.slice(text.length - n);
+  };
+  // The first turn gets at most a quarter of the room, so the newest turns always have most of it.
+  const first = cut(texts[0], Math.floor(max / 4), "start");
+  let room = max - head.length - first.length - 80;
+  const newest: string[] = [];
+  for (let i = texts.length - 1; i > 0 && room > 0; i--) {
+    const text = texts[i].length <= room ? texts[i] : newest.length ? "" : cut(texts[i], room, "end");
+    if (!text) break;
+    newest.unshift(text);
+    room -= text.length + 2;
+  }
+  const leftOut = texts.length - 1 - newest.length;
+  return [head, first, ...(leftOut ? [`[${leftOut} earlier turn${leftOut === 1 ? "" : "s"} left out]`] : []), ...newest].join("\n\n");
 }

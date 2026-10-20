@@ -99,6 +99,28 @@ export async function run() {
     rmSync(join(beta, "hello.txt"));
   });
 
+  await check("threads: from alpha, @ finds beta's Claude Code conversation; tagged, it reaches the agent as text; a deleted one sends a note", async () => {
+    await testing.setHarness("folder:alpha", "claude-code");
+    await testing.receive({ type: "focus", workspace: "folder:alpha" });
+    let from = delivered.length;
+    await testing.receive({ type: "searchFiles", query: "hello" });
+    const matches = await waitFor("search results", (m) => m.type === "fileMatches" && m.query === "hello", from);
+    const thread = matches.items.find((a: any) => a.kind === "thread" && a.path === "write hello.txt");
+    assert.ok(thread, JSON.stringify(matches.items));
+    assert.deepEqual([thread.thread.agent, thread.thread.workspace], ["Claude Code", "beta"]);
+    assert.equal(matches.items[0], thread, "a title match comes before files");
+    const gone = { ...thread, path: "deleted one", thread: { ...thread.thread, id: "no-such-conversation" } };
+    from = delivered.length;
+    const sending = testing.receive({ type: "send", workspace: "folder:alpha", text: "continue from beta", attachments: [thread, gone] });
+    const card = (await waitFor("an approval card", (m) => m.type === "approval", from)).card;
+    await testing.receive({ type: "answer", id: card.id, approved: false });
+    await sending;
+    const reply = delivered.slice(from).filter((m) => m.type === "text" && m.workspace === "folder:alpha").map((m) => m.delta).join("");
+    assert.match(reply, /\[texts: Thread: write hello\.txt => Conversation: write hello\.txt \(Claude Code, in beta; last active .* UTC\)/);
+    assert.match(reply, /Thread: deleted one => \[thread no longer available: it was deleted\]/);
+    assert.deepEqual(delivered.slice(from).find((m) => m.type === "userMessage")?.attachments, [thread, gone], "the message keeps the references");
+  });
+
   await check("multi-root: a new worktree workspace comes from the shown folder's repository", async () => {
     await testing.receive({ type: "focus", workspace: "folder:beta" });
     scripted = { inputs: ["feature"], menu: [/kernl/] };

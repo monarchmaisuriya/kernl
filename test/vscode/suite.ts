@@ -1451,15 +1451,15 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await vscode.commands.executeCommand("kernl.newChat");
     let from = delivered.length;
     // Every earlier panel message was one conversation, titled by its first message.
-    scripted = { ...scripted, menu: /^write hello\.txt$/ };
     await vscode.commands.executeCommand("kernl.sessions");
-    const shown = menusShown.at(-1)!;
-    assert.match(shown[0].label, /New conversation/);
-    assert.ok(shown.some((i: any) => i.label === "write hello.txt" && /Claude Code/.test(i.description)), JSON.stringify(shown.map((i: any) => [i.label, i.description])));
+    const shown = (await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from)).rows;
+    assert.deepEqual(shown[0], { kind: "new", title: "New conversation" });
+    const row = shown.find((r: any) => r.title === "write hello.txt");
+    assert.ok(row && /Claude Code/.test(row.detail), JSON.stringify(shown));
+    await testing.receive({ type: "openConversation", workspace: "main", pick: { kind: "kernl", id: row.id } });
     const replayed = await waitFor("the conversation shown again", (m) => m.type === "userMessage" && m.text === "write hello.txt for restore", from);
     assert.ok(replayed.checkpoint, "its checkpoint is still there");
     assert.ok(delivered.slice(from).some((m) => m.type === "text" && /hello from fake/.test(m.delta)));
-    scripted = { ...scripted, menu: undefined };
     from = delivered.length;
     await vscode.commands.executeCommand("kernl.newChat");
     await waitFor("a fresh view", (m) => m.type === "cleared" && m.workspace === "main", from);
@@ -1469,25 +1469,123 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_LIST: "1" } } }), vscode.ConfigurationTarget.Global);
     try {
       await vscode.commands.executeCommand("kernl.newChat");
-      const from = delivered.length;
-      scripted = { ...scripted, menu: /^Fix the flaky test$/ };
+      let from = delivered.length;
       await vscode.commands.executeCommand("kernl.sessions");
-      const shown = menusShown.at(-1)!.map((i: any) => [i.label, i.description]);
-      assert.ok(shown.some(([l, d]: string[]) => l === "Fix the flaky test" && d === "Claude Code session · 1 h ago"), JSON.stringify(shown));
-      assert.ok(shown.some(([l, d]: string[]) => l === "Add a changelog" && d === "Claude Code session"), "the second page is listed too");
+      const listed = await waitFor("the agent's sessions", (m) => m.type === "conversations" && m.rows.some((r: any) => r.kind === "agent"), from);
+      const shown = listed.rows.filter((r: any) => r.kind === "agent").map((r: any) => [r.title, r.detail]);
+      assert.deepEqual(shown, [["Fix the flaky test", "Claude Code session · 1 h ago"], ["Add a changelog", "Claude Code session"]], "both pages are listed");
+      await testing.receive({ type: "openConversation", workspace: "main", pick: { kind: "agent", agent: "claude-code", sessionId: "stored-1" } });
       await waitFor("the question, replayed by the agent", (m) => m.type === "userMessage" && m.text === "REPLAYED-OLD-QUESTION", from);
       await waitFor("its answer", (m) => m.type === "text" && m.delta === "REPLAYED-OLD-MESSAGE", from);
-      scripted = { ...scripted, menu: undefined, pickFirst: false };
+      from = delivered.length;
       await vscode.commands.executeCommand("kernl.sessions");
-      scripted = { ...scripted, pickFirst: true };
-      // The open conversation's row carries "$(check) "; a duplicate agent row would make this 2.
-      const again = menusShown.at(-1)!.filter((i: any) => /^(\$\(check\) )?Fix the flaky test$/.test(i.label));
+      const again = (await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from)).rows.filter((r: any) => r.title === "Fix the flaky test");
       assert.equal(again.length, 1, "opened once, it's a kernl conversation linked to the session: listed once");
-      assert.match(again[0].description, /1 message · Claude Code/);
+      assert.deepEqual([again[0].kind, again[0].current], ["kernl", true]);
+      assert.match(again[0].detail, /1 message · Claude Code/);
     } finally {
-      scripted = { ...scripted, menu: undefined, pickFirst: true };
       await config.update("agentCommands", agentCommands({ "claude-code": fakeAgent }), vscode.ConfigurationTarget.Global);
     }
+  });
+
+  await check("conversations: the view opens at once with kernl's conversations while a slow agent is still asked; its sessions fill in when it answers", async () => {
+    await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_LIST: "1", FAKE_LIST_DELAY: "4000" } } }), vscode.ConfigurationTarget.Global);
+    try {
+      await vscode.commands.executeCommand("kernl.newChat");
+      const from = delivered.length;
+      const asked = Date.now();
+      await vscode.commands.executeCommand("kernl.sessions");
+      const first = await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from);
+      const shownAfter = Date.now() - asked;
+      assert.ok(shownAfter < 2_000, `shown after ${shownAfter} ms, not after the agent's 4 s`);
+      assert.ok(first.rows.some((r: any) => r.kind === "kernl"), "kernl's conversations are there at once");
+      assert.ok(first.rows.some((r: any) => r.kind === "pending" && r.title === "Looking for Claude Code sessions…"), JSON.stringify(first.rows));
+      assert.ok(!first.rows.some((r: any) => r.kind === "agent"));
+      const filled = await waitFor("the agent's sessions", (m) => m.type === "conversations" && !m.open && m.rows.some((r: any) => r.kind === "agent"), from);
+      assert.ok(!filled.rows.some((r: any) => r.kind === "pending" && r.agent === "claude-code"), "Claude Code's pending row is gone");
+      assert.ok(Date.now() - asked >= 3_500, "they came when the agent answered");
+    } finally {
+      await config.update("agentCommands", agentCommands({ "claude-code": fakeAgent }), vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  const lastWorkspaces = (from = 0) => delivered.slice(from).filter((m) => m.type === "workspaces").at(-1);
+  const tabIds = (from = 0) => lastWorkspaces(from)?.items.filter((w: any) => w.tabOf === "main").map((w: any) => w.id) ?? [];
+  const closeTabs = async () => {
+    for (const id of tabIds()) await testing.receive({ type: "closeTab", workspace: id });
+    await testing.receive({ type: "focus", workspace: "main" });
+  };
+
+  await check("tabs: + opens another session in the same folder; both run at once (the second is told another tab is working); a closed tab's conversation stays in Conversations", async () => {
+    await vscode.commands.executeCommand("kernl.newChat");
+    let from = delivered.length;
+    await testing.receive({ type: "newTab" });
+    const tabsNow = lastWorkspaces(from);
+    const tab = tabsNow.items.find((w: any) => w.tabOf === "main");
+    assert.ok(tab, JSON.stringify(tabsNow.items.map((w: any) => w.id)));
+    assert.equal(tabsNow.focus, tab.id, "the new tab is shown");
+    assert.equal(tab.harness, tabsNow.items.find((w: any) => w.id === "main").harness, "with the workspace's agent");
+    from = delivered.length;
+    const first = testing.receive({ type: "send", workspace: "main", text: "tab one work" });
+    const card1 = (await waitFor("main's card", (m) => m.type === "approval" && m.card.workspaceId === "main", from)).card;
+    const second = testing.receive({ type: "send", workspace: tab.id, text: "tab two work" });
+    await waitFor("the notice", (m) => m.type === "notice" && m.workspace === tab.id && /Another tab is also working in this folder/.test(m.text), from);
+    const card2 = (await waitFor("the tab's card", (m) => m.type === "approval" && m.card.workspaceId === tab.id, from)).card;
+    const running = lastWorkspaces(from).items.filter((w: any) => w.running).map((w: any) => w.id).sort();
+    assert.deepEqual(running, ["main", tab.id].sort(), "both run at once");
+    await testing.receive({ type: "answer", id: card1.id, approved: false });
+    await testing.receive({ type: "answer", id: card2.id, approved: false });
+    await Promise.all([first, second]);
+    from = delivered.length;
+    await testing.receive({ type: "closeTab", workspace: tab.id });
+    assert.deepEqual(tabIds(from), [], "closed");
+    assert.equal(lastWorkspaces(from).focus, "main", "the tab before it is shown");
+    await vscode.commands.executeCommand("kernl.sessions");
+    const rows = (await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from)).rows;
+    assert.ok(rows.some((r: any) => r.title === "tab two work"), "its conversation is kept");
+  });
+
+  await check("tabs: at kernl.tabs.max the tab shown longest ago that's idle closes for a new one; with every tab busy nothing closes and kernl says why", async () => {
+    await config.update("tabs.max", 2, vscode.ConfigurationTarget.Global);
+    try {
+      let from = delivered.length;
+      await testing.receive({ type: "newTab" });
+      const firstTab = tabIds(from)[0];
+      from = delivered.length;
+      await testing.receive({ type: "newTab" });
+      const now = tabIds(from);
+      assert.equal(now.length, 1, "still two tabs with the workspace");
+      assert.notEqual(now[0], firstTab, "the idle tab closed for the new one");
+      from = delivered.length;
+      const busy = testing.receive({ type: "send", workspace: now[0], text: "keep busy" });
+      const card = (await waitFor("its card", (m) => m.type === "approval" && m.card.workspaceId === now[0], from)).card;
+      from = delivered.length;
+      await testing.receive({ type: "newTab" });
+      await waitFor("why", (m) => m.type === "notice" && /All 2 tabs are busy \(kernl\.tabs\.max is 2\)/.test(m.text), from);
+      assert.deepEqual(tabIds(), now, "nothing closed");
+      await testing.receive({ type: "answer", id: card.id, approved: false });
+      await busy;
+    } finally {
+      await config.update("tabs.max", undefined, vscode.ConfigurationTarget.Global);
+      await closeTabs();
+    }
+  });
+
+  await check("tabs: after the workspaces reload, the tabs come back; each opens its conversation when first shown", async () => {
+    let from = delivered.length;
+    await testing.receive({ type: "newTab" });
+    const tab = tabIds(from)[0];
+    from = delivered.length;
+    const sending = testing.receive({ type: "send", workspace: tab, text: "remember this tab" });
+    const card = (await waitFor("its card", (m) => m.type === "approval" && m.card.workspaceId === tab, from)).card;
+    await testing.receive({ type: "answer", id: card.id, approved: false });
+    await sending;
+    from = delivered.length;
+    await testing.reloadWorkspaces();
+    assert.deepEqual(tabIds(from), [tab], "the tab is back");
+    await testing.receive({ type: "focus", workspace: tab });
+    await waitFor("its conversation", (m) => m.type === "userMessage" && m.workspace === tab && m.text === "remember this tab", from);
+    await closeTabs();
   });
 
   await check("before the first message: the shown workspace's CLI agent starts its session, so its model and thinking chips can be chosen first", async () => {
@@ -1535,10 +1633,10 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await testing.receive({ type: "fork", workspace: "main", messageId: second.id });
     await waitFor("the forked conversation", (m) => m.type === "notice" && /Forked: this is a new conversation/.test(m.text), from);
     assert.ok(delivered.slice(from).some((m) => m.type === "userMessage" && m.text === "second message"), "the fork shows the history");
-    scripted = { ...scripted, pickFirst: false };
+    from = delivered.length;
     await vscode.commands.executeCommand("kernl.sessions");
-    scripted = { ...scripted, pickFirst: true };
-    assert.ok(menusShown.at(-1)!.some((i: any) => /\(fork\)$/.test(i.label)), JSON.stringify(menusShown.at(-1)!.map((i: any) => i.label)));
+    const listed = (await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from)).rows;
+    assert.ok(listed.some((r: any) => /\(fork\)$/.test(r.title)), JSON.stringify(listed.map((r: any) => r.title)));
   });
 
   await check("send options: while the agent runs a message is queued and sends after a normal finish; after Stop the queue pauses until Send now; Remove drops one", async () => {
@@ -1599,15 +1697,40 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     assert.ok(replayed.includes("queue fourth") && replayed.at(-1) === "after the fork", JSON.stringify(replayed));
   });
 
-  await check("attach menu: a conversation and a GitHub issue are attached as untrusted text", async () => {
+  await check("queued messages can be edited: one open for editing isn't sent when the run finishes; saved, the new text is what's sent", async () => {
+    await vscode.commands.executeCommand("kernl.newChat");
+    const mainQueue = (from: number) => delivered.slice(from).filter((m) => m.type === "workspaces").at(-1)?.items.find((w: any) => w.id === "main");
+    let from = delivered.length;
+    const first = testing.receive({ type: "send", workspace: "main", text: "edit-queue first" });
+    const card = (await waitFor("the first run waiting for approval", (m) => m.type === "approval", from)).card;
+    await testing.receive({ type: "send", workspace: "main", text: "edit-queue original" });
+    const item = mainQueue(from).queue[0];
+    await testing.receive({ type: "editQueued", workspace: "main", id: item.id, editing: true });
+    let at = delivered.length;
+    await testing.receive({ type: "answer", id: card.id, approved: false });
+    await first;
+    await waitFor("the first run finished", (m) => m.type === "finished", at);
+    await new Promise((r) => setTimeout(r, 500));
+    assert.ok(!delivered.slice(at).some((m) => m.type === "userMessage" && /edit-queue/.test(m.text)), "nothing sent while it's being edited");
+    await testing.receive({ type: "updateQueued", workspace: "main", id: item.id, text: "edit-queue edited" });
+    assert.deepEqual(mainQueue(at)?.queue.map((q: any) => q.text), ["edit-queue edited"]);
+    at = delivered.length;
+    await testing.receive({ type: "editQueued", workspace: "main", id: item.id, editing: false });
+    await waitFor("the edited text sent", (m) => m.type === "userMessage" && m.text === "edit-queue edited", at);
+    const second = (await waitFor("its approval card", (m) => m.type === "approval", at)).card;
+    await testing.receive({ type: "answer", id: second.id, approved: false });
+    await waitFor("its run finished", (m) => m.type === "finished", at);
+    assert.ok(!delivered.slice(from).some((m) => m.type === "userMessage" && m.text === "edit-queue original"), "the old text never went");
+  });
+
+  await check("attach menu: a conversation is tagged as a thread (read when sent); a GitHub issue is attached as untrusted text", async () => {
     await vscode.commands.executeCommand("kernl.newChat");
     let from = delivered.length;
     scripted = { ...scripted, menu: /Conversations\.\.\.|^write hello\.txt$/ };
     await testing.receive({ type: "pickAttachments" });
-    const convo = await waitFor("a conversation attached", (m) => m.type === "addAttachments", from);
-    assert.equal(convo.items[0].kind, "text");
-    assert.match(convo.items[0].path, /^Conversation: write hello\.txt/);
-    assert.match(convo.items[0].text, /User: write hello\.txt/);
+    const convo = await waitFor("a conversation tagged", (m) => m.type === "addAttachments", from);
+    assert.deepEqual([convo.items[0].kind, convo.items[0].path, convo.items[0].text], ["thread", "write hello.txt", undefined], "a reference: no transcript in the panel");
+    assert.equal(convo.items[0].thread.workspace, "Main");
     await git(root, ["remote", "add", "origin", "https://github.com/acme/widgets.git"]);
     testing.useGitHub({
       list: async (kind: string, repo: any) => (kind === "issue" && repo.owner === "acme" ? [{ number: 7, title: "Login loops" }] : []),

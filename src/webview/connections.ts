@@ -44,11 +44,11 @@ export function groupsOf(items: readonly ConnectionStatus[]): { title: string; i
 }
 
 export function createConnectionsView(send: (m: PanelToHost) => void) {
-  const view = el("section", "connections");
+  const view = el("section", "panel-view connections");
   view.hidden = true;
   view.setAttribute("aria-label", "Connections");
-  const header = el("div", "connections-header");
-  const title = el("h2", "connections-title", "Connections");
+  const header = el("div", "panel-view-header");
+  const title = el("h2", "panel-view-title", "Connections");
   const check = el("button", "", "Check now");
   check.title = "Check every login, key, MCP server, and plugin again";
   check.addEventListener("click", () => send({ type: "connectionAction", action: "check", target: "all" }));
@@ -57,7 +57,7 @@ export function createConnectionsView(send: (m: PanelToHost) => void) {
   close.setAttribute("aria-label", "Close Connections");
   close.addEventListener("click", () => hide());
   header.append(title, check, close);
-  const body = el("div", "connections-body");
+  const body = el("div", "panel-view-body");
   view.append(header, body);
   view.addEventListener("keydown", (e) => e.key === "Escape" && hide());
 
@@ -95,7 +95,7 @@ export function createConnectionsView(send: (m: PanelToHost) => void) {
       ...(groups.length
         ? groups.map((g) => {
             const section = el("div", "connections-group");
-            section.append(el("h3", "connections-group-title", g.title), ...g.items.map(row));
+            section.append(el("h3", "panel-view-group-title", g.title), ...g.items.map(row));
             return section;
           })
         : [el("p", "connections-empty", "Checking…")]),

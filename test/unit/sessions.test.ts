@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { AIMessage } from "@langchain/core/messages";
 import { buildAgent } from "../../src/agent/createAgent";
 import { AgentSession } from "../../src/agent/session";
-import { cutHistory, SessionStore, transcriptText } from "../../src/sessions";
+import { cutHistory, SessionStore, threadExcerpt } from "../../src/sessions";
 import { workspace } from "../support/harness";
 import { ScriptedChatModel } from "../support/scriptedModel";
 
@@ -68,9 +68,12 @@ test("cutting history stops right before the chosen user turn", () => {
   assert.equal(cutHistory({ sessionId: "x" }, 1), undefined, "a CLI agent's session can't be cut");
 });
 
-test("a stored conversation becomes readable text to attach elsewhere", () => {
-  const s = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))).create("deepagents");
+const about = { agent: "Claude Code", workspace: "Develop" };
+
+test("a tagged conversation becomes text any agent reads: a header, then each turn's request, reply, and tool calls", () => {
+  const s = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))).create("claude-code");
   s.title = "Fix login";
+  s.updatedAt = Date.UTC(2026, 9, 19, 14, 5);
   s.events.push(
     { type: "userMessage", workspace: "main", text: "Why does login loop?", attachments: [{ path: "src/session.ts", kind: "file" }] },
     { type: "text", workspace: "main", delta: "The redirect " },
@@ -78,7 +81,38 @@ test("a stored conversation becomes readable text to attach elsewhere", () => {
     { type: "text", workspace: "main", delta: "runs first." },
     { type: "finished", workspace: "main", reason: "done" },
   );
-  assert.equal(transcriptText(s), "Conversation: Fix login\nUser: Why does login loop? [attached: src/session.ts]\nAssistant: The redirect\n[tool: read_file]\nAssistant: runs first.");
+  assert.equal(
+    threadExcerpt(s, about, 20_000),
+    "Conversation: Fix login (Claude Code, in Develop; last active 2026-10-19 14:05 UTC)\n\nUser: Why does login loop? [attached: src/session.ts]\nAssistant: The redirect\n[tool: read_file]\nAssistant: runs first.",
+  );
+});
+
+test("a long conversation keeps its first request and newest turns within the limit, and says how many turns were left out", () => {
+  const s = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))).create("deepagents");
+  s.title = "Big refactor";
+  for (let i = 1; i <= 40; i++) {
+    s.events.push({ type: "userMessage", workspace: "main", text: `request ${i}` }, { type: "text", workspace: "main", delta: `reply ${i} ${"x".repeat(900)}` });
+  }
+  const text = threadExcerpt(s, about, 10_000);
+  assert.ok(text.length <= 10_000, `${text.length} characters`);
+  assert.match(text, /User: request 1\n/, "the goal");
+  assert.match(text, /User: request 40\n/, "the newest turn");
+  const kept = [...text.matchAll(/User: request (\d+)\n/g)].map((m) => Number(m[1]));
+  const leftOut = Number(/\[(\d+) earlier turns left out\]/.exec(text)?.[1]);
+  assert.equal(kept.length - 1 + leftOut, 39, "every later turn is either kept or counted");
+  assert.deepEqual(kept.slice(1), kept.slice(1).sort((a, b) => a - b), "in order");
+  assert.equal(kept.at(-1), 40);
+});
+
+test("a newest turn too long for the limit keeps its end; an empty conversation says so", () => {
+  const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-")));
+  const s = store.create("codex");
+  s.title = "Logs";
+  s.events.push({ type: "userMessage", workspace: "main", text: "start" }, { type: "userMessage", workspace: "main", text: `huge ${"y".repeat(30_000)} THE END` });
+  const text = threadExcerpt(s, about, 5_000);
+  assert.ok(text.length <= 5_000);
+  assert.match(text, /\[\.\.\.start of this turn left out\]\n[y]+ THE END$/);
+  assert.match(threadExcerpt(store.create("codex"), about, 5_000), /\(no messages\)$/);
 });
 
 test("queued messages are kept per workspace with their attachments, don't show up as conversations, and an empty queue removes them", async () => {

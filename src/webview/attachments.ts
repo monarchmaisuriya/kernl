@@ -1,8 +1,8 @@
 // The composer's context. Files and folders are mentions inside the message text (`@src/app.ts`,
 // `@docs/`), drawn highlighted by a layer behind the textarea, so editing stays the browser's own;
-// conversations, issues, and pull requests are chips above (they're content, not paths). "@"
-// searches workspace paths, "/" names a skill, and the file open in the editor is offered as a
-// suggestion. Everything is built with createElement/textContent; the host checks every path.
+// conversations (threads), issues, and pull requests are chips above (they're content, not paths).
+// "@" searches workspace paths and conversations, "/" names a skill, and the file open in the editor
+// is offered as a suggestion. Everything is built with createElement/textContent; the host checks every path.
 import type { Attachment, PanelToHost, SkillView } from "../ui/protocol";
 import { droppedFiles, isPanelDrop, linkUris, vscodeUris } from "./dropData";
 import { icon } from "./icons";
@@ -29,11 +29,19 @@ export function mentionText(a: Attachment): string {
 /** A small type badge for a file name: "TS", "PY", "JSON"... */
 const badge = (path: string) => (path.includes(".") ? path.split(".").pop()!.slice(0, 4).toUpperCase() : "");
 
+/** A tagged conversation's agent, workspace, and age, for its popover row and chip: "Claude Code · Develop · 2 h ago". */
+export function threadDetail(a: Attachment, now = Date.now()): string {
+  if (!a.thread) return "";
+  const minutes = Math.max(0, Math.round((now - a.thread.updatedAt) / 60_000));
+  const ago = minutes < 1 ? "just now" : minutes < 60 ? `${minutes} min ago` : minutes < 48 * 60 ? `${Math.round(minutes / 60)} h ago` : `${Math.round(minutes / 1440)} d ago`;
+  return `${a.thread.agent} · ${a.thread.workspace} · ${ago}`;
+}
+
 export function attachmentChip(a: Attachment, onRemove?: () => void): HTMLElement {
   const chip = el("span", "attachment");
-  chip.title = a.kind === "folder" ? `${a.path}/ (folder)` : a.path;
-  const name = a.kind === "text" ? a.path : a.path.split("/").pop() || a.path;
-  chip.append(icon(a.kind === "folder" ? "folder" : a.kind === "text" ? "kernl" : "file", 13), el("span", "chip-text", name));
+  chip.title = a.kind === "folder" ? `${a.path}/ (folder)` : a.kind === "thread" ? `Conversation: ${a.path} (${threadDetail(a)})` : a.path;
+  const name = a.kind === "text" || a.kind === "thread" ? a.path : a.path.split("/").pop() || a.path;
+  chip.append(icon(a.kind === "folder" ? "folder" : a.kind === "thread" ? "chat" : a.kind === "text" ? "kernl" : "file", 13), el("span", "chip-text", name));
   if (onRemove) {
     const remove = el("button", "attachment-remove");
     remove.setAttribute("aria-label", `Remove ${a.path}`);
@@ -67,6 +75,7 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   popover.hidden = true;
   /** Picked files and folders by their text in the message; only these highlight and attach. */
   const known = new Map<string, Attachment>();
+  /** Chips: text (pasted, dropped, an issue) and threads. */
   let texts: Attachment[] = [];
   let skills: SkillView[] = [];
   let suggestions: Suggestion[] = [];
@@ -137,7 +146,10 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
 
   function add(next: Attachment[]) {
     for (const a of next) {
-      if (a.kind === "text") {
+      if (a.kind === "thread") {
+        // The same conversation again: one chip.
+        texts = [...texts.filter((x) => x.thread?.id !== a.thread?.id), a];
+      } else if (a.kind === "text") {
         // The same label again (a file dropped again after editing it): the newer text replaces the older.
         texts = [...texts.filter((x) => x.path !== a.path), a];
       } else if (new RegExp(`${escape(mentionText(a))}(?=\\s|$)`).test(input.value)) remember(a); // already in the text (a message put back): just mark it
@@ -207,11 +219,16 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   function onFileMatches(query: string, matches: Attachment[]) {
     if (query !== lastQuery) return; // a newer keystroke is on its way
     show(
-      matches.map((a) => ({
-        label: a.kind === "folder" ? `${a.path}/` : a.path,
-        detail: a.kind === "folder" ? "folder" : undefined,
-        choose: () => (replaceTrigger(AT_QUERY, ""), insertMention(a), close(), refresh(), changed()),
-      })),
+      matches.map((a) =>
+        a.kind === "thread"
+          ? // A conversation becomes a chip; the "@query" typed for it goes.
+            { label: a.path, detail: threadDetail(a), choose: () => (replaceTrigger(AT_QUERY, ""), close(), add([a])) }
+          : {
+              label: a.kind === "folder" ? `${a.path}/` : a.path,
+              detail: a.kind === "folder" ? "folder" : undefined,
+              choose: () => (replaceTrigger(AT_QUERY, ""), insertMention(a), close(), refresh(), changed()),
+            },
+      ),
     );
   }
 

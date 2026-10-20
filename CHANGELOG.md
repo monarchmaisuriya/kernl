@@ -4,6 +4,21 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- Tag other conversations in a message: `@` lists conversations from every workspace of the window and every agent next to files, and **+ → Conversations...** does the same. A tagged conversation shows as a chip, and on Send the agent (any agent, any model provider) gets its first request and newest turns as text, up to 20,000 characters, saying how many turns were left out. See [the panel](docs/guides/panel.md).
+
+- Tabs, like Cursor's: `+` in the strip above the conversation opens another session in the same folder (its own conversation, agent, model, and queue), working while you look at another. `kernl.tabs.max` (default 5) caps them; at the limit the tab shown longest ago that isn't working closes, and its conversation stays in Conversations. Tabs come back after a reload.
+- Queued messages can be edited: click one, change it, and press Enter. It doesn't send while you edit it.
+- **Conversations** is a view in place of the conversation, with Back (or Escape) and a search box, instead of a popup menu.
+
+### Changed
+
+- Send is a plain icon button like `+`: its arrow takes the theme's button color when there's something to send. The send options (Send, Queue for later, Send in a forked session) open when the pointer rests on Send, or with Arrow Up on it; the separate arrow is gone.
+- An attached conversation keeps its newest turns instead of only its first 20,000 characters, and kernl's known secrets are removed from it.
+- Conversations opens at once: the CLI agents' own sessions fill in as each agent answers, instead of the list waiting for every agent to start. How long each agent took is in kernl's log.
+- The panel guide says how to put kernl's header on one line: the logo and buttons with no title (`workbench.activityBar.location: default`, `workbench.secondarySideBar.showLabels: false`), or the title and buttons (`workbench.activityBar.autoHide`).
+
 ## [0.4.0] - 2026-10-19
 
 ### Added

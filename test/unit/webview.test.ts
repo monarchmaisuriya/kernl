@@ -4,6 +4,7 @@
 // the composer's send/stop button, approval cards, snapshot restore, the setup banner, and that
 // untrusted text never becomes HTML.
 import { strict as assert } from "node:assert";
+import { HOVER_OPEN_MS } from "../../src/webview/sendMenu";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, test } from "node:test";
@@ -424,6 +425,80 @@ test("@ searches workspace paths through the host; arrow keys and Enter insert t
   assert.equal(p.doc.querySelector<HTMLElement>(".popover")!.hidden, true, "answers to old queries are ignored");
 });
 
+test("@ also finds conversations from any agent and workspace; a picked one becomes a chip (no @text) and is sent as a thread", async () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const input = type(p, "use what we found in @log");
+  await tick(160);
+  assert.deepEqual(p.sent.at(-1), { type: "searchFiles", query: "log" });
+  const thread = { workspaceKey: "k1", id: "c1", agent: "Claude Code", workspace: "Develop", updatedAt: Date.now() - 2 * 3600_000 };
+  p.host({ type: "fileMatches", query: "log", items: [{ path: "Fix login loop", kind: "thread", thread }, { path: "src/login.ts", kind: "file" }] });
+  assert.deepEqual(p.all(".suggestion .suggestion-label").map((s) => s.textContent), ["Fix login loop", "src/login.ts"]);
+  assert.equal(p.all(".suggestion .suggestion-detail")[0].textContent, "Claude Code · Develop · 2 h ago");
+  key(p, "Enter");
+  assert.equal(input.value, "use what we found in ", "the @query typed for it is gone");
+  assert.deepEqual(p.all(".attachments .chip-text").map((c) => c.textContent), ["Fix login loop"]);
+  assert.match(p.doc.querySelector<HTMLElement>(".attachments .attachment")!.title, /^Conversation: Fix login loop \(Claude Code · Develop · 2 h ago\)$/);
+  key(p, "Enter");
+  const sent = p.sent.find((m) => m.type === "send") as any;
+  assert.deepEqual(sent.attachments, [{ path: "Fix login loop", kind: "thread", thread }]);
+});
+
+const conversationRowsFor = (pending: boolean, agentRows: boolean) => [
+  { kind: "new", title: "New conversation" },
+  { kind: "kernl", id: "a", title: "Fix login", detail: "3 messages · Claude Code · 2 h ago", current: false, group: "Conversations" },
+  { kind: "kernl", id: "b", title: "Refactor", detail: "1 message · kernl · 5 min ago", current: true, group: "Conversations" },
+  ...(agentRows ? [{ kind: "agent", agent: "claude-code", sessionId: "s2", title: "Old idea", detail: "Claude Code session · 3 d ago", group: "Claude Code sessions not opened in kernl" }] : []),
+  ...(pending ? [{ kind: "pending", agent: "claude-code", title: "Looking for Claude Code sessions…", group: "Claude Code sessions not opened in kernl" }] : []),
+];
+
+test("Conversations view: covers the panel with the workspace's conversations at once; an agent's sessions fill in later, keeping the search", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const view = p.doc.querySelector<HTMLElement>(".conversations")!;
+  assert.equal(view.hidden, true);
+  p.host({ type: "conversations", workspace: "main", title: "Conversations in Main", rows: conversationRowsFor(true, false) as any, open: true });
+  assert.equal(view.hidden, false);
+  assert.equal(view.querySelector(".panel-view-title")!.textContent, "Conversations in Main");
+  assert.equal(p.doc.activeElement, view.querySelector(".conversations-search"), "the search box has focus");
+  const titles = () => [...view.querySelectorAll(".conversation-title, .conversation-pending, .panel-view-group-title")].map((e) => e.textContent);
+  assert.deepEqual(titles(), ["New conversation", "Conversations", "Fix login", "Refactor", "Claude Code sessions not opened in kernl", "Looking for Claude Code sessions…"]);
+  assert.equal(view.querySelector('.conversation[aria-current="true"] .conversation-title')!.textContent, "Refactor");
+  const search = view.querySelector<HTMLInputElement>(".conversations-search")!;
+  search.value = "idea";
+  search.dispatchEvent(new p.window.Event("input"));
+  p.host({ type: "conversations", workspace: "main", title: "Conversations in Main", rows: conversationRowsFor(false, true) as any });
+  assert.equal(search.value, "idea", "an update keeps the search");
+  assert.deepEqual(titles(), ["New conversation", "Claude Code sessions not opened in kernl", "Old idea"]);
+});
+
+test("Conversations view: a picked row opens it and closes the view; Back and Escape close it with nothing sent", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const open = () => p.host({ type: "conversations", workspace: "main", title: "Conversations in Main", rows: conversationRowsFor(false, true) as any, open: true });
+  const view = p.doc.querySelector<HTMLElement>(".conversations")!;
+  const row = (title: string) => [...view.querySelectorAll<HTMLButtonElement>(".conversation")].find((b) => b.querySelector(".conversation-title")!.textContent === title)!;
+  open();
+  row("Fix login").click();
+  assert.deepEqual(p.sent.at(-1), { type: "openConversation", workspace: "main", pick: { kind: "kernl", id: "a" } });
+  assert.equal(view.hidden, true);
+  open();
+  row("Old idea").click();
+  assert.deepEqual(p.sent.at(-1), { type: "openConversation", workspace: "main", pick: { kind: "agent", agent: "claude-code", sessionId: "s2" } });
+  open();
+  row("New conversation").click();
+  assert.deepEqual(p.sent.at(-1), { type: "openConversation", workspace: "main", pick: { kind: "new" } });
+  const before = p.sent.length;
+  open();
+  view.querySelector<HTMLButtonElement>(".conversations-back")!.click();
+  assert.equal(view.hidden, true);
+  assert.equal(p.doc.activeElement, p.doc.querySelector(".input"), "focus goes back to the message box");
+  open();
+  view.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.equal(view.hidden, true);
+  assert.equal(p.sent.length, before, "Back and Escape send nothing");
+});
+
 test("/ lists skills for the kernl agent and completes the name; Escape closes the list", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN, WT]));
@@ -540,26 +615,37 @@ test("send options: Cmd/Ctrl+Enter queues, Option/Alt+Cmd/Ctrl+Enter sends in a 
   assert.equal(input.value, "fork while running", "and the text stays");
 });
 
-test("send options: the arrow is off with nothing to send; the menu lists the three actions with shortcuts; forking is disabled while running; picking one sends with that mode", () => {
+test("send options: no separate arrow; resting the pointer on Send opens its menu (only with something to send), Arrow Up opens it from the keyboard; picking one sends with that mode", async () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
   const input = p.doc.querySelector<HTMLTextAreaElement>(".input")!;
   const menu = p.doc.querySelector<HTMLElement>(".send-menu")!;
-  const arrow = p.button("More send options")!;
-  assert.equal(arrow.disabled, true, "nothing to send yet: the arrow is off, like Send");
-  arrow.click();
-  assert.equal(menu.hidden, true);
+  const sendButton = p.doc.querySelector<HTMLButtonElement>(".send")!;
+  assert.equal(p.button("More send options"), undefined, "no arrow button");
+  assert.equal(sendButton.getAttribute("aria-haspopup"), "menu");
+  const hover = () => sendButton.dispatchEvent(new p.window.MouseEvent("mouseenter"));
+  hover();
+  await tick(HOVER_OPEN_MS + 50);
+  assert.equal(menu.hidden, true, "nothing to send: no menu");
   input.value = "fork this";
   input.dispatchEvent(new p.window.Event("input"));
-  assert.equal(arrow.disabled, false, "typing turns it on");
-  arrow.click();
-  assert.equal(menu.hidden, false);
+  input.focus();
+  hover();
+  await tick(HOVER_OPEN_MS - 200);
+  assert.equal(menu.hidden, true, "not straight away");
+  await tick(250);
+  assert.equal(menu.hidden, false, "after resting on Send");
+  assert.equal(p.doc.activeElement, input, "hovering keeps the cursor in the message box");
   const options = p.all(".send-option");
   assert.deepEqual(options.map((o) => o.querySelector(".send-option-label")!.textContent), ["Send", "Queue for later", "Send in a forked session"]);
   assert.ok(options.every((o) => o.querySelector("kbd")!.textContent!.length > 0), "each shows its shortcut");
-  p.doc.body.click();
-  assert.equal(menu.hidden, true, "a click elsewhere closes it");
-  arrow.click();
+  sendButton.dispatchEvent(new p.window.MouseEvent("mouseleave"));
+  await tick(350);
+  assert.equal(menu.hidden, true, "leaving closes it");
+  sendButton.focus();
+  sendButton.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+  assert.equal(menu.hidden, false);
+  assert.equal(p.doc.activeElement, options[0], "from the keyboard, focus moves into the menu");
   (options[2] as HTMLButtonElement).click();
   assert.deepEqual(p.sent.at(-1), { type: "send", workspace: "main", text: "fork this", mode: "fork" });
   assert.equal(menu.hidden, true);
@@ -567,6 +653,50 @@ test("send options: the arrow is off with nothing to send; the menu lists the th
   input.value = "x";
   input.dispatchEvent(new p.window.Event("input"));
   assert.deepEqual(options.map((o) => (o as HTMLButtonElement).disabled), [false, false, true]);
+});
+
+test("tabs: the strip shows the shown workspace's tabs by conversation, with their states; + opens one, × closes one, a click switches; the chip keeps the workspace's name", () => {
+  const p = loadPanel();
+  const tab2 = { ...MAIN, id: "main~2", label: "Main · tab 2", tabOf: "main", title: "Fix the login loop", running: true };
+  const tab3 = { ...MAIN, id: "main~3", label: "Main · tab 3", tabOf: "main", waiting: 1 };
+  p.host(workspaces([{ ...MAIN, title: "Refactor" }, tab3, tab2, WT], "main~2"));
+  const tabs = p.all(".tab");
+  assert.deepEqual(tabs.map((t) => t.querySelector(".tab-title")!.textContent), ["Refactor", "Fix the login loop", "New chat"], "the workspace first, then by number; not another workspace's");
+  assert.deepEqual(tabs.map((t) => t.classList.contains("active")), [false, true, false]);
+  assert.deepEqual(tabs.map((t) => t.querySelector(".dot")?.className ?? ""), ["", "dot running", "dot waiting"]);
+  assert.equal(tabs[0].querySelector(".tab-close"), null, "the first tab can't be closed");
+  assert.equal(p.doc.querySelector(".workspace .chip-text")!.textContent, "Main", "the chip names the workspace");
+  p.button("New tab")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "newTab" });
+  p.button("Close tab Fix the login loop")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main~2" });
+  tabs[2].querySelector<HTMLButtonElement>(".tab-button")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "focus", workspace: "main~3" });
+});
+
+test("a queued message is edited in place: clicking it opens an editor (it won't send meanwhile); Enter saves, Escape cancels", () => {
+  const p = loadPanel();
+  const queue = [{ id: "q1", text: "next step", attachments: 0 }];
+  p.host(workspaces([{ ...MAIN, running: true, queue }]));
+  p.doc.querySelector<HTMLButtonElement>(".queued-text")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "editQueued", workspace: "main", id: "q1", editing: true });
+  const box = p.doc.querySelector<HTMLTextAreaElement>(".queued-edit")!;
+  assert.equal(box.value, "next step");
+  box.value = "next step, but in tests";
+  box.dispatchEvent(new p.window.Event("input"));
+  p.host(workspaces([{ ...MAIN, running: true, queue }]));
+  const again = p.doc.querySelector<HTMLTextAreaElement>(".queued-edit")!;
+  assert.equal(again.value, "next step, but in tests", "an update keeps what's typed");
+  again.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  assert.deepEqual(p.sent.slice(-2), [
+    { type: "updateQueued", workspace: "main", id: "q1", text: "next step, but in tests" },
+    { type: "editQueued", workspace: "main", id: "q1", editing: false },
+  ]);
+  assert.equal(p.doc.querySelector(".queued-edit"), null);
+  p.doc.querySelector<HTMLButtonElement>(".queued-text")!.click();
+  p.doc.querySelector<HTMLTextAreaElement>(".queued-edit")!.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.deepEqual(p.sent.at(-1), { type: "editQueued", workspace: "main", id: "q1", editing: false });
+  assert.ok(!p.sent.slice(-2).some((m) => m.type === "updateQueued"), "Escape saves nothing");
 });
 
 test("send options: queued messages show above the input with Remove; Send now appears once the queue has paused", () => {
@@ -1313,7 +1443,7 @@ test("Connections: groups rows by kind and agent, with state, what the source sa
   p.host({ ...connections(), open: true });
   assert.equal(view.hidden, false);
   assert.deepEqual(p.sent.at(-1), { type: "showConnections" }, "opening asks the host to check everything");
-  assert.deepEqual(p.all(".connections-group-title").map((t) => t.textContent), ["Agents", "Keys", "MCP servers: Claude Code", "MCP servers: kernl", "Plugins: Claude Code"]);
+  assert.deepEqual(p.all(".connections .panel-view-group-title").map((t) => t.textContent), ["Agents", "Keys", "MCP servers: Claude Code", "MCP servers: kernl", "Plugins: Claude Code"]);
   const codex = p.doc.querySelector<HTMLElement>('[data-id="agent:codex"]')!;
   assert.equal(codex.querySelector(".connection-state")!.textContent, "Needs you");
   assert.equal(codex.querySelector(".connection-meta")!.textContent, "codex login status · 12 s ago");
@@ -1374,20 +1504,21 @@ test("the agent chip shows the kernl mark for kernl and a terminal for a CLI age
   assert.equal(agent.firstElementChild!.tagName.toLowerCase(), "svg", "a CLI agent: the terminal icon");
 });
 
-test("send and its options are one pill: muted with nothing to send, the button color with text, the secondary colors while the agent runs", () => {
+test("Send is a plain icon button like +: dimmed with nothing to send, the arrow in the accent color with text, the stop square while the agent runs", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
-  const group = p.doc.querySelector<HTMLElement>(".send-group")!;
+  const sendButton = p.doc.querySelector<HTMLButtonElement>(".send")!;
   const input = p.doc.querySelector<HTMLTextAreaElement>(".input")!;
-  assert.deepEqual([group.classList.contains("off"), group.classList.contains("stop")], [true, false], "empty: muted");
+  assert.equal(sendButton.className, p.doc.querySelector(".attach")!.className.replace("attach", "send"), "the same kind of button as +");
+  assert.equal(p.doc.querySelector(".send-group"), null, "no pill");
+  assert.deepEqual([sendButton.disabled, sendButton.classList.contains("ready")], [true, false], "empty: dimmed");
   input.value = "hi";
   input.dispatchEvent(new p.window.Event("input"));
-  assert.deepEqual([group.classList.contains("off"), group.classList.contains("stop")], [false, false], "text: the button color");
+  assert.deepEqual([sendButton.disabled, sendButton.classList.contains("ready")], [false, true], "text: ready");
   input.value = "";
   input.dispatchEvent(new p.window.Event("input"));
   p.host(workspaces([{ ...MAIN, running: true }]));
-  assert.deepEqual([group.classList.contains("off"), group.classList.contains("stop")], [false, true], "running: Stop, never muted");
-  assert.deepEqual([...group.children].map((c) => c.className), ["send stop", "send-more"], "Send, then the options, inside the pill");
+  assert.deepEqual([sendButton.disabled, sendButton.classList.contains("ready"), sendButton.classList.contains("stop")], [false, false, true], "running: Stop");
 });
 
 test("the unsent message is sent to the host a moment after it changes and cleared on send; a saved draft fills only an empty box", async () => {

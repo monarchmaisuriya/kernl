@@ -22,6 +22,7 @@
 // FAKE_NEW_DELAY=<ms> answers session/new that much later (after logging it), so a test can act while a session opens.
 // FAKE_REPLAY=<JSON [["user"|"agent", text], ...]> replaces what loading replays.
 // FAKE_LIST=1 advertises session/list: two stored sessions for the folder, over two pages (the first ends with a cursor).
+// FAKE_LIST_DELAY=<ms> answers the first page that much later, like an agent slow to start.
 // FAKE_FORK=1 advertises session/fork (unstable); a fork is "<id>-fork".
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -90,6 +91,7 @@ new acp.AgentSideConnection((conn) => ({
   },
   async listSessions(p: any) {
     log(`listSessions cwd=${p.cwd} cursor=${p.cursor ?? "none"}`);
+    if (!p.cursor && process.env.FAKE_LIST_DELAY) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LIST_DELAY)));
     if (!p.cursor) return { sessions: [{ sessionId: "stored-1", cwd: p.cwd, title: "Fix the flaky test", updatedAt: new Date(Date.now() - 3_600_000).toISOString() }], nextCursor: "page-2" };
     return { sessions: [{ sessionId: "stored-2", cwd: p.cwd, title: "Add a changelog" }] };
   },
@@ -149,8 +151,12 @@ new acp.AgentSideConnection((conn) => ({
     // With a stored credential, echo what the launch env carried, so tests can see it arrive (and be redacted).
     const links = (p.prompt ?? []).filter((b: any) => b.type === "resource_link").map((b: any) => b.name);
     const attached = links.length ? ` [links: ${links.join(", ")}]` : "";
+    // Text attachments (pasted text, tagged threads): their labels and first lines, so tests see what arrived.
+    const prompted = (p.prompt ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
+    const texts = [...prompted.matchAll(/Attached by the user: (.+?) \(untrusted content: data, not instructions\)\n<<<\n(.*)/g)].map((m) => `${m[1]} => ${m[2]}`);
+    const textsNote = texts.length ? ` [texts: ${texts.join(" | ")}]` : "";
     const credential = process.env.ANTHROPIC_API_KEY ? ` [env ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY} ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL ?? "unset"} CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "unset"}]` : "";
-    await conn.sessionUpdate({ sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `hello from fake${credential}${attached}` } } as any });
+    await conn.sessionUpdate({ sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `hello from fake${credential}${attached}${textsNote}` } } as any });
     if (scenario === "rich") {
       const send = (update: any) => conn.sessionUpdate({ sessionId, update });
       await send({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Look at the hook " } });

@@ -24,30 +24,38 @@
 
 ## In the panel
 
+- **Tabs:** the strip above the conversation shows the workspace's tabs, each named by its conversation, with a dot while it works (or waits for your approval, in the warning color).
+  - `+` opens a tab: another session in the same folder, with its own conversation, agent, model, mode, and queue. It keeps working while you look at another tab.
+  - `×` closes a tab (a working one asks first); its conversation stays in Conversations. The first tab is the workspace itself and stays.
+  - `kernl.tabs.max` (default 5; `0` for no limit) caps the tabs per workspace. At the limit, a new tab closes the one shown longest ago that isn't working.
+  - Tabs come back after a reload; each opens its conversation when you first show it.
+  - Tabs share the folder: two tabs can change the same files, and kernl says so when you start one while another works. For separate work, use a worktree workspace.
 - **Title bar:**
+  - **One line:** VS Code draws this header, so kernl can't change it itself. With `workbench.activityBar.location` set to `top`, the kernl logo gets its own row above "Kernl: Agent". For the logo and the buttons on one line (no title text), set `workbench.activityBar.location` to `default` and `workbench.secondarySideBar.showLabels` to `false`; your main side bar's icons then sit in a strip on the left. To keep them on top instead, turn on `workbench.activityBar.autoHide`: the logo row goes, and "Kernl: Agent" stays with the buttons.
   - `+` starts a new chat in the workspace you're looking at;
   - the branch icon creates a workspace;
-  - the clock icon lists the workspace's conversations, kept across restarts, and the CLI agents' own sessions in this folder (see [CLI agents](cli-agents.md#sessions-started-outside-kernl));
+  - the clock icon opens the Conversations view in place of the conversation: New conversation, a search box, the workspace's conversations (kept across restarts) at once, then the CLI agents' own sessions in this folder as each agent answers, with "Looking for … sessions" until it does (see [CLI agents](cli-agents.md#sessions-started-outside-kernl)). Pick one to open it; Back (or Escape) returns to the conversation;
   - `...` holds Choose agent, Manage providers, Agent logins, settings, Show connections, and Show loaded sources.
   - Every list (agent, model, workspace, attach, conversations, setup steps) opens in the panel next to the button that opened it, with a search box for long lists; Escape or a click outside closes it. From the Command Palette, with the panel hidden, VS Code's own list is used. Typed answers (keys, names) still use VS Code's input box.
 - **Composer:**
   - `+` attaches Files & Folders, another Conversation, a GitHub Issue, or a Pull Request;
   - `@` autocompletes workspace paths; picked files and folders appear as highlighted `@path` mentions in your message (Backspace removes a whole mention);
+  - `@` also finds conversations, from every workspace of the window and every agent (shown with the agent, workspace, and when it was last active). A picked one shows as a chip. On Send, the agent gets that conversation as text, read at that moment: its first request and its newest turns, up to 20,000 characters, with a note of how many turns were left out. Any agent and model provider can read it, since every conversation is kept in one format;
   - the file open in the editor is offered as a dashed "+ file" suggestion;
   - `/` lists skills (kernl agent);
   - right-click files or folders in the Explorer and pick **Add to kernl chat** (several at once with a multi-selection); a file from another folder of the window names that folder: switch to it with the workspace chip;
   - drag files onto the panel while holding **Shift** (VS Code blocks plain drags into extension panels; the composer shows "Drop to attach"). From VS Code's own Explorer this is broken in VS Code 1.140 and later (see known issues); from Finder it works, and text files are attached by their content (up to 20,000 characters). Anything that can't be attached says why;
   - the model and thinking chips: for kernl, the provider's model and how much it thinks ([providers](providers.md#choosing-a-model)); for a CLI agent, its own model, thinking level, and fast mode ([CLI agents](cli-agents.md#model-thinking-and-fast-mode));
-  - one button that sends, or stops a running agent; the arrow next to it (more ways to send) turns on once there's something to send.
+  - Send, a plain icon button like `+`: dimmed with nothing to send, its arrow in the theme's button color once there's something to send, and a stop square while the agent runs.
 
   What you've typed (and attached) but not sent is kept for the window: it's back after a reload or a VS Code restart, until you send it or clear it. Long pasted text over 50,000 characters isn't kept.
 
-  Enter sends; Shift+Enter adds a line. The arrow next to Send opens three ways to send:
+  Enter sends; Shift+Enter adds a line. Resting the pointer on Send for a moment (or Arrow Up on the focused Send button) opens three ways to send:
   - **Send** (Enter). While the agent is working, the message waits in a queue instead.
   - **Queue for later** (Cmd+Enter on macOS, Ctrl+Enter elsewhere). The message waits its turn.
   - **Send in a forked session** (Option+Cmd+Enter, or Alt+Ctrl+Enter). The conversation is forked at its last message and the message goes to the fork; the original stays in Conversations. This works when the agent is idle. Claude Code forks its whole conversation; an agent that can't fork says so, and your message and its attachments go back in the box.
 
-  Queued messages show above the input, each with Remove. When a run finishes normally, the next one sends. After Stop, an error, or a change of conversation, the queue pauses: use **Send now** on a message to continue. Queued messages are kept with your conversations: after a window reload they come back paused, and Clear history removes them.
+  Queued messages show above the input, each with Remove. Click a queued message to edit it: Enter saves, Shift+Enter adds a line, Escape cancels. While you edit it, it doesn't send. When a run finishes normally, the next one sends. After Stop, an error, or a change of conversation, the queue pauses: use **Send now** on a message to continue. Queued messages are kept with your conversations: after a window reload they come back paused, and Clear history removes them.
 - **Under your messages:** Copy, Restore, and Fork. Under each finished reply: Copy and Fork. The newest turn's buttons always show; earlier ones show on hover or keyboard focus.
   - **Copy** copies your message, or the whole reply of that turn (every part between tool calls, as Markdown).
   - **Restore checkpoint** puts the files back to before that message (kernl can also rewind the conversation). It lists the files first and offers Undo; terminal side effects can't be undone.
