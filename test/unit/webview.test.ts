@@ -725,6 +725,8 @@ test("tabs: pills named by conversation with a state slot (working, waiting, fin
   assert.deepEqual(tabs().map((t) => t.classList.contains("active")), [false, true, false]);
   assert.deepEqual(tabs().map((t) => t.querySelector(".tab-state")?.className ?? ""), ["tab-state working", "tab-state working", "tab-state waiting"]);
   assert.equal(tabs()[1].querySelector(".tab-button")!.getAttribute("aria-label"), "Fix the login loop, working");
+  assert.equal(tabs()[1].querySelector(".tab-button")!.firstElementChild!.className, "tab-state working", "the state leads the pill, where it stays in view when titles are cut");
+  assert.equal(tabs()[0].querySelector(".tab-slot"), null, "only a closable tab keeps a slot for ×");
   assert.equal(tabs()[0].querySelector(".tab-close"), null, "the first tab can't be closed");
   assert.equal(p.doc.querySelector(".workspace .chip-text")!.textContent, "Main", "the chip names the workspace");
 

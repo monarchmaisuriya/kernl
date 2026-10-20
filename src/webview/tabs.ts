@@ -1,7 +1,8 @@
 // The tab strip: the shown workspace's tabs (the workspace itself first), each a pill named by its
-// conversation. A fixed slot at each pill's end shows its state: working (a spinner), waiting for the
-// user (a warning dot), or finished while another tab was shown (an accent dot, until it's shown); on
-// hover or keyboard focus, × takes that slot (not on the first tab, which can't close). Keyboard: the
+// conversation. A pill leads with its state, where it stays in view: working (a spinner), waiting for
+// the user (a warning dot), or finished while another tab was shown (an accent dot, until it's shown).
+// Pills shrink (titles get an ellipsis; the full one is in the tooltip) before the strip scrolls. A
+// closable pill keeps a slot at its end for ×, shown on hover or keyboard focus (the first tab can't close). Keyboard: the
 // shown tab is the strip's one Tab stop; arrows, Home, and End show another; Delete closes. Mouse:
 // middle-click closes; double-click on the strip's empty space opens a tab; the wheel scrolls it sideways.
 // A tab is another session in the same folder; the host owns them. Built with createElement + textContent only.
@@ -51,11 +52,12 @@ export function createTabStrip(send: (m: PanelToHost) => void, select: (id: stri
     button.tabIndex = active ? 0 : -1;
     button.setAttribute("aria-label", state ? `${title}, ${STATE_WORDS[state]}` : title);
     button.title = state ? `${title} (${STATE_WORDS[state]})` : title;
+    if (state) button.append(el("span", `tab-state ${state}`));
     button.append(el("span", "tab-title", title));
     button.addEventListener("click", () => select(view.id));
-    const slot = el("span", "tab-slot");
-    if (state) slot.append(el("span", `tab-state ${state}`));
+    t.append(button);
     if (view.tabOf) {
+      const slot = el("span", "tab-slot");
       const x = el("button", "icon-button tab-close");
       x.tabIndex = -1;
       x.setAttribute("aria-label", `Close tab ${title}`);
@@ -63,10 +65,10 @@ export function createTabStrip(send: (m: PanelToHost) => void, select: (id: stri
       x.append(icon("close", 12));
       x.addEventListener("click", () => close(view));
       slot.append(x);
+      t.append(slot);
       // Middle-click closes, as in browsers and editors.
       t.addEventListener("auxclick", (e) => e.button === 1 && (e.preventDefault(), close(view)));
     }
-    t.append(button, slot);
     return t;
   }
 

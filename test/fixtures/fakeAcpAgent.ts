@@ -26,6 +26,7 @@
 // FAKE_FORK=1 advertises session/fork (unstable); a fork is "<id>-fork".
 // FAKE_IGNORE_CANCEL=1 never ends a turn that was cancelled (an agent that doesn't answer Stop).
 // FAKE_LOAD_DELAY=<ms> answers session/load that much later, so a test can act while a session loads.
+// FAKE_PROMPT_DELAY=<ms> spends that long in each prompt turn before the scenario runs, so a test can watch a turn that's working.
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -148,6 +149,7 @@ new acp.AgentSideConnection((conn) => ({
   },
   async prompt(p: any) {
     log("prompt");
+    if (process.env.FAKE_PROMPT_DELAY) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_PROMPT_DELAY)));
     // A cancel ends only the turn it arrived in (ACP session/cancel), not later ones.
     cancelled = false;
     const sessionId = p.sessionId;

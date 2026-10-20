@@ -146,3 +146,17 @@ RECOMMENDATION: A, because it keeps what makes tabs useful (seeing every chat an
   - pills shrank instead of scrolling.
 - Deviations: the active pill uses `--surface` with an `--input-border` outline (not the list-selection color, a strong blue in many dark themes); the 0.9.1 alignment test now checks `.tab-bar`'s left padding.
 - Tests: two webview tests (states and "finished while away"; keyboard and mouse); unit 411/411; suites 99/99 and 7/7.
+
+## End-to-end check (2026-10-20, after 0.10.0)
+
+Run in a real VS Code 1.142 window: a separate profile, the fake agent, driven over the DevTools protocol. No real agent and none of M's windows were involved.
+
+- **Passed:**
+  - `+` opens a tab, which becomes the shown tab and the only Tab stop; × is hidden until hover or focus;
+  - a tab's saved queued message comes back;
+  - a tab working while another is shown says "working", and "finished" after it ends; showing it clears the dot;
+  - real key presses: Right shows the next tab and focus follows; Delete closes it.
+- **Found and fixed:**
+  - **a background tab's state was cut off** in the real sidebar (about 400 px), where the pill ran under the edge fade with its state at its end. Now the state leads the pill, pills shrink to 88 px before the strip scrolls, and only closable tabs reserve the × slot;
+  - **tabs were lost on a reload when the first tab had a queued message.** Restoring the queue changed the workspaces during startup, which saved an empty tab list before `restoreTabs` read the saved one. Now `saveTabs` waits until the saved list has been read (`tabsRestored`, reset on `reloadWorkspaces`). A suite check reproduced it first (the tab didn't come back), then passed.
+- The fake agent gained `FAKE_PROMPT_DELAY`, so a test can watch a turn that's working.
