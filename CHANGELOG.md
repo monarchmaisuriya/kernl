@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-20
+
 ### Added
 
 - `read_thread`: an agent reads any part of a conversation tagged in its own conversation, by turn numbers or by words (kernl's agent and the CLI agents through kernl's tools). It doesn't ask; only tagged conversations can be read.
@@ -143,7 +145,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/pushowl/kernl/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/pushowl/kernl/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/pushowl/kernl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/pushowl/kernl/compare/v0.2.0...v0.3.0
