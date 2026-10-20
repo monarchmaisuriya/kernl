@@ -4,6 +4,14 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- Conversations: picking another conversation while the agent works asks "Stop the agent and open this conversation?", then stops the agent, waits for its turn to end, and opens it. If the agent hasn't stopped within 15 s, kernl says so and opens nothing.
+
+### Fixed
+
+- Stop pressed while kernl was still starting the agent was ignored, and the message went to the agent anyway; now the turn ends as stopped.
+
 ## [0.7.1] - 2026-10-20
 
 ### Fixed

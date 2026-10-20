@@ -519,7 +519,7 @@ export class Controller implements vscode.Disposable {
   private async closeTab(id: string, ask = true) {
     const tab = this.workspace(id);
     if (!tab?.tabOf) return;
-    if (ask && tab.running && !(await this.prompts.confirm("Stop the agent and close this tab?", "Its conversation stays in Conversations.", "Stop and close"))) return;
+    if (ask && !(await this.confirmStop(tab, "Stop the agent and close this tab?", "Stop and close"))) return;
     if (tab.running) await tab.stop();
     await tab.saveSession();
     const siblings = this.tabsOf(tab.tabOf);
@@ -1046,13 +1046,11 @@ export class Controller implements vscode.Disposable {
     const ws = this.workspace(workspace);
     if (!ws) return;
     if (pick.kind === "new") return this.newChat(ws.id);
-    // The runtime switches conversations only between runs: say so rather than ignore the pick.
-    if (ws.running) return void this.panel.post({ type: "notice", workspace: ws.id, text: "Stop the agent to open another conversation: kernl doesn't switch conversations while it's working." });
     if (pick.kind === "agent") {
       // Only a session the agent listed for this folder: the panel's rows carry nothing else.
       const agent = CLI_AGENT_IDS.find((a) => a === pick.agent);
       const session = agent && this.agentSessionLists.get(`${agent}\n${ws.root}`)?.sessions.find((s) => s.sessionId === pick.sessionId);
-      if (!agent || !session) return;
+      if (!agent || !session || !(await this.stopToOpen(ws))) return;
       const record = this.host.sessions.create(agent);
       record.importedFrom = { agent, sessionId: session.sessionId };
       record.history = { sessionId: session.sessionId };
@@ -1060,10 +1058,22 @@ export class Controller implements vscode.Disposable {
       return this.openAgentSession(ws, record);
     }
     const record = await this.host.sessions.load(ws.sessionKey, pick.id);
-    if (!record || record.id === ws.sessionId) return;
+    if (!record || record.id === ws.sessionId || !(await this.stopToOpen(ws))) return;
     if (record.importedFrom) return this.openAgentSession(ws, record);
     if (record.harness !== ws.harness && isHarness(record.harness)) await this.setHarness(ws.id, record.harness);
     await ws.openSession(record);
+  }
+
+  /** Opening another conversation while the agent works: ask, stop it, and wait until its turn has ended. False when declined or it didn't stop. */
+  private async stopToOpen(ws: WorkspaceRuntime): Promise<boolean> {
+    if (!(await this.confirmStop(ws, "Stop the agent and open this conversation?", "Stop and open"))) return false;
+    try {
+      await ws.stopAndWait();
+      return true;
+    } catch (err) {
+      void vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+      return false;
+    }
   }
 
   /** Opens a CLI agent's session in a workspace, with a notice when Claude Code has it open in another app (sending here continues it). */
@@ -1651,11 +1661,16 @@ export class Controller implements vscode.Disposable {
     this.inputsChanged({ kind: "keys", harnesses: ["deepagents", ...Object.keys(CREDENTIAL_ENV)] });
   }
 
+  /** Before something that ends the workspace's run (New chat, Close tab, opening another conversation): asks while it works. True to go ahead. */
+  private async confirmStop(ws: WorkspaceRuntime, question: string, button: string): Promise<boolean> {
+    return !ws.running || this.prompts.confirm(question, "This conversation stays in Conversations.", button);
+  }
+
   /** New chat (title bar, kernl menu, /new): a new conversation in that workspace or tab, asking first while its agent works. */
   async newChat(id = this.active) {
     const ws = this.workspace(id);
     if (!ws) return;
-    if (ws.running && !(await this.prompts.confirm("Stop the agent and start a new chat?", "This conversation stays in Conversations.", "Stop and start new"))) return;
+    if (!(await this.confirmStop(ws, "Stop the agent and start a new chat?", "Stop and start new"))) return;
     ws.newThread();
     this.prepareShown();
   }

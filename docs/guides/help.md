@@ -92,7 +92,7 @@ More: [the panel](panel.md#in-the-panel), [workspaces](workspaces.md).
 
 ## Earlier conversations
 
-- `/conversations` (or the clock icon) lists this workspace's conversations, and each CLI agent's own sessions in this folder (for example ones started with `claude` in a terminal).
+- `/conversations` (or the clock icon) lists this workspace's conversations, and each CLI agent's own sessions in this folder (for example ones started with `claude` in a terminal). Picking one while the agent works asks first, then stops the agent and opens it.
 - `@` also finds conversations from every workspace and agent. A tagged one goes to the agent as text: an outline of every turn, the first request, and the newest turns. The agent can read any other turn with its `read_thread` tool.
 
 For example, type `@` and part of a conversation's title, pick it (it becomes a chip), then ask:

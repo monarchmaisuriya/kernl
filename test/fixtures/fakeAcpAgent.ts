@@ -24,6 +24,7 @@
 // FAKE_LIST=1 advertises session/list: two stored sessions for the folder, over two pages (the first ends with a cursor).
 // FAKE_LIST_DELAY=<ms> answers the first page that much later, like an agent slow to start.
 // FAKE_FORK=1 advertises session/fork (unstable); a fork is "<id>-fork".
+// FAKE_IGNORE_CANCEL=1 never ends a turn that was cancelled (an agent that doesn't answer Stop).
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -240,6 +241,7 @@ new acp.AgentSideConnection((conn) => ({
       ],
     });
     log(`permission ${answer.outcome.outcome}${answer.outcome.optionId ? `:${answer.outcome.optionId}` : ""}`);
+    if (process.env.FAKE_IGNORE_CANCEL && (cancelled || answer.outcome.outcome === "cancelled")) await new Promise(() => {});
     if (answer.outcome.outcome === "selected" && answer.outcome.optionId === "yes") {
       writeFileSync(path, "hi\n");
       await conn.sessionUpdate({ sessionId, update: { sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed", content: [{ type: "content", content: { type: "text", text: "wrote hello.txt" } }] } as any });
