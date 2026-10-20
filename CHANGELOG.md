@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.10.8] - 2026-10-20
+
 ### Changed
 
 - Under the message box, + stays at the start and Send at the end, with the agent's options (model, thinking, Fast) as equal-width buttons centered between them. In the footer, the workspace sits at the start (lined up with the message text), the agent in the center, and the mode at the end (under Send).
@@ -265,7 +267,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.7...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.8...HEAD
+[0.10.8]: https://github.com/pushowl/kernl/compare/v0.10.7...v0.10.8
 [0.10.7]: https://github.com/pushowl/kernl/compare/v0.10.6...v0.10.7
 [0.10.6]: https://github.com/pushowl/kernl/compare/v0.10.5...v0.10.6
 [0.10.5]: https://github.com/pushowl/kernl/compare/v0.10.4...v0.10.5
