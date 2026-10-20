@@ -29,3 +29,15 @@ test("one accent: the send arrow, primary buttons, the working mark, running dot
   assert.ok(!/(?<![\w-])color:\s*var\(--accent\)\s*;/.test(rules.replace(/\.card-head \.icon \{[^}]*\}|\.working-mark \{[^}]*\}/g, "")), "the accent colors icons and fills, not text");
   assert.ok(!/var\(--link\)/.test(rules.replace(/\.md a \{[^}]*\}|button\.link \{[^}]*\}|\.tool-site \{[^}]*\}/g, "")), "the link color is for links only");
 });
+
+test("every row's first text or icon sits on one content line: each left offset derives from --content-inset", () => {
+  const rule = (selector: string) => {
+    const at = css.indexOf(`\n${selector} {`);
+    assert.ok(at >= 0, `${selector} exists`);
+    return css.slice(at, css.indexOf("}", at));
+  };
+  assert.match(css, /--content-inset: 10px;/);
+  for (const selector of [".tab-button", ".composer", ".footer", ".plan-bar > summary", ".banner"]) assert.match(rule(selector), /var\(--content-inset\)/, `${selector} uses the content line`);
+  assert.match(rule(".tabs"), /padding: 4px 8px 0 0;/, "the first tab starts at the edge line");
+  assert.match(rule(".composer .attach"), /margin-left: -4px;/, "the + sits on the line with the text");
+});

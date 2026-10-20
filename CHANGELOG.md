@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- The panel's rows line up on the left: the tab title, the message box's text and `+`, the plan bar, and the footer chips start on one line, and the boxes (tabs, message box, plan bar) on another.
+
 ## [0.9.0] - 2026-10-20
 
 ### Added
