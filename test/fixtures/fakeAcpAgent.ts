@@ -25,6 +25,7 @@
 // FAKE_LIST_DELAY=<ms> answers the first page that much later, like an agent slow to start.
 // FAKE_FORK=1 advertises session/fork (unstable); a fork is "<id>-fork".
 // FAKE_IGNORE_CANCEL=1 never ends a turn that was cancelled (an agent that doesn't answer Stop).
+// FAKE_LOAD_DELAY=<ms> answers session/load that much later, so a test can act while a session loads.
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -104,6 +105,7 @@ new acp.AgentSideConnection((conn) => ({
   async loadSession(p: any) {
     cwd = p.cwd;
     log(`loadSession ${p.sessionId}`);
+    if (process.env.FAKE_LOAD_DELAY) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_LOAD_DELAY)));
     setupLog("setup load", p);
     const replay: [string, string][] = process.env.FAKE_REPLAY ? JSON.parse(process.env.FAKE_REPLAY) : [["user", "REPLAYED-OLD-QUESTION"], ["agent", "REPLAYED-OLD-MESSAGE"]];
     for (const [role, text] of replay) {

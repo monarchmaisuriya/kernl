@@ -150,6 +150,8 @@ export class WorkspaceRuntime {
   private stopBeforeStart = false;
   /** Sends and session loads in progress: what stopAndWait waits for. */
   private runs = new Set<Promise<unknown>>();
+  /** stopAndWait is ending the run to leave this conversation: queued messages don't send meanwhile. */
+  private leaving = false;
   /** Sequential thinking for the current conversation (kernl agent). */
   private thinking = new ThinkingLog();
   /** Long-running commands the kernl agent started; each has its own terminal. */
@@ -453,7 +455,7 @@ export class WorkspaceRuntime {
   }
 
   private sendNextQueued() {
-    if (this.queuePaused || this.running) return;
+    if (this.queuePaused || this.running || this.leaving) return;
     // The next message is being edited: it waits for the edit (editingQueue carries on).
     if (!this.queue.length || this.editingQueued.has(this.queue[0].id)) return;
     const next = this.queue.shift()!;
@@ -605,18 +607,27 @@ export class WorkspaceRuntime {
 
   /**
    * Stops the run and resolves once nothing is running (the turn has ended, a session finished
-   * loading), so another conversation can be opened. Throws when that takes longer than `ms`.
+   * loading), so another conversation can be opened. Queued messages were written for this
+   * conversation, so none sends meanwhile (a load that ends would otherwise send the next one), and
+   * they wait for Send now afterwards. Throws when that takes longer than `ms`.
    */
   async stopAndWait(ms = STOP_WAIT_MS) {
+    if (!this.running) return;
     const deadline = Date.now() + ms;
-    while (this.running) {
-      if (!this.runs.size) throw new Error(`${this.label} reports a run in progress that kernl isn't tracking.`);
-      this.stop();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const late = new Promise<true>((resolve) => (timer = setTimeout(() => resolve(true), Math.max(0, deadline - Date.now()))));
-      const timedOut = await Promise.race([Promise.allSettled([...this.runs]).then(() => false as const), late]);
-      clearTimeout(timer);
-      if (timedOut) throw new Error(`The agent didn't stop within ${ms / 1000} s: press Stop, then try again.`);
+    this.leaving = true;
+    try {
+      while (this.running) {
+        if (!this.runs.size) throw new Error(`${this.label} reports a run in progress that kernl isn't tracking.`);
+        this.stop();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<true>((resolve) => (timer = setTimeout(() => resolve(true), Math.max(0, deadline - Date.now()))));
+        const timedOut = await Promise.race([Promise.allSettled([...this.runs]).then(() => false as const), late]);
+        clearTimeout(timer);
+        if (timedOut) throw new Error(`The agent hasn't ended its turn ${ms / 1000} s after Stop, so the conversation wasn't opened. Pick it again once the agent shows it has stopped.`);
+      }
+      this.holdQueue();
+    } finally {
+      this.leaving = false;
     }
   }
 

@@ -662,8 +662,9 @@ export async function run() {
     reloaded.dispose();
   });
 
-  await check("stopAndWait: a stopped turn has ended when it resolves; an agent that ignores Stop is reported after the limit", async () => {
-    const base = runtimeHost(true, () => true, []);
+  await check("stopAndWait: a stopped turn has ended when it resolves; a message queued while a session loads stays queued; an agent that ignores Stop is reported after the limit", async () => {
+    const posted: any[] = [];
+    const base = runtimeHost(true, () => true, posted);
     const until = async (what: string, ok: () => boolean) => {
       const deadline = Date.now() + 20_000;
       while (!ok()) {
@@ -685,11 +686,27 @@ export async function run() {
     } finally {
       ws.dispose();
     }
+    const loads = runtime({ FAKE_LOAD_DELAY: "1500" });
+    try {
+      const record = base.sessions.create("claude-code");
+      record.importedFrom = { agent: "claude-code", sessionId: "slow-load" };
+      record.history = { sessionId: "slow-load" };
+      const loading = loads.openAgentSession(record);
+      await until("the session loading", () => loads.running);
+      await loads.submit("queued while loading", []);
+      await loads.stopAndWait();
+      await loading;
+      assert.deepEqual(loads.runState().queue, ["queued while loading"], "still queued, for Send now");
+      assert.equal(loads.runState().queuePaused, true);
+      assert.ok(!posted.some((m) => m.type === "userMessage" && m.text === "queued while loading"), "not sent into the conversation being left");
+    } finally {
+      loads.dispose();
+    }
     const stuck = runtime({ FAKE_IGNORE_CANCEL: "1" });
     try {
       void stuck.send("never stops");
       await until("the stuck turn's card", () => stuck.approvals.size > 0);
-      await assert.rejects(stuck.stopAndWait(500), /The agent didn't stop within 0\.5 s/);
+      await assert.rejects(stuck.stopAndWait(500), /hasn't ended its turn 0\.5 s after Stop/);
       assert.equal(stuck.running, true);
     } finally {
       stuck.dispose();

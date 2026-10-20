@@ -4,6 +4,11 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Fixed
+
+- Picking another conversation while a stored session was loading sent a message queued during the load, then stopped it in the conversation being left. It now stays queued, waiting for Send now.
+- When the agent doesn't end its turn within 15 s of Stop, the message now says the conversation wasn't opened and to pick it again once the agent has stopped.
+
 ## [0.8.0] - 2026-10-20
 
 ### Changed
