@@ -515,6 +515,51 @@ test("/ lists skills for the kernl agent and completes the name; Escape closes t
   assert.equal(p.doc.querySelector<HTMLElement>(".popover")!.hidden, true, "CLI agents have their own slash commands");
 });
 
+test("/ lists kernl's own commands for every agent; choosing or typing one runs it instead of sending; the agent's command wins a clash", () => {
+  const p = loadPanel();
+  const modes = [{ id: "ask", label: "Ask before edits", icon: "shield", description: "x" }, { id: "plan", label: "Plan mode", icon: "bulb", description: "y" }];
+  p.host(STATUS);
+  p.host(workspaces([{ ...MAIN, modes }, WT]));
+  p.host({ type: "skills", items: [{ name: "connect-db", description: "Connect the database" }] });
+  const labels = () => p.all(".suggestion .suggestion-label").map((s) => s.textContent);
+  const sends = () => p.sent.filter((m) => m.type === "send");
+
+  // kernl's agent: kernl's commands, then its skills; /close is left out on the first tab.
+  let input = type(p, "/c");
+  assert.deepEqual(labels(), ["/new", "/conversations", "/connections", "/connect-db"]);
+  assert.equal(p.all(".suggestion .suggestion-detail")[0].textContent, "New chat in this tab · kernl");
+  key(p, "Enter");
+  assert.deepEqual(p.sent.at(-1), { type: "newChat", workspace: "main" });
+  assert.equal(input.value, "");
+
+  type(p, "/mode");
+  key(p, "Enter");
+  assert.equal(p.doc.querySelector<HTMLElement>(".mode-menu")!.hidden, false, "/mode opens the mode chip's menu");
+  type(p, "/help");
+  key(p, "Enter");
+  assert.deepEqual(p.sent.at(-1), { type: "showHelp" });
+
+  // Typed in full with text after it: a note, and the text stays.
+  input = type(p, "/new fix it");
+  key(p, "Enter");
+  assert.equal(input.value, "/new fix it");
+  assert.equal(p.visibleLog().lastElementChild!.textContent, "/new takes nothing after it.");
+
+  // A CLI agent that offers /resume: "/res" lists only the agent's, which is sent as text; /kernl:resume reaches kernl.
+  p.host({ type: "commands", workspace: "wt:fix", items: [{ name: "resume", description: "Resume a session" }] });
+  p.host(workspaces([{ ...MAIN, modes }, WT], "wt:fix"));
+  input = type(p, "/res");
+  assert.deepEqual(labels(), ["/resume"]);
+  key(p, "Enter");
+  assert.equal(input.value, "/resume ");
+  key(p, "Enter");
+  assert.equal(sends().at(-1)?.text, "/resume");
+  type(p, "/kernl:resume");
+  key(p, "Enter");
+  assert.deepEqual(p.sent.at(-1), { type: "showConversations" });
+  assert.equal(sends().length, 1, "only the agent's command was sent");
+});
+
 test("files dropped on the panel are sent to the host to check and attach", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));

@@ -4,6 +4,15 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- kernl's own slash commands for every agent: `/new` (`/clear`), `/tab`, `/close`, `/conversations` (`/resume`), `/agent`, `/model`, `/mode`, `/connections`, `/settings`, `/help`. They run the panel action at once instead of sending. A command the agent offers keeps going to the agent; kernl's is then `/kernl:<name>`. See [the panel](docs/guides/panel.md).
+- kernl help: `/help`, **kernl help** in the kernl menu, or **kernl: Help** opens [a tour of kernl with examples](docs/guides/help.md) in VS Code's Markdown preview. The user guides now ship with the extension, so its links open them there.
+
+### Changed
+
+- New chat asks first while the agent is working ("Stop the agent and start a new chat?"), like closing a working tab.
+
 ## [0.6.0] - 2026-10-20
 
 ### Added

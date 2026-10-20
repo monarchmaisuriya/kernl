@@ -4,7 +4,7 @@
 // chip switches between them. New chat and New workspace live in VS Code's view title bar.
 import { type AgentOptionView, type ApprovalCard, type HarnessView, type HostToPanel, type PanelToHost, type PlanEntryView, PREVIEW_FILE, type SendMode, type SkillView, type WorkspaceView } from "../ui/protocol";
 import { icon } from "./icons";
-import { attachmentChip, createAttachments } from "./attachments";
+import { attachmentChip, createAttachments, type SlashRow } from "./attachments";
 import { createConnectionsView } from "./connections";
 import { createConversationsView } from "./conversations";
 import { createTabStrip } from "./tabs";
@@ -13,6 +13,7 @@ import { createMenu } from "./menu";
 import { isPanelDrop } from "./dropData";
 import { createMessageActions, type MessageActions } from "./messageActions";
 import { createModeMenu, modeIcon } from "./modeMenu";
+import { commandFor, menuRows, type PanelCommand, type PanelCommandName } from "./panelCommands";
 import { createSendMenu, sendModeOf } from "./sendMenu";
 import { type ContextUsage, createContextRing } from "./contextRing";
 import { createPlanBar } from "./planBar";
@@ -569,7 +570,10 @@ function setWorkspaces(items: WorkspaceView[], focus?: string) {
 function submit(mode: SendMode = "now") {
   const p = pane(active);
   const text = input.value.trim();
-  if (!p || !text || (mode === "fork" && p.view.running)) return;
+  if (!p || !text) return;
+  const command = commandFor(text, new Set(agentSlash(p).map((s) => s.name)));
+  if (command) return runTyped(p, command);
+  if (mode === "fork" && p.view.running) return;
   const files = attachments.take();
   input.value = "";
   attachments.refresh();
@@ -578,6 +582,78 @@ function submit(mode: SendMode = "now") {
   send({ type: "send", workspace: active, text, ...(files.length ? { attachments: files } : {}), ...(mode === "now" ? {} : { mode }) });
   render();
 }
+
+/** What the tab's agent offers on "/": kernl's skills for its own agent, a CLI agent's own commands. */
+function agentSlash(p: Pane): SkillView[] {
+  return p.view.harness.startsWith("deepagents") ? kernlSkills : (p.commands ?? []);
+}
+
+/** Whether a kernl command can run in the shown tab: the control it stands for is there and usable. */
+function commandAvailable(p: Pane, c: PanelCommand): boolean {
+  switch (c.name) {
+    case "close":
+      return !!p.view.tabOf;
+    case "agent":
+      return !agentChip.disabled;
+    case "model":
+      return !modelChip.hidden && !modelChip.disabled;
+    case "mode":
+      return !modeChip.disabled;
+    default:
+      return true;
+  }
+}
+
+/** A kernl command, run in the shown tab the way its control runs it. */
+function runCommand(name: PanelCommandName) {
+  switch (name) {
+    case "new":
+      return send({ type: "newChat", workspace: active });
+    case "tab":
+      return send({ type: "newTab" });
+    case "close":
+      return send({ type: "closeTab", workspace: active });
+    case "conversations":
+      return send({ type: "showConversations" });
+    case "agent":
+      return agentChip.click();
+    case "model":
+      return modelChip.click();
+    case "mode":
+      return modeChip.click();
+    case "connections":
+      return connectionsView.show();
+    case "settings":
+      return send({ type: "openSettings" });
+    case "help":
+      return send({ type: "showHelp" });
+  }
+}
+
+/** A kernl command typed in full and sent: run it and clear the box, or say why not and keep the text. */
+function runTyped(p: Pane, match: NonNullable<ReturnType<typeof commandFor>>) {
+  const why = "refusal" in match ? match.refusal : commandAvailable(p, match.command) ? undefined : match.command.unavailable;
+  if (why || "refusal" in match) {
+    p.log.append(el("div", "note", why ?? ""));
+    return scroll();
+  }
+  input.value = "";
+  attachments.refresh();
+  saveDraft(true);
+  runCommand(match.command.name as PanelCommandName);
+}
+
+/** The "/" menu: kernl's commands, then the agent's commands or skills; kernl's of a name the agent also offers come last, so Enter picks the agent's. */
+function slashRows(p: Pane, query: string): SlashRow[] {
+  const offered = agentSlash(p);
+  const kernl = menuRows(query, new Set(offered.map((s) => s.name)), (c) => commandAvailable(p, c)).map((r) => ({ ...r, run: () => runCommand(r.command.name as PanelCommandName) }));
+  const agent = offered.filter((s) => s.name.startsWith(query)).map((s) => ({ label: `/${s.name}`, detail: s.description }));
+  return [...kernl.filter((r) => !r.clash), ...agent, ...kernl.filter((r) => r.clash)];
+}
+attachments.setSlashRows((query) => {
+  const p = pane(active);
+  return p ? slashRows(p, query) : [];
+});
 
 // Approval shortcuts act on the newest card in the shown workspace: allow once, allow always (when offered), reject.
 document.addEventListener("keydown", (e) => {
@@ -606,11 +682,7 @@ input.addEventListener("keydown", (e) => {
   }
 });
 input.addEventListener("input", () => {
-  // "/" offers kernl's skills to its own agent, and a CLI agent's own commands to that agent.
-  const p = pane(active);
-  const slash = !p ? [] : p.view.harness.startsWith("deepagents") ? kernlSkills : (p.commands ?? []);
-  attachments.setSkills(slash);
-  attachments.onInput(slash.length > 0);
+  attachments.onInput();
   render();
   saveDraft();
 });

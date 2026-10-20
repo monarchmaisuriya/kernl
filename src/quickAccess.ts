@@ -15,6 +15,7 @@ export const QUICK_ACTIONS: readonly { command: string; label: string; detail: s
   { command: "kernl.agentLogins", label: "Agent logins", detail: "Log in, or use an API key" },
   { command: "kernl.showConnections", label: "Show connections", detail: "Logins, keys, MCP servers, plugins" },
   { command: "kernl.openSettings", label: "kernl settings", detail: "" },
+  { command: "kernl.help", label: "kernl help", detail: "What kernl can do, with examples" },
 ];
 
 /** The status bar item: "kernl", or "kernl: 2 need you" with a warning when connections need the user. */

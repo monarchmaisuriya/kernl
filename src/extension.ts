@@ -13,6 +13,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("kernl.newChat", () => controller.newChat()),
     vscode.commands.registerCommand("kernl.newWorkspace", () => controller.newWorkspace()),
     vscode.commands.registerCommand("kernl.openSettings", () => controller.openSettings()),
+    vscode.commands.registerCommand("kernl.help", () => controller.showHelp()),
     vscode.commands.registerCommand("kernl.showSources", () => controller.showSources()),
     vscode.commands.registerCommand("kernl.showConnections", () => controller.showConnections()),
     vscode.commands.registerCommand("kernl.open", () => controller.open()),

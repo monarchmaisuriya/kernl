@@ -168,6 +168,11 @@
         "command": "kernl.quickMenu",
         "title": "Menu",
         "category": "kernl"
+      },
+      {
+        "command": "kernl.help",
+        "title": "Help",
+        "category": "kernl"
       }
     ],
     "configuration": [
@@ -708,6 +713,10 @@
         {
           "command": "kernl.openSettings",
           "group": "3_settings@1"
+        },
+        {
+          "command": "kernl.help",
+          "group": "3_settings@2"
         }
       ]
     },

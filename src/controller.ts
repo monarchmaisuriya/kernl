@@ -1442,6 +1442,12 @@ export class Controller implements vscode.Disposable {
         return this.newTab();
       case "closeTab":
         return this.closeTab(m.workspace);
+      case "newChat":
+        return this.newChat(m.workspace);
+      case "showConversations":
+        return this.showSessions();
+      case "showHelp":
+        return this.showHelp();
       case "editQueued":
         return this.workspace(m.workspace)?.editingQueue(m.id, m.editing);
       case "updateQueued":
@@ -1643,9 +1649,12 @@ export class Controller implements vscode.Disposable {
     this.inputsChanged({ kind: "keys", harnesses: ["deepagents", ...Object.keys(CREDENTIAL_ENV)] });
   }
 
-  /** New chat (title bar): clears the workspace the panel shows. */
-  newChat() {
-    this.workspace(this.active)?.newThread();
+  /** New chat (title bar, kernl menu, /new): a new conversation in that workspace or tab, asking first while its agent works. */
+  async newChat(id = this.active) {
+    const ws = this.workspace(id);
+    if (!ws) return;
+    if (ws.running && !(await this.prompts.confirm("Stop the agent and start a new chat?", "This conversation stays in Conversations.", "Stop and start new"))) return;
+    ws.newThread();
     this.prepareShown();
   }
 
@@ -1656,6 +1665,16 @@ export class Controller implements vscode.Disposable {
   private prepareShown() {
     const ws = this.workspace(this.active);
     if (ws && this.panel.visible) void ws.prepareAgent();
+  }
+
+  /** /help, kernl: Help, the kernl menu: kernl's help page (shipped with the extension) in VS Code's Markdown preview. */
+  async showHelp() {
+    const page = vscode.Uri.joinPath(this.context.extensionUri, "docs", "guides", "help.md");
+    try {
+      await vscode.commands.executeCommand("markdown.showPreview", page);
+    } catch (err) {
+      void vscode.window.showErrorMessage(`kernl couldn't open its help in VS Code's Markdown preview (${err instanceof Error ? err.message : String(err)}). The page is ${page.fsPath}.`);
+    }
   }
 
   async openSettings() {

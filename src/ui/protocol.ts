@@ -286,6 +286,12 @@ export type PanelToHost =
   /** The tab strip: a new tab for the shown workspace, or close a tab. */
   | { type: "newTab" }
   | { type: "closeTab"; workspace: string }
+  /** The /new command: a new chat in this workspace or tab (the host asks first while the agent works). */
+  | { type: "newChat"; workspace: string }
+  /** The /conversations command: open the Conversations view. */
+  | { type: "showConversations" }
+  /** The /help command: kernl's help page. */
+  | { type: "showHelp" }
   /** A queued message's editing started (it won't send meanwhile) or ended. */
   | { type: "editQueued"; workspace: string; id: string; editing: boolean }
   /** A queued message's edited text (empty removes it). */
@@ -325,7 +331,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab", "newChat", "showConversations", "showHelp"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

@@ -1,9 +1,9 @@
 // The composer's context. Files and folders are mentions inside the message text (`@src/app.ts`,
 // `@docs/`), drawn highlighted by a layer behind the textarea, so editing stays the browser's own;
 // conversations (threads), issues, and pull requests are chips above (they're content, not paths).
-// "@" searches workspace paths and conversations, "/" names a skill, and the file open in the editor
+// "@" searches workspace paths and conversations, "/" lists commands and skills, and the file open in the editor
 // is offered as a suggestion. Everything is built with createElement/textContent; the host checks every path.
-import type { Attachment, PanelToHost, SkillView } from "../ui/protocol";
+import type { Attachment, PanelToHost } from "../ui/protocol";
 import { droppedFiles, isPanelDrop, linkUris, vscodeUris } from "./dropData";
 import { icon } from "./icons";
 
@@ -15,9 +15,11 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
 }
 
 type Suggestion = { label: string; detail?: string; choose: () => void };
+/** A "/" menu row: `run` runs it when chosen (a kernl command); otherwise its label goes into the text (a skill or an agent's command). */
+export type SlashRow = { label: string; detail?: string; run?: () => void };
 
 const AT_QUERY = /(^|\s)@([^\s@]*)$/;
-const SLASH_QUERY = /^\/([\w-]*)$/;
+const SLASH_QUERY = /^\/([\w:-]*)$/;
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** How a file or folder appears in the text: `@path`, `@folder/`, or `@"path with spaces"`. */
@@ -78,7 +80,7 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   const known = new Map<string, Attachment>();
   /** Chips: text (pasted, dropped, an issue) and threads. */
   let texts: Attachment[] = [];
-  let skills: SkillView[] = [];
+  let slashRows: (query: string) => SlashRow[] = () => [];
   let suggestions: Suggestion[] = [];
   let selected = 0;
   let lastQuery: string | undefined;
@@ -198,7 +200,7 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   }
 
   /** Called on every input event: opens, updates, or closes the popover, and redraws mentions. */
-  function onInput(skillsApply: boolean) {
+  function onInput() {
     refresh();
     const beforeCaret = input.value.slice(0, input.selectionStart ?? input.value.length);
     const at = AT_QUERY.exec(beforeCaret);
@@ -209,10 +211,10 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
       searchTimer = setTimeout(() => send({ type: "searchFiles", query }), 120);
       return;
     }
-    const slash = skillsApply ? SLASH_QUERY.exec(beforeCaret) : null;
+    const slash = SLASH_QUERY.exec(beforeCaret);
     if (slash) {
-      const matching = skills.filter((s) => s.name.startsWith(slash[1]));
-      return show(matching.map((s) => ({ label: `/${s.name}`, detail: s.description, choose: () => (replaceTrigger(SLASH_QUERY, `/${s.name} `), close(), refresh(), changed()) })));
+      const choose = (r: SlashRow) => () => (replaceTrigger(SLASH_QUERY, r.run ? "" : `${r.label} `), close(), refresh(), changed(), r.run?.());
+      return show(slashRows(slash[1]).map((r) => ({ label: r.label, detail: r.detail, choose: choose(r) })));
     }
     close();
   }
@@ -305,7 +307,8 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
     onKeydown,
     onFileMatches,
     onDrop,
-    setSkills: (next: SkillView[]) => (skills = next),
+    /** The "/" menu's rows for the text after "/". */
+    setSlashRows: (rows: (query: string) => SlashRow[]) => (slashRows = rows),
     /** The workspace file open in the editor (offered as a suggestion), or undefined. */
     setActiveFile(path: string | undefined) {
       activeFile = path;

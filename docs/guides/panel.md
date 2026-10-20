@@ -13,7 +13,7 @@
 **The kernl menu:**
 - Open kernl, Ask kernl…, and Ask kernl about this file or selection (attaches the file, or the selected lines, to the message box);
 - New chat, New workspace, Conversations;
-- Choose agent, Agent logins, Show connections, settings.
+- Choose agent, Agent logins, Show connections, settings, and kernl help.
 
 **`kernl.replaceChatButton`** hides VS Code's chat button in the Command Center so kernl's takes its role. It does this by setting VS Code's `chat.agentsControl.enabled` to `hidden` in your user settings; turning the option off puts back what was there, unless you've changed it yourself since.
 
@@ -42,7 +42,7 @@
   - `@` autocompletes workspace paths; picked files and folders appear as highlighted `@path` mentions in your message (Backspace removes a whole mention);
   - `@` also finds conversations, from every workspace of the window and every agent (shown with the agent, workspace, and when it was last active), and the CLI agents' own sessions there that kernl hasn't opened ("Claude Code session"). A picked one shows as a chip. On Send, the agent gets that conversation as text, read at that moment (an agent's own session is read through the agent): a numbered outline of every turn, its first request, and its newest turns, up to 20,000 characters. The agent can read any other turn with its `read_thread` tool, by number or by words; it reads only conversations tagged in its own conversation. Any agent and model provider can read it, since every conversation is kept in one format;
   - the file open in the editor is offered as a dashed "+ file" suggestion;
-  - `/` lists skills (kernl agent);
+  - `/` lists kernl's commands, then kernl's skills or the CLI agent's own commands (see Slash commands below);
   - right-click files or folders in the Explorer and pick **Add to kernl chat** (several at once with a multi-selection); a file from another folder of the window names that folder: switch to it with the workspace chip;
   - drag files onto the panel while holding **Shift** (VS Code blocks plain drags into extension panels; the composer shows "Drop to attach"). From VS Code's own Explorer this is broken in VS Code 1.140 and later (see known issues); from Finder it works, and text files are attached by their content (up to 20,000 characters). Anything that can't be attached says why;
   - the model and thinking chips: for kernl, the provider's model and how much it thinks ([providers](providers.md#choosing-a-model)); for a CLI agent, its own model, thinking level, and fast mode ([CLI agents](cli-agents.md#model-thinking-and-fast-mode));
@@ -75,7 +75,15 @@
   - Click a row for its arguments and output.
 - **Plan:** the agent's plan (or kernl's to-do list) is pinned above the input. It shows "Current: …" and how far along it is; click it for every step.
 - **Context:** agents that report it get a ring in the footer showing how full the context window is. It turns yellow from 75%, orange from 90%, and red from 95%; hover for the numbers and cost.
-- **Slash commands:** "/" offers kernl's skills to its own agent, and a CLI agent's own commands to that agent.
+- **Slash commands:** "/" lists kernl's own commands first, then kernl's skills (for its own agent) or the CLI agent's own commands. kernl's commands run at once, even while the agent works, and are never sent to the agent:
+  - `/new` (or `/clear`): a new chat in this tab. While the agent works, kernl asks first, as the title bar's New chat does.
+  - `/tab`, `/close`: open a tab, close this one (not the first).
+  - `/conversations` (or `/resume`): the Conversations view.
+  - `/agent`, `/model`, `/mode`: what the agent, model, and mode chips open.
+  - `/connections`, `/settings`.
+  - `/help`: [kernl help](help.md), a tour of everything with examples, in VS Code's Markdown preview. Also **kernl help** in the kernl menu and **kernl: Help** in the Command Palette.
+
+  When the agent offers a command of the same name, `/<name>` goes to the agent, and kernl's is `/kernl:<name>` (the menu shows it that way). kernl's commands take nothing after them: `/new fix it` isn't sent, and a note says why.
 - **Approvals:** Approve allows once. An agent's own "always" option shows in its words when it offers one, and is never the default. Shortcuts: ⌘/Ctrl+Y allows once, ⌘/Ctrl+⌥/Alt+Y allows always, ⌘/Ctrl+⌥/Alt+Z rejects. They don't fire while you're typing a message.
 - **Accessibility:** screen readers hear "Reply finished" with the reply, approvals, and errors, not every streamed word; each turn has a heading. Animations stop with Reduce Motion, and high-contrast themes get borders.
 - **Replies:** agent replies render as Markdown (code blocks with Copy, lists, tables, links). Only `http(s)` links are clickable and they open in your browser; images are never loaded; raw HTML in a reply shows as text. Your own messages, tool output, and approval cards stay plain text.

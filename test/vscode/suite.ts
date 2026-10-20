@@ -1601,6 +1601,44 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     assert.ok(rows.some((r: any) => r.title === "tab two work"), "its conversation is kept");
   });
 
+  await check("slash commands: /new asks first while the agent works (declining keeps the run, confirming starts an empty conversation); /conversations opens the Conversations view", async () => {
+    await vscode.commands.executeCommand("kernl.newChat");
+    let from = delivered.length;
+    const run = testing.receive({ type: "send", workspace: "main", text: "slash new while working" });
+    await waitFor("main's card", (m) => m.type === "approval" && m.card.workspaceId === "main", from);
+    scripted = { ...scripted, confirm: false };
+    await testing.receive({ type: "newChat", workspace: "main" });
+    scripted = { ...scripted, confirm: true };
+    assert.ok(!delivered.slice(from).some((m) => m.type === "cleared" && m.workspace === "main"), "declining keeps the conversation");
+    assert.equal(lastWorkspaces(from).items.find((w: any) => w.id === "main").running, true, "and the run");
+    from = delivered.length;
+    await testing.receive({ type: "newChat", workspace: "main" });
+    await waitFor("an empty conversation", (m) => m.type === "cleared" && m.workspace === "main", from);
+    await run;
+    from = delivered.length;
+    await testing.receive({ type: "showConversations" });
+    const rows = (await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from)).rows;
+    assert.ok(rows.some((r: any) => r.title === "slash new while working"), "the stopped conversation is kept");
+  });
+
+  await check("help: /help and kernl: Help open kernl's help page (shipped in docs/guides) in VS Code's Markdown preview", async () => {
+    const previews = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.label === "Preview help.md");
+    const waitUntil = async (what: string, ok: () => boolean) => {
+      const deadline = Date.now() + 10_000;
+      while (!ok()) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}; tabs: ${vscode.window.tabGroups.all.flatMap((g) => g.tabs).map((t) => t.label).join(", ")}`);
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    };
+    await vscode.window.tabGroups.close(previews());
+    await testing.receive({ type: "showHelp" });
+    await waitUntil("the help preview", () => previews().length === 1);
+    await vscode.window.tabGroups.close(previews());
+    await vscode.commands.executeCommand("kernl.help");
+    await waitUntil("the help preview from the command", () => previews().length === 1);
+    await vscode.window.tabGroups.close(previews());
+  });
+
   await check("tabs: at kernl.tabs.max the tab shown longest ago that's idle closes for a new one; with every tab busy nothing closes and kernl says why", async () => {
     await config.update("tabs.max", 2, vscode.ConfigurationTarget.Global);
     try {
