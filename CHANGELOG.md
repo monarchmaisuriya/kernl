@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-10-20
+
 ### Changed
 
 - The panel's title bar icons (New chat, New workspace, Conversations) are slightly smaller, and kernl's other actions (Choose agent, Manage providers, Agent logins, settings, connections, sources) moved from VS Code's `...` into a menu button with a three-line icon.
@@ -253,7 +255,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.5...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.6...HEAD
+[0.10.6]: https://github.com/pushowl/kernl/compare/v0.10.5...v0.10.6
 [0.10.5]: https://github.com/pushowl/kernl/compare/v0.10.4...v0.10.5
 [0.10.4]: https://github.com/pushowl/kernl/compare/v0.10.3...v0.10.4
 [0.10.3]: https://github.com/pushowl/kernl/compare/v0.10.2...v0.10.3
