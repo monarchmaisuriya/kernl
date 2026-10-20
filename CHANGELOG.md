@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-20
+
 ### Fixed
 
 - Tab on one of kernl's commands in the `/` menu puts its name in the box instead of running it; Enter or a click runs it.
@@ -161,7 +163,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/pushowl/kernl/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/pushowl/kernl/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/pushowl/kernl/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/pushowl/kernl/compare/v0.4.0...v0.5.0
