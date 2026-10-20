@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Fixed
+
+- The integration suite's panel check no longer fails when the panel loaded before the check started, and the suite's timeline now shows when the panel loads (test-only; kernl behaves the same).
+
 ## [0.10.4] - 2026-10-20
 
 ### Changed
