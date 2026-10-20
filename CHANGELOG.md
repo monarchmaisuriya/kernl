@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-20
+
 ### Added
 
 - kernl's own slash commands for every agent: `/new` (`/clear`), `/tab`, `/close`, `/conversations` (`/resume`), `/agent`, `/model`, `/mode`, `/connections`, `/settings`, `/help`. They run the panel action at once instead of sending. A command the agent offers keeps going to the agent; kernl's is then `/kernl:<name>`. See [the panel](docs/guides/panel.md).
@@ -154,7 +156,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/pushowl/kernl/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/pushowl/kernl/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/pushowl/kernl/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/pushowl/kernl/compare/v0.3.0...v0.4.0
