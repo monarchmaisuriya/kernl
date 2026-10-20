@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-20
+
 ### Changed
 
 - Tabs lead with their state (spinner, waiting dot, finished dot), so it stays in view in a narrow panel, and pills shrink (the full title is in the tooltip) before the strip scrolls, so every tab is visible.
@@ -217,7 +219,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/pushowl/kernl/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/pushowl/kernl/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/pushowl/kernl/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/pushowl/kernl/compare/v0.8.1...v0.9.0
