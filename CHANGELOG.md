@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-20
+
 ### Changed
 
 - The panel's rows line up on the left: the tab title, the message box's text and `+`, the plan bar, and the footer chips start on one line, and the boxes (tabs, message box, plan bar) on another.
@@ -201,7 +203,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/pushowl/kernl/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/pushowl/kernl/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/pushowl/kernl/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/pushowl/kernl/compare/v0.7.1...v0.8.0
