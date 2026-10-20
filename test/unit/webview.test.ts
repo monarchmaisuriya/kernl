@@ -715,23 +715,61 @@ test("send options: no separate arrow; resting the pointer on Send opens its men
   assert.deepEqual(options.map((o) => (o as HTMLButtonElement).disabled), [false, false, true]);
 });
 
-test("tabs: the strip shows the shown workspace's tabs by conversation, with their states; + opens one, × closes one, a click switches; the chip keeps the workspace's name", () => {
+test("tabs: pills named by conversation with a state slot (working, waiting, finished while away); + opens one, × closes one, a click switches; the chip keeps the workspace's name", () => {
   const p = loadPanel();
   const tab2 = { ...MAIN, id: "main~2", label: "Main · tab 2", tabOf: "main", title: "Fix the login loop", running: true };
   const tab3 = { ...MAIN, id: "main~3", label: "Main · tab 3", tabOf: "main", waiting: 1 };
-  p.host(workspaces([{ ...MAIN, title: "Refactor" }, tab3, tab2, WT], "main~2"));
-  const tabs = p.all(".tab");
-  assert.deepEqual(tabs.map((t) => t.querySelector(".tab-title")!.textContent), ["Refactor", "Fix the login loop", "New chat"], "the workspace first, then by number; not another workspace's");
-  assert.deepEqual(tabs.map((t) => t.classList.contains("active")), [false, true, false]);
-  assert.deepEqual(tabs.map((t) => t.querySelector(".dot")?.className ?? ""), ["", "dot running", "dot waiting"]);
-  assert.equal(tabs[0].querySelector(".tab-close"), null, "the first tab can't be closed");
+  p.host(workspaces([{ ...MAIN, title: "Refactor", running: true }, tab3, tab2, WT], "main~2"));
+  const tabs = () => p.all(".tab");
+  assert.deepEqual(tabs().map((t) => t.querySelector(".tab-title")!.textContent), ["Refactor", "Fix the login loop", "New chat"], "the workspace first, then by number; not another workspace's");
+  assert.deepEqual(tabs().map((t) => t.classList.contains("active")), [false, true, false]);
+  assert.deepEqual(tabs().map((t) => t.querySelector(".tab-state")?.className ?? ""), ["tab-state working", "tab-state working", "tab-state waiting"]);
+  assert.equal(tabs()[1].querySelector(".tab-button")!.getAttribute("aria-label"), "Fix the login loop, working");
+  assert.equal(tabs()[0].querySelector(".tab-close"), null, "the first tab can't be closed");
   assert.equal(p.doc.querySelector(".workspace .chip-text")!.textContent, "Main", "the chip names the workspace");
+
+  // The first tab finishes while another is shown: it keeps a dot until it's shown.
+  p.host(workspaces([{ ...MAIN, title: "Refactor", running: false }, tab3, tab2, WT], "main~2"));
+  assert.equal(tabs()[0].querySelector(".tab-state")?.className, "tab-state finished");
+  assert.equal(tabs()[0].querySelector(".tab-button")!.getAttribute("aria-label"), "Refactor, finished");
+  tabs()[0].querySelector<HTMLButtonElement>(".tab-button")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "focus", workspace: "main" });
+  assert.equal(tabs()[0].querySelector(".tab-state"), null, "shown: the dot goes");
+
   p.button("New tab")!.click();
   assert.deepEqual(p.sent.at(-1), { type: "newTab" });
   p.button("Close tab Fix the login loop")!.click();
   assert.deepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main~2" });
-  tabs[2].querySelector<HTMLButtonElement>(".tab-button")!.click();
+});
+
+test("tabs: one Tab stop (the shown tab); arrows, Home, and End show another; Delete closes; middle-click closes; double-click on empty space opens a tab", () => {
+  const p = loadPanel();
+  const tab2 = { ...MAIN, id: "main~2", label: "Main · tab 2", tabOf: "main", title: "Second" };
+  const tab3 = { ...MAIN, id: "main~3", label: "Main · tab 3", tabOf: "main", title: "Third" };
+  p.host(workspaces([{ ...MAIN, title: "First" }, tab2, tab3], "main"));
+  const buttons = () => p.all(".tab-button");
+  assert.deepEqual(buttons().map((b) => b.tabIndex), [0, -1, -1], "only the shown tab is in the Tab order");
+  assert.ok(p.all(".tab-close").every((x) => (x as HTMLButtonElement).tabIndex === -1), "× isn't a Tab stop (Delete closes)");
+  const press = (k: string) => (p.doc.activeElement as HTMLElement).dispatchEvent(new p.window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  buttons()[0].focus();
+  press("ArrowRight");
+  assert.deepEqual(p.sent.at(-1), { type: "focus", workspace: "main~2" });
+  assert.equal(p.doc.activeElement, buttons()[1], "focus follows");
+  assert.deepEqual(buttons().map((b) => b.tabIndex), [-1, 0, -1]);
+  press("End");
   assert.deepEqual(p.sent.at(-1), { type: "focus", workspace: "main~3" });
+  press("ArrowRight");
+  assert.deepEqual(p.sent.at(-1), { type: "focus", workspace: "main" }, "wraps around");
+  press("Delete");
+  assert.notDeepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main" }, "the first tab doesn't close");
+  press("Home");
+  press("ArrowLeft");
+  press("Delete");
+  assert.deepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main~3" });
+  p.all(".tab")[1].dispatchEvent(new p.window.MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }));
+  assert.deepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main~2" }, "middle-click closes");
+  p.doc.querySelector(".tabs")!.dispatchEvent(new p.window.MouseEvent("dblclick", { bubbles: true }));
+  assert.deepEqual(p.sent.at(-1), { type: "newTab" }, "double-click on empty space opens a tab");
 });
 
 test("a queued message is edited in place: clicking it opens an editor (it won't send meanwhile); Enter saves, Escape cancels", () => {

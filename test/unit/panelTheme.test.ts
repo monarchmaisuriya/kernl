@@ -38,6 +38,6 @@ test("every row's first text or icon sits on one content line: each left offset 
   };
   assert.match(css, /--content-inset: 10px;/);
   for (const selector of [".tab-button", ".composer", ".footer", ".plan-bar > summary", ".banner"]) assert.match(rule(selector), /var\(--content-inset\)/, `${selector} uses the content line`);
-  assert.match(rule(".tabs"), /padding: 4px 8px 0 0;/, "the first tab starts at the edge line");
+  assert.match(rule(".tab-bar"), /padding: \S+ \S+ \S+ 0;/, "the first tab starts at the edge line (no left padding)");
   assert.match(rule(".composer .attach"), /margin-left: -4px;/, "the + sits on the line with the text");
 });
