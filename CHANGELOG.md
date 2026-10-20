@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Fixed
+
+- A short tab title (a lone "New chat") is centered in its pill, so the space on its two sides matches instead of 10 px before and 25 px after.
+
 ## [0.10.2] - 2026-10-20
 
 ### Changed

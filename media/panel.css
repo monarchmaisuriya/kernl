@@ -423,7 +423,8 @@ body.vscode-reduce-motion .tool > summary > .icon:last-child, body.vscode-reduce
 .tab { display: inline-flex; align-items: center; min-width: 88px; max-width: 200px; flex: 0 1 auto; height: 24px; border-radius: var(--radius-sm); color: var(--muted); }
 .tab:hover { background: var(--hover); color: var(--fg); }
 .tab.active { background: var(--surface); color: var(--fg); box-shadow: inset 0 0 0 1px var(--input-border); }
-.tab-button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; height: 100%; padding: 0 var(--content-inset); border: none; border-radius: var(--radius-sm); background: transparent; color: inherit; }
+/* A short title in a pill held at its minimum width is centered, so the space on its two sides matches. */
+.tab-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; flex: 1 1 auto; height: 100%; padding: 0 var(--content-inset); border: none; border-radius: var(--radius-sm); background: transparent; color: inherit; }
 .tab-button:hover:not(:disabled) { background: transparent; }
 .tab-button:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
 .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92em; }

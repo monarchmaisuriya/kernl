@@ -40,4 +40,5 @@ test("every row's first text or icon sits on one content line: each left offset 
   for (const selector of [".tab-button", ".composer", ".footer", ".plan-bar > summary", ".banner"]) assert.match(rule(selector), /var\(--content-inset\)/, `${selector} uses the content line`);
   assert.match(rule(".tab-bar"), /padding: \S+ \S+ \S+ 0;/, "the first tab starts at the edge line (no left padding)");
   assert.match(rule(".composer .attach"), /margin-left: -4px;/, "the + sits on the line with the text");
+  assert.match(rule(".tab-button"), /justify-content: center;/, "a short title held at the pill's minimum width is centered, not left with a gap after it");
 });
