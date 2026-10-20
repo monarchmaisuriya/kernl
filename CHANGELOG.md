@@ -4,6 +4,11 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Fixed
+
+- Tab on one of kernl's commands in the `/` menu puts its name in the box instead of running it; Enter or a click runs it.
+- Conversations: **New conversation** while the agent works asks first, like New chat; picking another conversation then says to stop the agent first instead of doing nothing.
+
 ## [0.7.0] - 2026-10-20
 
 ### Added

@@ -14,8 +14,9 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
-type Suggestion = { label: string; detail?: string; choose: () => void };
-/** A "/" menu row: `run` runs it when chosen (a kernl command); otherwise its label goes into the text (a skill or an agent's command). */
+/** `complete`: what Tab does when it differs from choosing (a kernl command's name goes into the text instead of running). */
+type Suggestion = { label: string; detail?: string; choose: () => void; complete?: () => void };
+/** A "/" menu row: `run` runs it when chosen with Enter or a click (a kernl command); otherwise, and on Tab, its label goes into the text. */
 export type SlashRow = { label: string; detail?: string; run?: () => void };
 
 const AT_QUERY = /(^|\s)@([^\s@]*)$/;
@@ -213,8 +214,9 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
     }
     const slash = SLASH_QUERY.exec(beforeCaret);
     if (slash) {
-      const choose = (r: SlashRow) => () => (replaceTrigger(SLASH_QUERY, r.run ? "" : `${r.label} `), close(), refresh(), changed(), r.run?.());
-      return show(slashRows(slash[1]).map((r) => ({ label: r.label, detail: r.detail, choose: choose(r) })));
+      const insert = (r: SlashRow) => () => (replaceTrigger(SLASH_QUERY, `${r.label} `), close(), refresh(), changed());
+      const choose = (r: SlashRow) => (r.run ? () => (replaceTrigger(SLASH_QUERY, ""), close(), refresh(), changed(), r.run!()) : insert(r));
+      return show(slashRows(slash[1]).map((r) => ({ label: r.label, detail: r.detail, choose: choose(r), complete: insert(r) })));
     }
     close();
   }
@@ -260,7 +262,8 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   function onKeydown(e: KeyboardEvent): boolean {
     if (popover.hidden) return deleteMention(e);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") return e.preventDefault(), move(e.key === "ArrowDown" ? 1 : -1), true;
-    if (e.key === "Enter" || e.key === "Tab") return e.preventDefault(), suggestions[selected]?.choose(), true;
+    if (e.key === "Enter") return e.preventDefault(), suggestions[selected]?.choose(), true;
+    if (e.key === "Tab") return e.preventDefault(), (suggestions[selected]?.complete ?? suggestions[selected]?.choose)?.(), true;
     if (e.key === "Escape") return e.preventDefault(), close(), true;
     return false;
   }

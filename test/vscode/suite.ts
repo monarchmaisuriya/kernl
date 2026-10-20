@@ -1601,14 +1601,17 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     assert.ok(rows.some((r: any) => r.title === "tab two work"), "its conversation is kept");
   });
 
-  await check("slash commands: /new asks first while the agent works (declining keeps the run, confirming starts an empty conversation); /conversations opens the Conversations view", async () => {
+  await check("slash commands: /new and Conversations' New conversation ask first while the agent works (declining keeps the run, confirming starts an empty conversation); opening another conversation then says to stop first; /conversations opens the Conversations view", async () => {
     await vscode.commands.executeCommand("kernl.newChat");
     let from = delivered.length;
     const run = testing.receive({ type: "send", workspace: "main", text: "slash new while working" });
     await waitFor("main's card", (m) => m.type === "approval" && m.card.workspaceId === "main", from);
     scripted = { ...scripted, confirm: false };
     await testing.receive({ type: "newChat", workspace: "main" });
+    await testing.receive({ type: "openConversation", workspace: "main", pick: { kind: "new" } });
     scripted = { ...scripted, confirm: true };
+    await testing.receive({ type: "openConversation", workspace: "main", pick: { kind: "kernl", id: "another" } });
+    await waitFor("why another conversation doesn't open", (m) => m.type === "notice" && m.workspace === "main" && /Stop the agent to open another conversation/.test(m.text), from);
     assert.ok(!delivered.slice(from).some((m) => m.type === "cleared" && m.workspace === "main"), "declining keeps the conversation");
     assert.equal(lastWorkspaces(from).items.find((w: any) => w.id === "main").running, true, "and the run");
     from = delivered.length;

@@ -532,6 +532,15 @@ test("/ lists kernl's own commands for every agent; choosing or typing one runs 
   assert.deepEqual(p.sent.at(-1), { type: "newChat", workspace: "main" });
   assert.equal(input.value, "");
 
+  // Tab only completes a kernl command's name; Enter then runs it.
+  input = type(p, "/ta");
+  key(p, "Tab");
+  assert.equal(input.value, "/tab ");
+  assert.ok(!p.sent.some((m) => m.type === "newTab"), "Tab doesn't run it");
+  key(p, "Enter");
+  assert.deepEqual(p.sent.at(-1), { type: "newTab" });
+  assert.equal(input.value, "");
+
   type(p, "/mode");
   key(p, "Enter");
   assert.equal(p.doc.querySelector<HTMLElement>(".mode-menu")!.hidden, false, "/mode opens the mode chip's menu");

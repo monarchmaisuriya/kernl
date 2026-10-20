@@ -75,15 +75,7 @@
   - Click a row for its arguments and output.
 - **Plan:** the agent's plan (or kernl's to-do list) is pinned above the input. It shows "Current: …" and how far along it is; click it for every step.
 - **Context:** agents that report it get a ring in the footer showing how full the context window is. It turns yellow from 75%, orange from 90%, and red from 95%; hover for the numbers and cost.
-- **Slash commands:** "/" lists kernl's own commands first, then kernl's skills (for its own agent) or the CLI agent's own commands. kernl's commands run at once, even while the agent works, and are never sent to the agent:
-  - `/new` (or `/clear`): a new chat in this tab. While the agent works, kernl asks first, as the title bar's New chat does.
-  - `/tab`, `/close`: open a tab, close this one (not the first).
-  - `/conversations` (or `/resume`): the Conversations view.
-  - `/agent`, `/model`, `/mode`: what the agent, model, and mode chips open.
-  - `/connections`, `/settings`.
-  - `/help`: [kernl help](help.md), a tour of everything with examples, in VS Code's Markdown preview. Also **kernl help** in the kernl menu and **kernl: Help** in the Command Palette.
-
-  When the agent offers a command of the same name, `/<name>` goes to the agent, and kernl's is `/kernl:<name>` (the menu shows it that way). kernl's commands take nothing after them: `/new fix it` isn't sent, and a note says why.
+- **Slash commands:** "/" lists kernl's own commands first, then kernl's skills (for its own agent) or the CLI agent's own commands. kernl's commands run at once, even while the agent works, and are never sent to the agent. Enter or a click runs one; Tab puts its name in the box. The list, and what happens when the agent has a command of the same name, are in [kernl help](help.md#kernls-commands). `/help` opens that page in VS Code's Markdown preview (also **kernl help** in the kernl menu and **kernl: Help** in the Command Palette).
 - **Approvals:** Approve allows once. An agent's own "always" option shows in its words when it offers one, and is never the default. Shortcuts: ⌘/Ctrl+Y allows once, ⌘/Ctrl+⌥/Alt+Y allows always, ⌘/Ctrl+⌥/Alt+Z rejects. They don't fire while you're typing a message.
 - **Accessibility:** screen readers hear "Reply finished" with the reply, approvals, and errors, not every streamed word; each turn has a heading. Animations stop with Reduce Motion, and high-contrast themes get borders.
 - **Replies:** agent replies render as Markdown (code blocks with Copy, lists, tables, links). Only `http(s)` links are clickable and they open in your browser; images are never loaded; raw HTML in a reply shows as text. Your own messages, tool output, and approval cards stay plain text.

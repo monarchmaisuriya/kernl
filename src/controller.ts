@@ -1044,8 +1044,10 @@ export class Controller implements vscode.Disposable {
   /** A row picked in the Conversations view: a new conversation, one kernl kept, or a CLI agent's session not opened in kernl yet. */
   private async openConversation(workspace: string, pick: ConversationPick) {
     const ws = this.workspace(workspace);
-    if (!ws || ws.running) return;
-    if (pick.kind === "new") return void ws.newThread();
+    if (!ws) return;
+    if (pick.kind === "new") return this.newChat(ws.id);
+    // The runtime switches conversations only between runs: say so rather than ignore the pick.
+    if (ws.running) return void this.panel.post({ type: "notice", workspace: ws.id, text: "Stop the agent to open another conversation: kernl doesn't switch conversations while it's working." });
     if (pick.kind === "agent") {
       // Only a session the agent listed for this folder: the panel's rows carry nothing else.
       const agent = CLI_AGENT_IDS.find((a) => a === pick.agent);

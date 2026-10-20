@@ -51,6 +51,7 @@ Type `/` to list them. They run at once, even while the agent works, and are nev
 - The same `/` menu lists the agent's own commands (Claude Code's `/compact`, for example) or, for kernl's agent, your skills.
 - When the agent has a command of the same name, `/<name>` goes to the agent and kernl's is `/kernl:<name>`.
 - kernl's commands take nothing after them: `/new fix it` isn't sent, and a note says why.
+- Enter or a click runs the highlighted command; Tab only puts its name in the box.
 
 More: [the panel](panel.md#in-the-panel).
 

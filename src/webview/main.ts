@@ -627,6 +627,10 @@ function runCommand(name: PanelCommandName) {
       return send({ type: "openSettings" });
     case "help":
       return send({ type: "showHelp" });
+    default: {
+      const unhandled: never = name;
+      throw new Error(`kernl's /${unhandled} command has no action`);
+    }
   }
 }
 
