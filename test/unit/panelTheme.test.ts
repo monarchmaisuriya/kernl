@@ -45,3 +45,17 @@ test("every row's first text or icon sits on one content line: each left offset 
   assert.match(rule(".composer .attach"), /margin-left: -4px;/, "the + sits on the line with the text");
   assert.doesNotMatch(rule(".tab-button"), /justify-content: center/, "a cell's title starts on the content line (not centered)");
 });
+
+test("the composer's buttons and the footer's are spaced alike: one gap, chevrons that don't widen it, and a + that keeps its size", () => {
+  const rule = (selector: string) => {
+    const at = css.indexOf(`\n${selector} {`);
+    assert.ok(at >= 0, `${selector} exists`);
+    return css.slice(at, css.indexOf("}", at));
+  };
+  const gap = (selector: string) => /gap: (\d+px);/.exec(rule(selector))?.[1];
+  assert.equal(gap(".toolbar"), "8px");
+  assert.equal(gap(".footer"), gap(".toolbar"), "both rows use the same gap");
+  assert.match(rule(".chip > .icon:last-child:not(:first-child)"), /margin-right: -4px;/, "a trailing chevron's empty side hangs into the chip's padding");
+  assert.match(rule(".attach"), /flex: none;/, "+ doesn't shrink below its icon in a narrow panel");
+  assert.match(rule(".usage:empty"), /display: none;/, "an empty usage counter takes no gap");
+});

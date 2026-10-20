@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- The buttons under the message box and in the footer are spaced evenly (the same visible space between each), and the message box's placeholder text is a little grayer.
+
 ## [0.10.6] - 2026-10-20
 
 ### Changed
