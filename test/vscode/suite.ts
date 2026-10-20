@@ -45,6 +45,8 @@ const results: string[] = [];
 const timeline: string[] = [];
 const started = Date.now();
 const at = () => String(Date.now() - started).padStart(7);
+/** Every message that reached the panel, from activation: a check finds the panel's handshake whenever it loaded. */
+const delivered: any[] = [];
 async function check(name: string, fn: () => Promise<void>) {
   const from = timeline.length;
   timeline.push(`${at()} --- check: ${name.slice(0, 80)}`);
@@ -203,6 +205,15 @@ export async function run() {
     const t = (await ext.activate()).testing;
     t.onPanelFocus((inPanel: boolean) => timeline.push(`${at()} focus: kernl's panel ${inPanel ? "has" : "lost"} keyboard focus`));
     t.onReveal((caller: string) => timeline.push(`${at()} focus: kernl reveals its panel (focus) from ${caller}`));
+    // When the panel's webview loads: a check waiting for its first "ready" fails if that happened before it listened.
+    timeline.push(`${at()} panel webview: ${t.panelState()} (when the timeline started)`);
+    t.onPanelLifecycle((step: string) => timeline.push(`${at()} panel webview: ${step}`));
+    t.onDidDeliver((m: any) => {
+      delivered.push(m);
+      const main = m.type === "workspaces" ? m.items.find((w: any) => w.id === "main") : undefined;
+      const detail = m.type === "userMessage" ? ` "${m.text}"` : m.type === "finished" ? ` ${m.reason}` : m.type === "approval" ? ` ${m.card.title}` : m.type === "notice" ? ` ${m.text}` : main ? ` main: running=${main.running} queue=${JSON.stringify(main.queue.map((q: any) => q.text))}` : "";
+      if (m.type !== "text" && m.type !== "thinking") timeline.push(`${at()} panel <- ${m.type}${m.workspace ? `(${m.workspace})` : ""}${detail}`);
+    });
     vscode.window.onDidChangeActiveTextEditor((e) => timeline.push(`${at()} focus: active editor -> ${e ? e.document.uri.path.split("/").pop() : "none"}`));
     vscode.window.onDidChangeWindowState((s) => timeline.push(`${at()} focus: window focused=${s.focused}`));
     vscode.window.onDidChangeActiveTerminal((term) => timeline.push(`${at()} focus: active terminal -> ${term?.name ?? "none"}`));
@@ -1044,13 +1055,6 @@ export async function run() {
  */
 async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: { command: string; args: string[]; env: Record<string, string> }) {
   const { testing } = await ext.activate();
-  const delivered: any[] = [];
-  testing.onDidDeliver((m: any) => {
-    delivered.push(m);
-    const main = m.type === "workspaces" ? m.items.find((w: any) => w.id === "main") : undefined;
-    const detail = m.type === "userMessage" ? ` "${m.text}"` : m.type === "finished" ? ` ${m.reason}` : m.type === "approval" ? ` ${m.card.title}` : m.type === "notice" ? ` ${m.text}` : main ? ` main: running=${main.running} queue=${JSON.stringify(main.queue.map((q: any) => q.text))}` : "";
-    if (m.type !== "text" && m.type !== "thinking") timeline.push(`${at()} panel <- ${m.type}${m.workspace ? `(${m.workspace})` : ""}${detail}`);
-  });
   // Every message the tests send as the panel, with the workspace's run state at that moment.
   const receive = testing.receive;
   testing.receive = (m: any) => {

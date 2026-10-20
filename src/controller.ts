@@ -1897,6 +1897,9 @@ export class Controller implements vscode.Disposable {
       /** kernl's panel gaining or losing keyboard focus, and each reveal (which takes focus) with its caller. */
       onPanelFocus: this.panelFocus.event,
       onReveal: this.panel.onDidReveal,
+      /** The panel's webview resolving, showing, hiding, saying ready, and going away; panelState() is where it is now. */
+      onPanelLifecycle: this.panel.onLifecycle,
+      panelState: () => this.panel.lifecycleState(),
       usePrompts: (p: Prompts) => (this.prompts = p),
       /** Back to the real prompts (in-panel menus), after usePrompts. */
       usePanelPrompts: () => (this.prompts = this.panelPrompts),

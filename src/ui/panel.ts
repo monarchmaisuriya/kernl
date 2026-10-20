@@ -19,6 +19,9 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   /** Each reveal (it takes keyboard focus), with where it was called from: the integration suite's timeline shows what moved focus. */
   private revealed = new vscode.EventEmitter<string>();
   readonly onDidReveal = this.revealed.event;
+  /** Each step of the webview's life (resolved, shown, hidden, ready, disposed): the integration suite's timeline shows when the panel loaded. */
+  private lifecycle = new vscode.EventEmitter<string>();
+  readonly onLifecycle = this.lifecycle.event;
 
   private view: vscode.WebviewView | undefined;
   private hidden = new vscode.EventEmitter<void>();
@@ -37,9 +40,18 @@ export class AgentPanel implements vscode.WebviewViewProvider {
     return !!this.view?.visible && this.channel.isReady;
   }
 
+  /** Where the webview is in its life right now, for a listener that subscribes late. */
+  lifecycleState(): string {
+    return this.view ? `resolved, ${this.view.visible ? "visible" : "hidden"}, ${this.channel.isReady ? "ready" : "not ready"}` : "not resolved";
+  }
+
   resolveWebviewView(view: vscode.WebviewView) {
     this.view = view;
-    view.onDidChangeVisibility(() => view.visible || this.hidden.fire());
+    this.lifecycle.fire(`resolved (${view.visible ? "visible" : "hidden"})`);
+    view.onDidChangeVisibility(() => {
+      this.lifecycle.fire(view.visible ? "shown" : "hidden");
+      if (!view.visible) this.hidden.fire();
+    });
     const webview = view.webview;
     this.channel.attach((m) => void webview.postMessage(m));
     // The panel's own files, plus tool images (only that folder of kernl's storage, not the conversations).
@@ -50,6 +62,7 @@ export class AgentPanel implements vscode.WebviewViewProvider {
       if (isPanelToHost(m)) this.onMessage(m);
     });
     view.onDidDispose(() => {
+      this.lifecycle.fire("disposed");
       this.channel.detach();
       this.view = undefined;
       this.hidden.fire();
@@ -64,6 +77,7 @@ export class AgentPanel implements vscode.WebviewViewProvider {
   /** Called when the webview reports it is ready; the caller then sends status and a snapshot. */
   markReady() {
     this.channel.markReady();
+    this.lifecycle.fire("ready");
   }
 
   async reveal() {
