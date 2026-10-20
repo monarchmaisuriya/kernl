@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-10-20
+
 ### Changed
 
 - Tabs with the same title are numbered in strip order ("New chat", "New chat 2"…), so empty tabs, or two that started with the same message, can be told apart.
@@ -228,7 +230,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/pushowl/kernl/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/pushowl/kernl/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/pushowl/kernl/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/pushowl/kernl/compare/v0.9.0...v0.9.1
