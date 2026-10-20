@@ -1489,11 +1489,14 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
   });
 
   await check("conversations: the view opens at once with kernl's conversations while a slow agent is still asked; its sessions fill in when it answers", async () => {
-    await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_LIST: "1", FAKE_LIST_DELAY: "4000" } } }), vscode.ConfigurationTarget.Global);
+    const listLog = join(mkdtempSync(join(tmpdir(), "kernl-list-")), "fake.log");
+    await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_LIST: "1", FAKE_LIST_DELAY: "4000", FAKE_LOG: listLog } } }), vscode.ConfigurationTarget.Global);
     try {
       await vscode.commands.executeCommand("kernl.newChat");
       const from = delivered.length;
       const asked = Date.now();
+      await vscode.commands.executeCommand("kernl.sessions");
+      // Clicked again while Claude Code is still being asked: the same request, not a second agent.
       await vscode.commands.executeCommand("kernl.sessions");
       const first = await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from);
       const shownAfter = Date.now() - asked;
@@ -1504,6 +1507,8 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       const filled = await waitFor("the agent's sessions", (m) => m.type === "conversations" && !m.open && m.rows.some((r: any) => r.kind === "agent"), from);
       assert.ok(!filled.rows.some((r: any) => r.kind === "pending" && r.agent === "claude-code"), "Claude Code's pending row is gone");
       assert.ok(Date.now() - asked >= 3_500, "they came when the agent answered");
+      const firstPages = readFileSync(listLog, "utf8").split("\n").filter((l) => l.startsWith("listSessions") && l.endsWith("cursor=none"));
+      assert.equal(firstPages.length, 1, "Claude Code was asked once for two clicks");
     } finally {
       await config.update("agentCommands", agentCommands({ "claude-code": fakeAgent }), vscode.ConfigurationTarget.Global);
     }
@@ -1723,6 +1728,27 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     assert.ok(!delivered.slice(from).some((m) => m.type === "userMessage" && m.text === "edit-queue original"), "the old text never went");
   });
 
+  await check("a panel that loads again mid-edit releases the queued message it was editing: it sends", async () => {
+    await vscode.commands.executeCommand("kernl.newChat");
+    const mainQueue = (from: number) => delivered.slice(from).filter((m) => m.type === "workspaces").at(-1)?.items.find((w: any) => w.id === "main");
+    let from = delivered.length;
+    const first = testing.receive({ type: "send", workspace: "main", text: "reload-edit first" });
+    const card = (await waitFor("the run's card", (m) => m.type === "approval", from)).card;
+    await testing.receive({ type: "send", workspace: "main", text: "reload-edit held" });
+    await testing.receive({ type: "editQueued", workspace: "main", id: mainQueue(from).queue[0].id, editing: true });
+    let at = delivered.length;
+    await testing.receive({ type: "answer", id: card.id, approved: false });
+    await first;
+    await waitFor("the run finished", (m) => m.type === "finished", at);
+    assert.ok(!delivered.slice(at).some((m) => m.type === "userMessage" && m.text === "reload-edit held"), "held while being edited");
+    at = delivered.length;
+    await testing.receive({ type: "ready" });
+    await waitFor("the held message sent", (m) => m.type === "userMessage" && m.text === "reload-edit held", at);
+    const second = (await waitFor("its card", (m) => m.type === "approval", at)).card;
+    await testing.receive({ type: "answer", id: second.id, approved: false });
+    await waitFor("its run finished", (m) => m.type === "finished", at);
+  });
+
   await check("attach menu: a conversation is tagged as a thread (read when sent); a GitHub issue is attached as untrusted text", async () => {
     await vscode.commands.executeCommand("kernl.newChat");
     let from = delivered.length;
@@ -1836,6 +1862,27 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     }
   });
 
+  // A tab of the worktree left working: Merge refuses here, and the Discard check below removes it with the worktree.
+  let worktreeTabWork: Promise<unknown> = Promise.resolve();
+  await check("worktree tabs: Merge refuses while one of the worktree's tabs works", async () => {
+    await testing.receive({ type: "focus", workspace: "wt:ui-ws" });
+    let from = delivered.length;
+    await testing.receive({ type: "newTab" });
+    const tab = delivered.slice(from).filter((m) => m.type === "workspaces").at(-1).items.find((w: any) => w.tabOf === "wt:ui-ws")?.id;
+    assert.ok(tab, "a tab of the worktree");
+    from = delivered.length;
+    worktreeTabWork = testing.receive({ type: "send", workspace: tab, text: "tab working in the worktree" });
+    await waitFor("its card", (m) => m.type === "approval" && m.card.workspaceId === tab, from);
+    const headBefore = await git(root, ["rev-parse", "HEAD"]);
+    await testing.receive({ type: "focus", workspace: "wt:ui-ws" });
+    scripted = { ...scripted, confirm: true, menu: /Merge/ };
+    from = delivered.length;
+    await testing.receive({ type: "pickWorkspace" });
+    await waitFor("the refusal", (m) => m.type === "notice" && /Stop the agent in this workspace's tabs before merging/.test(m.text), from);
+    assert.equal(await git(root, ["rev-parse", "HEAD"]), headBefore, "nothing merged");
+    scripted = { ...scripted, menu: undefined };
+  });
+
   await check("workspace menu: Discard asks first; declining keeps the workspace, confirming removes it, its worktree, and branch", async () => {
     scripted = { ...scripted, confirm: false, menu: /Discard/ };
     await testing.receive({ type: "pickWorkspace" });
@@ -1845,6 +1892,8 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await testing.receive({ type: "pickWorkspace" });
     const ws = await waitFor("the tab disappearing", (m) => m.type === "workspaces" && !m.items.some((w: any) => w.id === "wt:ui-ws"), from);
     assert.equal(ws.focus, "main");
+    assert.ok(!ws.items.some((w: any) => w.tabOf === "wt:ui-ws"), "its working tab went with it (stopped before the folder was removed)");
+    await worktreeTabWork;
     assert.equal(await worktreePath(), undefined);
     assert.equal((await git(root, ["branch", "--list", "kernl/ui-ws"])).trim(), "");
   });

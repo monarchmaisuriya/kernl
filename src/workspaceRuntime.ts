@@ -414,6 +414,13 @@ export class WorkspaceRuntime {
     this.sendNextQueued();
   }
 
+  /** The panel loaded again: any edit it had open is gone, so held messages are released and the queue carries on. */
+  releaseQueueEdits() {
+    if (!this.editingQueued.size) return;
+    this.editingQueued.clear();
+    this.sendNextQueued();
+  }
+
   /** A queued message's new text (empty removes it). */
   updateQueued(id: string, text: string) {
     const item = this.queue.find((q) => q.id === id);

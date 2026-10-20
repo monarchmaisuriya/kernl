@@ -19,6 +19,13 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Conversations opens at once: the CLI agents' own sessions fill in as each agent answers, instead of the list waiting for every agent to start. How long each agent took is in kernl's log.
 - The panel guide says how to put kernl's header on one line: the logo and buttons with no title (`workbench.activityBar.location: default`, `workbench.secondarySideBar.showLabels: false`), or the title and buttons (`workbench.activityBar.autoHide`).
 
+### Fixed
+
+- Merge refuses while any tab of a worktree workspace is working (it says so), and Discard stops all its tabs before removing the worktree.
+- A queued message being edited is released if the panel reloads, instead of holding the queue.
+- Clicking Conversations again while an agent is still listing its sessions reuses that request instead of starting the agent again.
+- New workspace keeps the folder it started in, even if another folder is shown while it asks for the name and agent.
+
 ## [0.4.0] - 2026-10-19
 
 ### Added

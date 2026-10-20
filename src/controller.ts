@@ -133,6 +133,10 @@ export class Controller implements vscode.Disposable {
   private readonly terminalHistory: TerminalHistory;
   /** The CLI agents' session lists, per agent and folder (`<agent>\n<root>`); dropped when the agent's store changes. */
   private agentSessionLists = new Map<string, { at: number; sessions: acp.SessionInfo[] }>();
+  /** Agents' session lists being asked for now, by agent and folder (shared by repeated clicks), with the generation they were asked in. */
+  private agentSessionRequests = new Map<string, { generation: number; request: Promise<acp.SessionInfo[] | undefined> }>();
+  /** Raised whenever the cached lists are forgotten: a request from an earlier generation is neither shared nor cached. */
+  private agentSessionGeneration = 0;
   /** Project MCP servers the user said "not now" to in this window (by fingerprint). */
   private declinedServers = new Set<string>();
   private disposables: vscode.Disposable[] = [];
@@ -872,9 +876,7 @@ export class Controller implements vscode.Disposable {
     return CLI_AGENT_IDS.flatMap((agent) => {
       const { base, pattern } = sessionStore(agent);
       const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(base), pattern));
-      const stale = () => {
-        for (const key of this.agentSessionLists.keys()) if (key.startsWith(`${agent}\n`)) this.agentSessionLists.delete(key);
-      };
+      const stale = () => this.forgetAgentSessions(agent);
       watcher.onDidChange(stale), watcher.onDidCreate(stale), watcher.onDidDelete(stale);
       return [watcher];
     });
@@ -1002,14 +1004,39 @@ export class Controller implements vscode.Disposable {
       });
     post(true);
     for (const a of state.filter((x) => x.pending)) {
-      void (async () => {
-        const started = Date.now();
-        const sessions = await ws.listAgentSessions(a.id);
-        this.log.info(`[${ws.label}] ${a.label} ${sessions ? `listed ${sessions.length} session(s)` : "listed no sessions"} in ${((Date.now() - started) / 1000).toFixed(1)} s`);
-        if (sessions) (this.agentSessionLists.set(`${a.id}\n${ws.root}`, { at: Date.now(), sessions }), (a.sessions = sessions));
+      void this.listAgentSessions(ws, a.id, a.label).then((sessions) => {
+        if (sessions) a.sessions = sessions;
         a.pending = false;
         post();
-      })();
+      });
+    }
+  }
+
+  /**
+   * An agent's sessions for a workspace's folder, asked once at a time: a request still running (the
+   * clock clicked again) is shared rather than starting the agent again. The answer goes in the cache.
+   */
+  private listAgentSessions(ws: WorkspaceRuntime, agent: CliAgentId, label: string): Promise<acp.SessionInfo[] | undefined> {
+    const key = `${agent}\n${ws.root}`;
+    const generation = this.agentSessionGeneration;
+    const running = this.agentSessionRequests.get(key);
+    if (running?.generation === generation) return running.request;
+    const started = Date.now();
+    const request = ws.listAgentSessions(agent).then((sessions) => {
+      this.log.info(`[${ws.label}] ${label} ${sessions ? `listed ${sessions.length} session(s)` : "listed no sessions"} in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+      // Asked before the lists were forgotten (the agent's launch or its sessions changed): not kept.
+      if (sessions && generation === this.agentSessionGeneration) this.agentSessionLists.set(key, { at: Date.now(), sessions });
+      return sessions;
+    }).finally(() => this.agentSessionRequests.get(key)?.request === request && this.agentSessionRequests.delete(key));
+    this.agentSessionRequests.set(key, { generation, request });
+    return request;
+  }
+
+  /** Forgets the agents' session lists (one agent's, or all): cached ones, and requests still running. */
+  private forgetAgentSessions(agent?: CliAgentId) {
+    this.agentSessionGeneration++;
+    for (const map of [this.agentSessionLists, this.agentSessionRequests] as Map<string, unknown>[]) {
+      for (const key of [...map.keys()]) if (!agent || key.startsWith(`${agent}\n`)) map.delete(key);
     }
   }
 
@@ -1351,6 +1378,8 @@ export class Controller implements vscode.Disposable {
     switch (m.type) {
       case "ready":
         this.panel.markReady();
+        // A panel that loaded again has no edit open: queued messages held for one carry on.
+        for (const ws of this.workspaces.values()) ws.releaseQueueEdits();
         void this.postSkills();
         this.postActiveFile();
         await this.postStatus();
@@ -1519,9 +1548,13 @@ export class Controller implements vscode.Disposable {
     if (id === this.active) this.prepareShown();
   }
 
+  /**
+   * The folder is the one shown when New workspace starts: its repository gets the worktree, and the
+   * workspace is listed under it, even if the panel shows another folder by the time the prompts end.
+   */
   async newWorkspace() {
-    const info = await this.commands.create();
     const folder = this.folderIdOf(this.active);
+    const info = await this.commands.create(this.workspace(folder)?.root);
     if (!info || !this.workspace(folder)) return;
     this.postWorkspaces(this.addWorktree(info, folder).id);
   }
@@ -1531,20 +1564,29 @@ export class Controller implements vscode.Disposable {
     if (info) await this.commands.review(info);
   }
 
+  /** Merges a worktree workspace. Its tabs work in the same worktree: none may be running. */
   private async merge(id: string) {
-    const ws = this.workspace(id);
+    const ws = this.workspace(this.workspace(id)?.tabOf ?? id);
     if (!ws?.info) return;
-    if (ws.running) return void vscode.window.showWarningMessage("Stop the agent in this workspace before merging.");
+    if (this.tabsOf(ws.id).some((t) => t.running)) {
+      return void this.panel.post({ type: "notice", workspace: this.active, text: "Stop the agent in this workspace's tabs before merging: a tab is still working in the worktree." });
+    }
     await this.commands.merge(ws.info);
   }
 
+  /**
+   * Discards a worktree workspace with all its tabs. Every tab's conversation is saved first, and every
+   * tab is stopped before the worktree folder is removed, so no agent is left working in a folder that's gone.
+   */
   private async discard(id: string): Promise<void> {
-    const ws = this.workspace(id);
+    const ws = this.workspace(this.workspace(id)?.tabOf ?? id);
     if (!ws?.info) return;
-    if (ws.tabOf) return this.discard(ws.tabOf);
-    if (await this.commands.discard(ws.info, () => ws.dispose())) {
+    const tabs = this.tabsOf(ws.id);
+    await Promise.all(tabs.map((t) => t.saveSession()));
+    if (await this.commands.discard(ws.info, () => tabs.forEach((t) => t.dispose()))) {
+      id = ws.id;
       const folder = this.folderIdOf(id);
-      for (const tab of this.tabsOf(id).slice(1)) (tab.dispose(), this.workspaces.delete(tab.id), void this.host.sessions.saveQueue(tab.queueKey, []).catch(() => {}));
+      for (const tab of tabs.slice(1)) (this.workspaces.delete(tab.id), void this.host.sessions.saveQueue(tab.queueKey, []).catch(() => {}));
       this.workspaces.delete(id);
       this.worktreeFolder.delete(id);
       // Its queued messages go with it (a later worktree at the same path starts empty).
@@ -1677,7 +1719,7 @@ export class Controller implements vscode.Disposable {
     // A change to how agents launch (kernl.agentCommands) or to their keys makes their last status stale.
     const launchChanged = change.kind === "keys" || (change.kind === "settings" && change.affects("kernl.agentCommands"));
     // A different launch (or login) can mean a different list of the agent's own sessions.
-    if (launchChanged) this.agentSessionLists.clear();
+    if (launchChanged) this.forgetAgentSessions();
     void this.refreshReadiness(launchChanged ? { changed: true } : {});
   }
 

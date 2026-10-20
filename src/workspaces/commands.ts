@@ -37,8 +37,8 @@ export class WorkspaceCommands {
   constructor(private host: WorkspaceCommandHost) {}
 
   /** Asks for a name and an agent, then creates the worktree. Returns undefined if cancelled or impossible. */
-  async create(): Promise<WorkspaceInfo | undefined> {
-    const root = this.host.mainRoot();
+  /** A new worktree workspace from the repository of `root` (the folder shown when New workspace began). */
+  async create(root: string | undefined): Promise<WorkspaceInfo | undefined> {
     if (!root) return void vscode.window.showErrorMessage("Open a folder to use workspaces.");
     if (!vscode.workspace.isTrusted) return void vscode.window.showErrorMessage("Workspaces need a trusted folder. Trust this workspace first.");
     const repo = await repoRoot(root).catch(() => undefined);

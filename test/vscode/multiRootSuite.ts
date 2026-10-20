@@ -62,10 +62,11 @@ export async function run() {
   const lastWorkspaces = () => delivered.filter((m) => m.type === "workspaces").at(-1);
   const harnessOf = (id: string) => lastWorkspaces()?.items.find((w: any) => w.id === id)?.harness;
   // `menu` picks a QuickPick item by label; `inputs` answers input boxes in order.
-  let scripted: { menu?: RegExp[]; inputs?: string[] } = {};
+  // `whileAsked` runs while an input box is open, before it's answered (something else happening mid-prompt).
+  let scripted: { menu?: RegExp[]; inputs?: string[]; whileAsked?: () => Promise<unknown> } = {};
   const menusShown: any[][] = [];
   testing.usePrompts({
-    input: async () => scripted.inputs?.shift(),
+    input: async () => (await scripted.whileAsked?.(), scripted.inputs?.shift()),
     pick: async (items: any[]) => {
       menusShown.push(items);
       const re = scripted.menu?.shift();
@@ -121,9 +122,9 @@ export async function run() {
     assert.deepEqual(delivered.slice(from).find((m) => m.type === "userMessage")?.attachments, [thread, gone], "the message keeps the references");
   });
 
-  await check("multi-root: a new worktree workspace comes from the shown folder's repository", async () => {
+  await check("multi-root: a new worktree workspace comes from the shown folder's repository, and stays that folder's when another folder is shown during the prompts", async () => {
     await testing.receive({ type: "focus", workspace: "folder:beta" });
-    scripted = { inputs: ["feature"], menu: [/kernl/] };
+    scripted = { inputs: ["feature"], menu: [/kernl/], whileAsked: () => testing.receive({ type: "focus", workspace: "folder:alpha" }) };
     const from = delivered.length;
     await vscode.commands.executeCommand("kernl.newWorkspace");
     const ws = await waitFor("the worktree workspace", (m) => m.type === "workspaces" && m.items.some((w: any) => w.id === "wt:beta/feature"), from);
