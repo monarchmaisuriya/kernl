@@ -38,7 +38,8 @@ test("every row's first text or icon sits on one content line: each left offset 
   };
   assert.match(css, /--content-inset: 10px;/);
   for (const selector of [".tab-button", ".composer", ".footer", ".plan-bar > summary", ".banner"]) assert.match(rule(selector), /var\(--content-inset\)/, `${selector} uses the content line`);
-  assert.match(rule(".tab-bar"), /padding: \S+ \S+ \S+ 0;/, "the first tab starts at the edge line (no left padding)");
+  assert.match(rule(".tab-bar"), /margin: 0 calc\(-1 \* var\(--gutter\)\); padding: 0 8px 0 var\(--gutter\);/, "the tab row's borders run the panel's full width, and its first cell starts at the edge line");
+  assert.match(rule("#app"), /padding: 0 var\(--gutter\) 10px;/, "the panel's side margin is the one --gutter");
   assert.match(rule(".composer .attach"), /margin-left: -4px;/, "the + sits on the line with the text");
-  assert.match(rule(".tab-button"), /justify-content: center;/, "a short title held at the pill's minimum width is centered, not left with a gap after it");
+  assert.doesNotMatch(rule(".tab-button"), /justify-content: center/, "a cell's title starts on the content line (not centered)");
 });

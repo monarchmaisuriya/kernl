@@ -24,7 +24,7 @@
 
 ## In the panel
 
-- **Tabs:** the strip above the conversation shows the workspace's tabs as pills, each named by its conversation. The shown tab is filled. The slot at a pill's end shows its state: a spinner while it works, a warning dot while it waits for your approval, and an accent dot when it finished while you looked at another tab (until you show it). On hover or keyboard focus, × takes that slot. When the tabs don't fit, the strip scrolls sideways (the wheel works), with `+` always in view.
+- **Tabs:** the row above the conversation, framed by a line above and below, shows the workspace's tabs as cells divided by lines, each named by its conversation. The shown tab's name is in full-strength text. Each tab leads with its state: a spinner while it works, a warning dot while it waits for your approval, and an accent dot when it finished while you looked at another tab (until you show it). On hover or keyboard focus, × appears at its end. When the tabs don't fit, the strip scrolls sideways (the wheel works), with `+` always in view.
   - `+` opens a tab: another session in the same folder, with its own conversation, agent, model, mode, and queue. It keeps working while you look at another tab.
   - Mouse: middle-click closes a tab; double-click on the strip's empty space opens one. Keyboard: the shown tab is the strip's one Tab stop; Left and Right (Home, End) show another, and Delete closes it.
   - While kernl's panel has focus: Cmd+T (Ctrl+T) opens a tab, Cmd+W (Ctrl+W) closes the shown one (on the workspace's first tab it does nothing, rather than close your editor), and Ctrl+Tab and Ctrl+Shift+Tab show the next and previous tab.

@@ -4,7 +4,9 @@
    primary or active; links use the link color; status uses one color each; everything else is neutral. The
    accent is never a text color: on the sidebar it is too faint for text (icons and borders only). */
 :root {
-  /* The content line: a row's first text or icon starts this far in from the panel's edge line (where boxes start). */
+  /* The panel's side margin: the edge line, where boxes start. */
+  --gutter: 12px;
+  /* The content line: a row's first text or icon starts this far in from the edge line (where boxes start). */
   --content-inset: 10px;
   /* Masks use only alpha: opaque keeps what's under it (the tab strip's edge fades). */
   --mask-opaque: #000;
@@ -69,7 +71,7 @@
 
 * { box-sizing: border-box; }
 body { padding: 0; margin: 0; color: var(--fg); background: var(--panel-bg); font-family: var(--font); font-size: var(--font-size); line-height: 1.5; }
-#app { display: flex; flex-direction: column; height: 100vh; padding: 0 12px 10px; gap: 8px; }
+#app { display: flex; flex-direction: column; height: 100vh; padding: 0 var(--gutter) 10px; gap: 8px; }
 [hidden] { display: none !important; }
 .icon { flex: none; }
 .spacer { flex: 1; }
@@ -413,18 +415,19 @@ body.vscode-reduce-motion .tool > summary > .icon:last-child, body.vscode-reduce
 .drop-note { padding: 0 4px; font-size: 0.88em; color: var(--warning); }
 
 /* Tabs: the shown workspace's sessions as pills, each leading with its state and named by its conversation; + opens another */
-.tab-bar { display: flex; align-items: center; flex: none; padding: 4px 8px 2px 0; }
-.tabs { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; }
+/* A row framed by lines across the panel's full width (past the gutter); the first title stays on the content line. */
+.tab-bar { display: flex; align-items: stretch; flex: none; height: 32px; margin: 0 calc(-1 * var(--gutter)); padding: 0 8px 0 var(--gutter); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.tabs { display: flex; align-items: stretch; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs.clipped-end { mask-image: linear-gradient(to right, var(--mask-opaque) calc(100% - 24px), transparent); }
 .tabs.clipped-start { mask-image: linear-gradient(to right, transparent, var(--mask-opaque) 24px); }
 .tabs.clipped-start.clipped-end { mask-image: linear-gradient(to right, transparent, var(--mask-opaque) 24px, var(--mask-opaque) calc(100% - 24px), transparent); }
-/* Pills shrink to a readable minimum before the strip scrolls, so every tab and its state stays in view in a normal panel. */
-.tab { display: inline-flex; align-items: center; min-width: 88px; max-width: 200px; flex: 0 1 auto; height: 24px; border-radius: var(--radius-sm); color: var(--muted); }
-.tab:hover { background: var(--hover); color: var(--fg); }
-.tab.active { background: var(--surface); color: var(--fg); box-shadow: inset 0 0 0 1px var(--input-border); }
-/* A short title in a pill held at its minimum width is centered, so the space on its two sides matches. */
-.tab-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; flex: 1 1 auto; height: 100%; padding: 0 var(--content-inset); border: none; border-radius: var(--radius-sm); background: transparent; color: inherit; }
+/* Cells shrink to a readable minimum before the strip scrolls, so every tab and its state stays in view in a normal panel. */
+/* Each tab is a cell on the panel's own background, divided from the next by a line; the shown one has full-strength text. */
+.tab { display: inline-flex; align-items: center; min-width: 64px; max-width: 200px; flex: 0 1 auto; border-right: 1px solid var(--border); color: var(--muted); }
+.tab:hover, .tab.active { color: var(--fg); }
+/* A cell's title starts on the content line, as the message box's text does. */
+.tab-button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; height: 100%; padding: 0 var(--content-inset); border: none; border-radius: 0; background: transparent; color: inherit; }
 .tab-button:hover:not(:disabled) { background: transparent; }
 .tab-button:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
 .tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92em; }
@@ -439,7 +442,7 @@ body.vscode-reduce-motion .tab-state.working { animation: none; border-top-color
 .tab .tab-close { visibility: hidden; display: inline-flex; padding: 2px; color: var(--muted); }
 .tab:hover .tab-close, .tab:focus-within .tab-close { visibility: visible; }
 .tab-close:hover { color: var(--fg); }
-.tab-new { flex: none; padding: 3px; margin-left: 2px; color: var(--muted); }
+.tab-new { flex: none; align-self: center; padding: 3px; margin-left: 6px; color: var(--muted); }
 .tab-new:hover { color: var(--fg); }
 
 /* Full-panel views (Connections, Conversations): they cover the conversation until closed *//* Full-panel views (Connections, Conversations): they cover the conversation until closed */
