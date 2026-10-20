@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.10.7] - 2026-10-20
+
 ### Changed
 
 - The buttons under the message box and in the footer are spaced evenly (the same visible space between each), and the message box's placeholder text is a little grayer.
@@ -259,7 +261,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.6...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.7...HEAD
+[0.10.7]: https://github.com/pushowl/kernl/compare/v0.10.6...v0.10.7
 [0.10.6]: https://github.com/pushowl/kernl/compare/v0.10.5...v0.10.6
 [0.10.5]: https://github.com/pushowl/kernl/compare/v0.10.4...v0.10.5
 [0.10.4]: https://github.com/pushowl/kernl/compare/v0.10.3...v0.10.4
