@@ -41,8 +41,7 @@ export function createTabStrip(send: (m: PanelToHost) => void, select: (id: stri
   const tabButton = (id: string) => [...strip.querySelectorAll<HTMLElement>(".tab")].find((t) => t.dataset.id === id)?.querySelector<HTMLElement>(".tab-button");
   const stateOf = (view: WorkspaceView): TabState => (view.waiting > 0 ? "waiting" : view.running ? "working" : finished.has(view.id) ? "finished" : "");
 
-  function tab(view: WorkspaceView, active: boolean): HTMLElement {
-    const title = view.title ?? "New chat";
+  function tab(view: WorkspaceView, active: boolean, title: string): HTMLElement {
     const state = stateOf(view);
     const t = el("div", `tab${active ? " active" : ""}${state ? ` ${state}` : ""}`);
     t.dataset.id = view.id;
@@ -91,7 +90,15 @@ export function createTabStrip(send: (m: PanelToHost) => void, select: (id: stri
     }
     const focusedId = strip.contains(document.activeElement) ? (document.activeElement as HTMLElement).closest<HTMLElement>(".tab")?.dataset.id : undefined;
     bar.hidden = !base;
-    strip.replaceChildren(...shownTabs.map((v) => tab(v, v.id === shown)));
+    // Tabs with the same title (empty ones are all "New chat") are told apart by number, in strip order.
+    const seen = new Map<string, number>();
+    const titles = shownTabs.map((v) => {
+      const base = v.title ?? "New chat";
+      const n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
+      return n === 1 ? base : `${base} ${n}`;
+    });
+    strip.replaceChildren(...shownTabs.map((v, i) => tab(v, v.id === shown, titles[i])));
     // A redraw keeps keyboard focus on the tab that had it.
     if (focusedId) tabButton(focusedId)?.focus();
     strip.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });

@@ -20,7 +20,7 @@ export interface Snapshot {
   /** The outline for the agent, with the page's URL and title first. */
   text: string;
   /** ref -> the element (the page's node id, role, and name), for the actions and their approval cards. */
-  refs: Map<string, { backendNodeId: number; role: string; name: string }>;
+  refs: Map<string, SnapshotRef>;
 }
 
 /** Elements a person acts on: each gets a ref. */
@@ -37,8 +37,18 @@ export function newRefs(): (backendNodeId: number) => string {
   return (id) => refs.get(id) ?? (refs.set(id, `e${refs.size + 1}`), refs.get(id)!);
 }
 
+/** An element a ref names: its page node, role, and name, and the frame it's in (none for the page itself). */
+export interface SnapshotRef {
+  backendNodeId: number;
+  role: string;
+  name: string;
+  frameId?: string;
+}
+
 /** A frame inside the page: its tree, or none when kernl can't read it (a frame from another site). */
 export interface FrameTree {
+  /** The browser's frame id: refs in it are dropped when it navigates. */
+  id?: string;
   url: string;
   nodes?: readonly AxNode[];
 }
@@ -76,7 +86,7 @@ export function outline(nodes: readonly AxNode[], page: { href: string; title: s
         if (prop(n, "disabled") === true) bits.push("disabled");
         if (ACTIONABLE.has(role) && n.backendDOMNodeId !== undefined) {
           const ref = refOf(n.backendDOMNodeId);
-          refs.set(ref, { backendNodeId: n.backendDOMNodeId, role, name });
+          refs.set(ref, { backendNodeId: n.backendDOMNodeId, role, name, ...(frameId ? { frameId } : {}) });
           bits.push(`[ref=${ref}]`);
         }
         lines.push(`${"  ".repeat(depth)}${bits.join(" ")}`);
@@ -88,11 +98,14 @@ export function outline(nodes: readonly AxNode[], page: { href: string; title: s
     if (shown && ACTIONABLE.has(role)) return;
     for (const id of n.childIds ?? []) visit(byId, byId.get(id), shown ? depth + 1 : depth);
   };
+  /** The frame whose tree is being outlined (undefined: the page itself). */
+  let frameId: string | undefined;
   const tree = (treeNodes: readonly AxNode[], depth: number) => visit(new Map(treeNodes.map((n) => [n.nodeId, n])), treeNodes.find((n) => !n.parentId) ?? treeNodes[0], depth);
   tree(nodes, 0);
   for (const f of frames) {
     if (truncated) break;
     lines.push(`- frame ${JSON.stringify(f.url)}${f.nodes?.length ? "" : " (from another site: kernl can't read inside it)"}`);
+    frameId = f.id;
     if (f.nodes?.length) tree(f.nodes, 1);
   }
 

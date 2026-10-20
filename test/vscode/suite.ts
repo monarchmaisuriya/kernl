@@ -548,6 +548,10 @@ export async function run() {
     assert.ok(buy, open[1]);
     await runAgent(new GatedBackend(root, gate, files, unusedRunner), [toolCall("browser_click", { element: "Frame Buy button", ref: buy })], browserTools(browser, gate));
     assert.equal(await browser.evaluate("document.title"), "bought in frame:true", "a real (trusted) click at the right point");
+    // The frame navigates: its old refs are refused with the usual note, not a raw browser error.
+    await browser.evaluate(`new Promise((done) => { const f = document.querySelector("iframe"); f.onload = () => done(true); f.src = "/inner-covered"; })`);
+    const stale = await runAgent(new GatedBackend(root, gate, files, unusedRunner), [toolCall("browser_click", { element: "Frame Buy button", ref: buy })], browserTools(browser, gate));
+    assert.match(stale[0], /No element .* on this page \(it changed since that snapshot\): take a new browser_snapshot/);
   });
 
   await check("an approved ref still means the approved element after a newer snapshot lists another element first", async () => {
@@ -1634,7 +1638,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     }
   });
 
-  await check("threads: @ also lists Claude Code's own sessions (fetched in the background when @ opens); tagged, the agent's replay of it reaches the message as text; another tab tagging it reads the window's copy", async () => {
+  await check("threads: @ also lists Claude Code's own sessions (fetched in the background when @ opens); tagged, the agent's replay of it reaches the message as text; another tab tagging it (no time from the agent) reads it fresh", async () => {
     const loadLog = join(mkdtempSync(join(tmpdir(), "kernl-tag-load-")), "fake.log");
     await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_LIST: "1", FAKE_LOAD: "1", FAKE_LOG: loadLog } } }), vscode.ConfigurationTarget.Global);
     try {
@@ -1657,7 +1661,8 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       await sending;
       const reply = delivered.slice(from).filter((m) => m.type === "text" && m.workspace === "main").map((m) => m.delta).join("");
       assert.match(reply, /\[texts: Thread: Add a changelog => Conversation: Add a changelog \(Claude Code session, in Main\) \(has REPLAYED-OLD-QUESTION, REPLAYED-OLD-MESSAGE\)\]/, "no date when the agent gives none");
-      // A second tab tagging the same session gets the window's copy: the agent loads it once.
+      // A second tab tagging it reads it again: this agent gives the session no time, so no read is kept
+      // (a session with a time is read once per version for the whole window: the agentThreads unit tests).
       const opened = delivered.length;
       await testing.receive({ type: "newTab" });
       const tab = delivered.slice(opened).filter((m) => m.type === "workspaces").at(-1).focus;
@@ -1670,7 +1675,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       const tabReply = delivered.slice(fromTab).filter((m) => m.type === "text" && m.workspace === tab).map((m) => m.delta).join("");
       assert.match(tabReply, /has REPLAYED-OLD-QUESTION/, "the tab's message carries it too");
       const loads = readFileSync(loadLog, "utf8").split("\n").filter((l) => l === `loadSession ${thread.thread.agentSession.sessionId}`);
-      assert.equal(loads.length, 1, "read once for both tabs");
+      assert.equal(loads.length, 2, "read fresh for each tag (no time to tell whether it changed)");
       await testing.receive({ type: "closeTab", workspace: tab });
       await testing.receive({ type: "focus", workspace: "main" });
     } finally {
@@ -1720,17 +1725,17 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     const run = testing.receive({ type: "send", workspace: "main", text: "slash new while working" });
     await waitFor("main's card", (m) => m.type === "approval" && m.card.workspaceId === "main", from);
     scripted = { ...scripted, confirm: false };
-    await testing.receive({ type: "runCommand", workspace: "main", name: "new" });
+    await testing.receive({ type: "runCommand", name: "new" });
     await testing.receive({ type: "openConversation", workspace: "main", pick: { kind: "new" } });
     scripted = { ...scripted, confirm: true };
     assert.ok(!delivered.slice(from).some((m) => m.type === "cleared" && m.workspace === "main"), "declining keeps the conversation");
     assert.equal(lastWorkspaces(from).items.find((w: any) => w.id === "main").running, true, "and the run");
     from = delivered.length;
-    await testing.receive({ type: "runCommand", workspace: "main", name: "new" });
+    await testing.receive({ type: "runCommand", name: "new" });
     await waitFor("an empty conversation", (m) => m.type === "cleared" && m.workspace === "main", from);
     await run;
     from = delivered.length;
-    await testing.receive({ type: "runCommand", workspace: "main", name: "conversations" });
+    await testing.receive({ type: "runCommand", name: "conversations" });
     const rows = (await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from)).rows;
     assert.ok(rows.some((r: any) => r.title === "slash new while working"), "the stopped conversation is kept");
   });
@@ -1744,7 +1749,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await earlier;
     await vscode.commands.executeCommand("kernl.newChat");
     from = delivered.length;
-    await testing.receive({ type: "runCommand", workspace: "main", name: "conversations" });
+    await testing.receive({ type: "runCommand", name: "conversations" });
     const target = (await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from)).rows.find((r: any) => r.title === "switch target conversation");
     assert.ok(target, "the earlier conversation is listed");
     from = delivered.length;
@@ -1773,7 +1778,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       }
     };
     await vscode.window.tabGroups.close(previews());
-    await testing.receive({ type: "runCommand", workspace: "main", name: "help" });
+    await testing.receive({ type: "runCommand", name: "help" });
     await waitUntil("the help preview", () => previews().length === 1);
     await vscode.window.tabGroups.close(previews());
     await vscode.commands.executeCommand("kernl.help");

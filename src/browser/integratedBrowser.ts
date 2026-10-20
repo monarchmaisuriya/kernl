@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import WebSocket from "ws";
-import { type AxNode, type FrameTree, outline, type Snapshot } from "./snapshot";
+import { type AxNode, type FrameTree, outline, type Snapshot, type SnapshotRef } from "./snapshot";
 import { assertNavigableUrl } from "./urlPolicy";
 
 /**
@@ -87,7 +87,7 @@ export class IntegratedBrowser implements vscode.Disposable {
   /** Every CDP method sent, in order. Lets tests prove a rejected action sent nothing. */
   readonly sentMethods: string[] = [];
   /** Element references from this page's snapshots (ref -> the page's node); a navigation makes them stale. */
-  private refs = new Map<string, { backendNodeId: number; role: string; name: string }>();
+  private refs = new Map<string, SnapshotRef>();
   /** Each element's ref (page node -> ref), so every snapshot gives it the same one. */
   private refByNode = new Map<number, string>();
   /** Refs are numbered for the browser's whole life: a ref is never given to another element, even on another page. */
@@ -248,7 +248,9 @@ export class IntegratedBrowser implements vscode.Disposable {
         if (!p.canceled) add({ kind: "request", text: `failed (${p.errorText}) ${p.type ?? ""}`.trim() });
         return;
       case "Page.frameNavigated":
+        // The page navigated: every ref is stale. A frame navigated: its refs are (another snapshot gives its new ones).
         if (!p.frame?.parentId) this.refs.clear(), this.refByNode.clear();
+        else for (const [ref, n] of this.refs) if (n.frameId === p.frame.id) this.refs.delete(ref);
         return;
     }
   }
@@ -290,7 +292,7 @@ export class IntegratedBrowser implements vscode.Disposable {
       for (const c of t.childFrames ?? []) if (frames.length < MAX_FRAMES) (frames.push({ id: c.frame.id, url: c.frame.url }), walk(c));
     };
     walk(frameTree);
-    return Promise.all(frames.map(async (f) => ({ url: f.url, nodes: (await this.send("Accessibility.getFullAXTree", { frameId: f.id }).catch(() => undefined))?.nodes as AxNode[] | undefined })));
+    return Promise.all(frames.map(async (f) => ({ id: f.id, url: f.url, nodes: (await this.send("Accessibility.getFullAXTree", { frameId: f.id }).catch(() => undefined))?.nodes as AxNode[] | undefined })));
   }
 
   /** A ref from this page's snapshots, or why it can't be used. */

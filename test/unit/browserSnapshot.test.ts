@@ -79,10 +79,11 @@ test("frames are outlined after the page under their address, with refs that kee
     page,
     refOf,
     [
-      { url: "http://site.test/inner", nodes: tree(n("RootWebArea", "", [...n("button", "Inner Buy", [], { backendDOMNodeId: 2 })])) },
+      { id: "F1", url: "http://site.test/inner", nodes: tree(n("RootWebArea", "", [...n("button", "Inner Buy", [], { backendDOMNodeId: 2 })])) },
       { url: "https://ads.example/x" },
     ],
   );
   assert.match(snap.text, /- button "Outer" \[ref=e1\]\n- frame "http:\/\/site\.test\/inner"\n  - button "Inner Buy" \[ref=e2\]\n- frame "https:\/\/ads\.example\/x" \(from another site: kernl can't read inside it\)/);
-  assert.deepEqual(snap.refs.get("e2"), { backendNodeId: 2, role: "button", name: "Inner Buy" });
+  assert.deepEqual(snap.refs.get("e2"), { backendNodeId: 2, role: "button", name: "Inner Buy", frameId: "F1" }, "a frame's ref knows its frame (dropped when it navigates)");
+  assert.equal(snap.refs.get("e1")!.frameId, undefined, "the page's own refs have none");
 });

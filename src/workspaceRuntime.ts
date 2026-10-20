@@ -690,7 +690,7 @@ export class WorkspaceRuntime {
     const agent = s.agent;
     if (!isCliAgentId(agent) || !this.host.knownRoot(s.root)) return "it isn't a session of an agent in this window's folders";
     // The version the tag saw: read_thread later reads the same one, and a newer session is read again.
-    const events = await this.host.agentThreads.get(`${threadHandle(t)}@${t.updatedAt}`, () => this.readAgentSession(agent, s.sessionId, s.root));
+    const events = await this.host.agentThreads.get(threadHandle(t), t.updatedAt, () => this.readAgentSession(agent, s.sessionId, s.root));
     return typeof events === "string" ? events : { events };
   }
 

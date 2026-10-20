@@ -392,7 +392,7 @@ export class Controller implements vscode.Disposable {
       if (!commandAvailable(match.command, ws.view(), this.restricted())) return { error: match.command.unavailable ?? `/${match.command.name} can't run now.` };
       await this.panel.reveal();
       // Not awaited: a command can open a menu that waits for the user, and Ask kernl or @kernl shouldn't.
-      void this.runCommand(ws.id, match.command.name as PanelCommandName).catch((err) => this.fail(`Couldn't run /${match.command.name}`, err));
+      void this.runCommand(match.command.name as PanelCommandName).catch((err) => this.fail(`Couldn't run /${match.command.name}`, err));
       return { workspace: ws.label, ran: match.command.name };
     }
     const { attachments, outside, unusable } = files.length ? await resolveUris(ws.root, [...files]) : { attachments: [], outside: [], unusable: [] };
@@ -417,9 +417,9 @@ export class Controller implements vscode.Disposable {
     return scope.ok && !scope.trusted;
   }
 
-  /** Runs one of kernl's own commands (from the panel's "/" menu, Ask kernl, or @kernl) in a workspace: the one place they run. */
-  private async runCommand(workspace: string, name: PanelCommandName): Promise<void> {
-    const ws = this.workspace(workspace);
+  /** Runs one of kernl's own commands (from the panel's "/" menu, Ask kernl, or @kernl) in the shown workspace: the one place they run. */
+  private async runCommand(name: PanelCommandName): Promise<void> {
+    const ws = this.workspace(this.active);
     if (!ws) return;
     switch (name) {
       case "new":
@@ -537,7 +537,6 @@ export class Controller implements vscode.Disposable {
     return tabOf ? this.folderIdOf(tabOf) : (this.worktreeFolder.get(id) ?? id);
   }
 
-  /** A workspace's tabs, itself first, then by number. */
   /** The tab shortcuts (while kernl's panel has focus): a new tab, close the shown one, or show the next or previous one (wrapping). */
   newTabCommand() {
     return this.newTab();
@@ -554,6 +553,7 @@ export class Controller implements vscode.Disposable {
     this.postWorkspaces(next.id);
   }
 
+  /** A workspace's tabs, itself first, then by number. */
   private tabsOf(workspace: string): WorkspaceRuntime[] {
     const tabs = [...this.workspaces.values()].filter((w) => w.tabOf === workspace);
     const n = (w: WorkspaceRuntime) => Number(w.id.slice(w.id.lastIndexOf("~") + 1));
@@ -1544,7 +1544,7 @@ export class Controller implements vscode.Disposable {
         // The panel names a command; the host checks it, like any other input at this boundary.
         const command = PANEL_COMMANDS.find((c) => c.name === m.name);
         if (!command) return void this.log.info(`the panel asked for an unknown kernl command: ${String(m.name).slice(0, 40)}`);
-        return this.runCommand(m.workspace, command.name);
+        return this.runCommand(command.name);
       }
       case "editQueued":
         return this.workspace(m.workspace)?.editingQueue(m.id, m.editing);

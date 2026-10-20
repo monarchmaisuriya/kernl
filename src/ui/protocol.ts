@@ -291,8 +291,8 @@ export type PanelToHost =
   /** The tab strip: a new tab for the shown workspace, or close a tab. */
   | { type: "newTab" }
   | { type: "closeTab"; workspace: string }
-  /** One of kernl's own slash commands, chosen or typed in the message box; the host runs it. */
-  | { type: "runCommand"; workspace: string; name: PanelCommandName }
+  /** One of kernl's own slash commands, chosen or typed in the message box; the host runs it in the shown workspace. */
+  | { type: "runCommand"; name: PanelCommandName }
   /** A queued message's editing started (it won't send meanwhile) or ended. */
   | { type: "editQueued"; workspace: string; id: string; editing: boolean }
   /** A queued message's edited text (empty removes it). */

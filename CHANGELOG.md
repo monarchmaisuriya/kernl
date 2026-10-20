@@ -4,6 +4,15 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- Tabs with the same title are numbered in strip order ("New chat", "New chat 2"…), so empty tabs, or two that started with the same message, can be told apart.
+
+### Fixed
+
+- A CLI agent's session tagged again is read fresh when the agent gives it no time (kernl can't tell whether it changed); before, the first read was reused until VS Code restarted.
+- After a frame in the page navigates, the browser tools refuse its old refs with "take a new browser_snapshot" instead of a raw browser error.
+
 ## [0.10.1] - 2026-10-20
 
 ### Changed

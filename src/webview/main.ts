@@ -596,7 +596,7 @@ function agentSlash(p: Pane): SkillView[] {
 const available = (p: Pane, c: PanelCommand) => commandAvailable(c, p.view, !!status?.restricted);
 
 /** A kernl command, run by the host in the shown tab. */
-const runCommand = (name: PanelCommandName) => send({ type: "runCommand", workspace: active, name });
+const runCommand = (name: PanelCommandName) => send({ type: "runCommand", name });
 
 /** A kernl command typed in full and sent: run it and clear the box, or say why not and keep the text. */
 function runTyped(p: Pane, match: NonNullable<ReturnType<typeof commandFor>>) {

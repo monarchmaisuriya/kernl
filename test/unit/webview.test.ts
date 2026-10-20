@@ -529,7 +529,7 @@ test("/ lists kernl's own commands for every agent; choosing or typing one runs 
   assert.deepEqual(labels(), ["/new", "/conversations", "/connections", "/connect-db"]);
   assert.equal(p.all(".suggestion .suggestion-detail")[0].textContent, "New chat in this tab · kernl");
   key(p, "Enter");
-  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "main", name: "new" });
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", name: "new" });
   assert.equal(input.value, "");
 
   // Tab only completes a kernl command's name; Enter then runs it.
@@ -538,18 +538,18 @@ test("/ lists kernl's own commands for every agent; choosing or typing one runs 
   assert.equal(input.value, "/tab ");
   assert.ok(!p.sent.some((m) => m.type === "runCommand" && m.name === "tab"), "Tab doesn't run it");
   key(p, "Enter");
-  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "main", name: "tab" });
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", name: "tab" });
   assert.equal(input.value, "");
 
   // The host runs every command; /mode comes back as a request to open the mode chip's menu.
   type(p, "/mode");
   key(p, "Enter");
-  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "main", name: "mode" });
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", name: "mode" });
   p.host({ type: "openModeMenu", workspace: "main" });
   assert.equal(p.doc.querySelector<HTMLElement>(".mode-menu")!.hidden, false, "the mode chip's menu opens");
   type(p, "/help");
   key(p, "Enter");
-  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "main", name: "help" });
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", name: "help" });
 
   // Typed in full with text after it: a note, and the text stays.
   input = type(p, "/new fix it");
@@ -571,7 +571,7 @@ test("/ lists kernl's own commands for every agent; choosing or typing one runs 
   assert.equal(sends().at(-1)?.text, "/resume");
   type(p, "/kernl:resume");
   key(p, "Enter");
-  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "wt:fix", name: "conversations" });
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", name: "conversations" });
   assert.equal(sends().length, 1, "only the agent's command was sent");
 });
 
@@ -742,6 +742,15 @@ test("tabs: pills named by conversation with a state slot (working, waiting, fin
   assert.deepEqual(p.sent.at(-1), { type: "newTab" });
   p.button("Close tab Fix the login loop")!.click();
   assert.deepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main~2" });
+});
+
+test("tabs with the same title are numbered in strip order (empty ones are all \"New chat\"), in the pill, its label, and its close button", () => {
+  const p = loadPanel();
+  const tab = (n: number, title?: string) => ({ ...MAIN, id: `main~${n}`, label: `Main · tab ${n}`, tabOf: "main", ...(title ? { title } : {}) });
+  p.host(workspaces([MAIN, tab(2), tab(3, "Fix the login loop"), tab(4), tab(5, "Fix the login loop")], "main"));
+  assert.deepEqual(p.all(".tab-title").map((t) => t.textContent), ["New chat", "New chat 2", "Fix the login loop", "New chat 3", "Fix the login loop 2"]);
+  assert.equal(p.all(".tab-button")[3].getAttribute("aria-label"), "New chat 3");
+  assert.ok(p.button("Close tab New chat 3"), "each close button names its own tab");
 });
 
 test("tabs: one Tab stop (the shown tab); arrows, Home, and End show another; Delete closes; middle-click closes; double-click on empty space opens a tab", () => {

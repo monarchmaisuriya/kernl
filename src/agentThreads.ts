@@ -1,7 +1,8 @@
 // CLI agents' own sessions read for thread tags, shared by every tab of the window. Reading one starts a
-// short-lived agent process (up to 30 s), so a session is read once per version: the key carries the
-// session's last change as the agent listed it, and a newer one is read again. A read in progress is
-// shared by everyone who asks; a failed read isn't kept; the sessions used longest ago go past the limit.
+// short-lived agent process (up to 30 s), so a session is read once per version: the session's last
+// change as the agent listed it, and a newer one is read again. A session the agent gives no time for has
+// no version to compare, so its read isn't kept (each tag reads it fresh). A read in progress is shared by
+// everyone who asks; a failed read isn't kept; the sessions used longest ago go past the limit.
 import type { TranscriptEvent } from "./sessions";
 
 /** How many sessions are kept: a tag reads a session's whole replay. */
@@ -13,8 +14,12 @@ export class AgentThreadCache {
 
   constructor(private readonly max = MAX_SESSIONS) {}
 
-  /** The session's events for `key` (`<handle>@<updatedAt>`), read with `load` unless kept or being read; a string says why it couldn't be. */
-  get(key: string, load: () => Promise<TranscriptEvent[] | string>): Promise<TranscriptEvent[] | string> {
+  /**
+   * The session's events, read with `load` unless kept or being read; a string says why it couldn't be.
+   * `version`: when the agent last changed it (0 when the agent doesn't say).
+   */
+  get(handle: string, version: number, load: () => Promise<TranscriptEvent[] | string>): Promise<TranscriptEvent[] | string> {
+    const key = `${handle}@${version || "unknown"}`;
     const kept = this.read.get(key);
     if (kept) {
       // Used again: it's now the newest, last to go past the limit.
@@ -26,7 +31,7 @@ export class AgentThreadCache {
     if (pending) return pending;
     const started = load()
       .then((events) => {
-        if (typeof events !== "string") this.keep(key, events);
+        if (typeof events !== "string" && version) this.keep(key, events);
         return events;
       })
       .finally(() => this.reading.delete(key));
