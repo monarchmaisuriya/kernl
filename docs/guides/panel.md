@@ -37,7 +37,7 @@
   - `+` starts a new chat in the workspace you're looking at;
   - the branch icon creates a workspace;
   - the clock icon opens the Conversations view in place of the conversation: New conversation, a search box, the workspace's conversations (kept across restarts) at once, then the CLI agents' own sessions in this folder as each agent answers, with "Looking for … sessions" until it does (see [CLI agents](cli-agents.md#sessions-started-outside-kernl)). Pick one to open it. While the agent works, picking one asks first, then stops the agent, waits for its turn to end (up to 15 s), and opens it. Back (or Escape) returns to the conversation;
-  - `...` holds Choose agent, Manage providers, Agent logins, settings, Show connections, and Show loaded sources.
+  - the menu icon (three lines) holds Choose agent, Manage providers, Agent logins, settings, Show connections, and Show loaded sources.
   - Every list (agent, model, workspace, attach, conversations, setup steps) opens in the panel next to the button that opened it, with a search box for long lists; Escape or a click outside closes it. From the Command Palette, with the panel hidden, VS Code's own list is used. Typed answers (keys, names) still use VS Code's input box.
 - **Composer:** the message box runs the panel's full width, framed by a line above and below; its text lines up with the conversation's.
   - `+` attaches Files & Folders, another Conversation, a GitHub Issue, or a Pull Request;

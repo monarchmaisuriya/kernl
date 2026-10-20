@@ -66,7 +66,7 @@ test("the kernl menu, the editor toolbar's kernl submenu, and the commands agree
   const submenu = pkg.contributes.menus["kernl.menu"].map((m: any) => m.command);
   assert.deepEqual(submenu, QUICK_ACTIONS.map((a) => a.command), "same actions, same order");
   assert.deepEqual(pkg.contributes.menus["editor/title"], [{ submenu: "kernl.menu", group: "navigation@100" }]);
-  assert.deepEqual(pkg.contributes.submenus[0].icon, { light: "media/mark-light.png", dark: "media/mark.png" });
+  assert.deepEqual(pkg.contributes.submenus.find((m: any) => m.id === "kernl.menu").icon, { light: "media/mark-light.png", dark: "media/mark.png" });
   assert.equal(pkg.contributes.configuration.find((c: any) => c.properties?.["kernl.replaceChatButton"]).properties["kernl.replaceChatButton"].scope, "application", "user settings only: a repository can't turn it on");
 });
 

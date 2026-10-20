@@ -94,13 +94,19 @@
       {
         "command": "kernl.newChat",
         "title": "New chat",
-        "icon": "$(add)",
+        "icon": {
+          "light": "media/title/new-chat-light.svg",
+          "dark": "media/title/new-chat-dark.svg"
+        },
         "category": "kernl"
       },
       {
         "command": "kernl.newWorkspace",
         "title": "New workspace (git worktree)",
-        "icon": "$(git-branch)",
+        "icon": {
+          "light": "media/title/new-workspace-light.svg",
+          "dark": "media/title/new-workspace-dark.svg"
+        },
         "category": "kernl"
       },
       {
@@ -142,7 +148,10 @@
         "command": "kernl.sessions",
         "title": "Conversations",
         "category": "kernl",
-        "icon": "$(history)"
+        "icon": {
+          "light": "media/title/conversations-light.svg",
+          "dark": "media/title/conversations-dark.svg"
+        }
       },
       {
         "command": "kernl.clearHistory",
@@ -645,33 +654,34 @@
           "group": "navigation@3"
         },
         {
-          "command": "kernl.pickHarness",
+          "submenu": "kernl.panelMenu",
           "when": "view == kernl.panel",
+          "group": "navigation@4"
+        }
+      ],
+      "kernl.panelMenu": [
+        {
+          "command": "kernl.pickHarness",
           "group": "1_agent@1"
         },
         {
           "command": "kernl.manageProviders",
-          "when": "view == kernl.panel",
           "group": "1_agent@2"
         },
         {
           "command": "kernl.agentLogins",
-          "when": "view == kernl.panel",
           "group": "1_agent@3"
         },
         {
           "command": "kernl.openSettings",
-          "when": "view == kernl.panel",
           "group": "3_settings@1"
         },
         {
           "command": "kernl.showConnections",
-          "when": "view == kernl.panel",
           "group": "3_settings@2"
         },
         {
           "command": "kernl.showSources",
-          "when": "view == kernl.panel",
           "group": "3_settings@3"
         }
       ],
@@ -796,6 +806,14 @@
       }
     ],
     "submenus": [
+      {
+        "id": "kernl.panelMenu",
+        "label": "More kernl actions",
+        "icon": {
+          "light": "media/title/menu-light.svg",
+          "dark": "media/title/menu-dark.svg"
+        }
+      },
       {
         "id": "kernl.menu",
         "label": "kernl",

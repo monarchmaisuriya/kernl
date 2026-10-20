@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- The panel's title bar icons (New chat, New workspace, Conversations) are slightly smaller, and kernl's other actions (Choose agent, Manage providers, Agent logins, settings, connections, sources) moved from VS Code's `...` into a menu button with a three-line icon.
+
 ## [0.10.5] - 2026-10-20
 
 ### Fixed
