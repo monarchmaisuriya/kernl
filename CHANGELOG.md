@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-10-20
+
 ### Fixed
 
 - The integration suite's panel check no longer fails when the panel loaded before the check started, and the suite's timeline now shows when the panel loads (test-only; kernl behaves the same).
@@ -247,7 +249,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.4...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.5...HEAD
+[0.10.5]: https://github.com/pushowl/kernl/compare/v0.10.4...v0.10.5
 [0.10.4]: https://github.com/pushowl/kernl/compare/v0.10.3...v0.10.4
 [0.10.3]: https://github.com/pushowl/kernl/compare/v0.10.2...v0.10.3
 [0.10.2]: https://github.com/pushowl/kernl/compare/v0.10.1...v0.10.2
