@@ -39,6 +39,8 @@ test("every row's first text or icon sits on one content line: each left offset 
   assert.match(css, /--content-inset: 10px;/);
   for (const selector of [".tab-button", ".composer", ".footer", ".plan-bar > summary", ".banner"]) assert.match(rule(selector), /var\(--content-inset\)/, `${selector} uses the content line`);
   assert.match(rule(".tab-bar"), /margin: 0 calc\(-1 \* var\(--gutter\)\); padding: 0 8px 0 var\(--gutter\);/, "the tab row's borders run the panel's full width, and its first cell starts at the edge line");
+  assert.match(rule(".composer"), /margin: 0 calc\(-1 \* var\(--gutter\)\);.*padding: 8px calc\(var\(--gutter\) \+ 8px\) 6px calc\(var\(--gutter\) \+ var\(--content-inset\)\);/, "the message box runs the panel's full width, and its text stays on the content line");
+  assert.doesNotMatch(rule(".composer"), /border-radius|border:/, "the message box is framed by a line above and below, not a card");
   assert.match(rule("#app"), /padding: 0 var\(--gutter\) 10px;/, "the panel's side margin is the one --gutter");
   assert.match(rule(".composer .attach"), /margin-left: -4px;/, "the + sits on the line with the text");
   assert.doesNotMatch(rule(".tab-button"), /justify-content: center/, "a cell's title starts on the content line (not centered)");

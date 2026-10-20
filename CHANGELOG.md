@@ -7,6 +7,7 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 ### Changed
 
 - The tab row is framed by a line above and below across the panel, and tabs are cells divided by lines on the panel's own background (no filled card). The shown tab is marked by full-strength text, and the first title lines up with the message box's text.
+- The message box runs the panel's full width, framed by a line above and below (no rounded card); its text stays on the same line as before.
 
 ## [0.10.3] - 2026-10-20
 
