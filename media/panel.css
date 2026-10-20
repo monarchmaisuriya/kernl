@@ -326,6 +326,7 @@ button.chip:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
 .suggestion.selected { background: var(--list-focus-bg); color: var(--list-focus-fg); }
 .suggestion-label { font-family: var(--font-mono); font-size: 0.92em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .suggestion-detail { color: var(--muted); font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggestion-hint { color: var(--muted); font-family: var(--font-mono); font-size: 0.85em; white-space: nowrap; }
 
 /* Footer */
 .footer { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 0 2px; }

@@ -3,13 +3,15 @@
 // agent runs). The work, approvals, and reply stay in the panel, where the diffs and checkpoints are.
 
 export interface ChatForwarding {
-  /** Sends to the shown kernl workspace; says where it went, or why it couldn't. */
-  forward(text: string, files: readonly string[]): Promise<{ workspace: string; agent: string; queued: boolean } | { error: string }>;
+  /** Sends to the shown kernl workspace, or runs one of kernl's own commands there; says where it went, or why it couldn't. */
+  forward(text: string, files: readonly string[]): Promise<{ workspace: string; agent: string; queued: boolean } | { workspace: string; ran: string } | { error: string }>;
 }
 
 /** The parts of a chat request and response stream the handler uses (so tests can pass fakes). */
 export interface ChatRequestLike {
   prompt: string;
+  /** One of kernl's commands picked in VS Code's chat (`@kernl /new`): the prompt is then what follows it. */
+  command?: string;
   references: readonly { value: unknown }[];
 }
 export interface ChatStreamLike {
@@ -33,7 +35,7 @@ export function referencedFiles(references: ChatRequestLike["references"]): stri
 }
 
 export async function handleKernlRequest(request: ChatRequestLike, stream: ChatStreamLike, forwarding: ChatForwarding): Promise<void> {
-  const text = request.prompt.trim();
+  const text = (request.command ? `/${request.command} ${request.prompt}` : request.prompt).trim();
   if (!text) {
     stream.markdown("Tell kernl what to do, for example `@kernl fix the failing test`. It goes to the kernl panel.");
     stream.button({ command: "kernl.open", title: "Open kernl" });
@@ -42,6 +44,8 @@ export async function handleKernlRequest(request: ChatRequestLike, stream: ChatS
   const result = await forwarding.forward(text, referencedFiles(request.references));
   if ("error" in result) {
     stream.markdown(`kernl couldn't take this: ${result.error}`);
+  } else if ("ran" in result) {
+    stream.markdown(`Ran kernl's **/${result.ran}** in **${result.workspace}**.`);
   } else {
     stream.markdown(`${result.queued ? "Queued in" : "Sent to"} kernl: **${result.agent}** in **${result.workspace}**. The work and any approvals are in the kernl panel.`);
   }

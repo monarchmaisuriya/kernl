@@ -13,7 +13,7 @@ import { createMenu } from "./menu";
 import { isPanelDrop } from "./dropData";
 import { createMessageActions, type MessageActions } from "./messageActions";
 import { createModeMenu, modeIcon } from "./modeMenu";
-import { commandFor, menuRows, type PanelCommand, type PanelCommandName } from "./panelCommands";
+import { commandAvailable, commandFor, menuRows, type PanelCommand, type PanelCommandName } from "../ui/panelCommands";
 import { createSendMenu, sendModeOf } from "./sendMenu";
 import { type ContextUsage, createContextRing } from "./contextRing";
 import { createPlanBar } from "./planBar";
@@ -190,12 +190,16 @@ workspaceChip.dataset.anchor = "workspace";
 // The permission mode: opens a menu of the modes this workspace's agent supports.
 const modeChip = el("button", "chip mode");
 const modeMenu = createModeMenu((mode) => send({ type: "setMode", workspace: active, mode }));
-modeChip.addEventListener("click", (e) => {
-  e.stopPropagation();
+/** The mode chip's menu, opened from the chip or by /mode (through the host). */
+function toggleModeMenu() {
   const p = pane(active);
   if (!p || status?.restricted || p.view.modes.length < 2) return;
   if (modeMenu.isOpen()) modeMenu.close();
   else modeMenu.open(p.view.modes, p.view.mode);
+}
+modeChip.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleModeMenu();
 });
 document.addEventListener("click", (e) => {
   if (modeMenu.isOpen() && !modeMenu.menu.contains(e.target as Node)) modeMenu.close();
@@ -588,55 +592,15 @@ function agentSlash(p: Pane): SkillView[] {
   return p.view.harness.startsWith("deepagents") ? kernlSkills : (p.commands ?? []);
 }
 
-/** Whether a kernl command can run in the shown tab: the control it stands for is there and usable. */
-function commandAvailable(p: Pane, c: PanelCommand): boolean {
-  switch (c.name) {
-    case "close":
-      return !!p.view.tabOf;
-    case "agent":
-      return !agentChip.disabled;
-    case "model":
-      return !modelChip.hidden && !modelChip.disabled;
-    case "mode":
-      return !modeChip.disabled;
-    default:
-      return true;
-  }
-}
+/** Whether a kernl command can run in the shown tab (the host decides the same way when it runs it). */
+const available = (p: Pane, c: PanelCommand) => commandAvailable(c, p.view, !!status?.restricted);
 
-/** A kernl command, run in the shown tab the way its control runs it. */
-function runCommand(name: PanelCommandName) {
-  switch (name) {
-    case "new":
-      return send({ type: "newChat", workspace: active });
-    case "tab":
-      return send({ type: "newTab" });
-    case "close":
-      return send({ type: "closeTab", workspace: active });
-    case "conversations":
-      return send({ type: "showConversations" });
-    case "agent":
-      return agentChip.click();
-    case "model":
-      return modelChip.click();
-    case "mode":
-      return modeChip.click();
-    case "connections":
-      return connectionsView.show();
-    case "settings":
-      return send({ type: "openSettings" });
-    case "help":
-      return send({ type: "showHelp" });
-    default: {
-      const unhandled: never = name;
-      throw new Error(`kernl's /${unhandled} command has no action`);
-    }
-  }
-}
+/** A kernl command, run by the host in the shown tab. */
+const runCommand = (name: PanelCommandName) => send({ type: "runCommand", workspace: active, name });
 
 /** A kernl command typed in full and sent: run it and clear the box, or say why not and keep the text. */
 function runTyped(p: Pane, match: NonNullable<ReturnType<typeof commandFor>>) {
-  const why = "refusal" in match ? match.refusal : commandAvailable(p, match.command) ? undefined : match.command.unavailable;
+  const why = "refusal" in match ? match.refusal : available(p, match.command) ? undefined : match.command.unavailable;
   if (why || "refusal" in match) {
     p.log.append(el("div", "note", why ?? ""));
     return scroll();
@@ -650,8 +614,8 @@ function runTyped(p: Pane, match: NonNullable<ReturnType<typeof commandFor>>) {
 /** The "/" menu: kernl's commands, then the agent's commands or skills; kernl's of a name the agent also offers come last, so Enter picks the agent's. */
 function slashRows(p: Pane, query: string): SlashRow[] {
   const offered = agentSlash(p);
-  const kernl = menuRows(query, new Set(offered.map((s) => s.name)), (c) => commandAvailable(p, c)).map((r) => ({ ...r, run: () => runCommand(r.command.name as PanelCommandName) }));
-  const agent = offered.filter((s) => s.name.startsWith(query)).map((s) => ({ label: `/${s.name}`, detail: s.description }));
+  const kernl = menuRows(query, new Set(offered.map((s) => s.name)), (c) => available(p, c)).map((r) => ({ ...r, run: () => runCommand(r.command.name as PanelCommandName) }));
+  const agent = offered.filter((s) => s.name.startsWith(query)).map((s) => ({ label: `/${s.name}`, hint: s.hint, detail: s.description }));
   return [...kernl.filter((r) => !r.clash), ...agent, ...kernl.filter((r) => r.clash)];
 }
 attachments.setSlashRows((query) => {
@@ -1018,6 +982,9 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       break;
     case "notice":
       p.log.append(el("div", "note", m.text));
+      break;
+    case "openModeMenu":
+      if (m.workspace === active && !modeMenu.isOpen()) toggleModeMenu();
       break;
     case "cleared":
       p.log.replaceChildren();

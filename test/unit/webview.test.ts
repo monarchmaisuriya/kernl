@@ -529,24 +529,27 @@ test("/ lists kernl's own commands for every agent; choosing or typing one runs 
   assert.deepEqual(labels(), ["/new", "/conversations", "/connections", "/connect-db"]);
   assert.equal(p.all(".suggestion .suggestion-detail")[0].textContent, "New chat in this tab · kernl");
   key(p, "Enter");
-  assert.deepEqual(p.sent.at(-1), { type: "newChat", workspace: "main" });
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "main", name: "new" });
   assert.equal(input.value, "");
 
   // Tab only completes a kernl command's name; Enter then runs it.
   input = type(p, "/ta");
   key(p, "Tab");
   assert.equal(input.value, "/tab ");
-  assert.ok(!p.sent.some((m) => m.type === "newTab"), "Tab doesn't run it");
+  assert.ok(!p.sent.some((m) => m.type === "runCommand" && m.name === "tab"), "Tab doesn't run it");
   key(p, "Enter");
-  assert.deepEqual(p.sent.at(-1), { type: "newTab" });
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "main", name: "tab" });
   assert.equal(input.value, "");
 
+  // The host runs every command; /mode comes back as a request to open the mode chip's menu.
   type(p, "/mode");
   key(p, "Enter");
-  assert.equal(p.doc.querySelector<HTMLElement>(".mode-menu")!.hidden, false, "/mode opens the mode chip's menu");
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "main", name: "mode" });
+  p.host({ type: "openModeMenu", workspace: "main" });
+  assert.equal(p.doc.querySelector<HTMLElement>(".mode-menu")!.hidden, false, "the mode chip's menu opens");
   type(p, "/help");
   key(p, "Enter");
-  assert.deepEqual(p.sent.at(-1), { type: "showHelp" });
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "main", name: "help" });
 
   // Typed in full with text after it: a note, and the text stays.
   input = type(p, "/new fix it");
@@ -555,8 +558,11 @@ test("/ lists kernl's own commands for every agent; choosing or typing one runs 
   assert.equal(p.visibleLog().lastElementChild!.textContent, "/new takes nothing after it.");
 
   // A CLI agent that offers /resume: "/res" lists only the agent's, which is sent as text; /kernl:resume reaches kernl.
-  p.host({ type: "commands", workspace: "wt:fix", items: [{ name: "resume", description: "Resume a session" }] });
+  p.host({ type: "commands", workspace: "wt:fix", items: [{ name: "resume", description: "Resume a session" }, { name: "review", description: "Review the changes", hint: "[instructions]" }] });
   p.host(workspaces([{ ...MAIN, modes }, WT], "wt:fix"));
+  type(p, "/rev");
+  assert.deepEqual(labels(), ["/review"]);
+  assert.equal(p.all(".suggestion .suggestion-hint")[0].textContent, "[instructions]", "what the agent's command takes");
   input = type(p, "/res");
   assert.deepEqual(labels(), ["/resume"]);
   key(p, "Enter");
@@ -565,7 +571,7 @@ test("/ lists kernl's own commands for every agent; choosing or typing one runs 
   assert.equal(sends().at(-1)?.text, "/resume");
   type(p, "/kernl:resume");
   key(p, "Enter");
-  assert.deepEqual(p.sent.at(-1), { type: "showConversations" });
+  assert.deepEqual(p.sent.at(-1), { type: "runCommand", workspace: "wt:fix", name: "conversations" });
   assert.equal(sends().length, 1, "only the agent's command was sent");
 });
 

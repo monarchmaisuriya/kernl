@@ -1,7 +1,8 @@
 // kernl's own slash commands: which messages they take, which they leave to the agent, and the menu rows.
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { commandFor, menuRows, PANEL_COMMANDS, type PanelCommand } from "../../src/webview/panelCommands";
+import { commandAvailable, commandFor, menuRows, PANEL_COMMANDS, type PanelCommand } from "../../src/ui/panelCommands";
+import type { WorkspaceView } from "../../src/ui/protocol";
 
 const none = new Set<string>();
 const name = (r: ReturnType<typeof commandFor>) => (r && "command" in r ? r.command.name : r);
@@ -45,4 +46,21 @@ test("menu rows match a name or alias prefix (exact first, not an alias the agen
   assert.deepEqual(labels("c", none, (c) => c.name !== "close"), ["/new", "/conversations", "/connections"]);
   assert.equal(menuRows("tab", none, all)[0].detail, "New tab · kernl");
   assert.equal(menuRows("mo", new Set(["model"]), all)[0].clash, true);
+});
+
+test("availability comes from the workspace's view: a tab to close, an idle agent, a model to choose, two or more modes outside Restricted Mode", () => {
+  const view: WorkspaceView = { id: "main", label: "Main", harness: "claude-code", running: false, waiting: 0, disclosure: "", queue: [], queuePaused: false, mode: "ask", modes: [] };
+  const can = (name: string, v: WorkspaceView, restricted = false) => commandAvailable(PANEL_COMMANDS.find((c) => c.name === name)!, v, restricted);
+  const mode = { id: "ask", label: "Ask", icon: "shield", description: "" };
+  const model = { id: "model", name: "Model", kind: "model" as const, value: "big" };
+  assert.equal(can("close", view), false);
+  assert.equal(can("close", { ...view, id: "main~2", tabOf: "main" }), true);
+  assert.equal(can("agent", { ...view, running: true }), false);
+  assert.equal(can("model", view), false, "a CLI agent without a model option");
+  assert.equal(can("model", { ...view, agentOptions: [model] as any }), true);
+  assert.equal(can("model", { ...view, agentOptions: [model] as any, running: true }), false);
+  assert.equal(can("model", { ...view, harness: "deepagents" }), true, "kernl's own agent always has the model chip");
+  assert.equal(can("mode", { ...view, modes: [mode, { ...mode, id: "plan" }] }), true);
+  assert.equal(can("mode", { ...view, modes: [mode, { ...mode, id: "plan" }] }, true), false, "Restricted Mode");
+  assert.equal(can("help", view), true);
 });

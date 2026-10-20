@@ -4,7 +4,7 @@ import { strict as assert } from "node:assert";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { PANEL_COMMANDS } from "../../src/webview/panelCommands";
+import { PANEL_COMMANDS } from "../../src/ui/panelCommands";
 
 const guides = resolve(__dirname, "../../docs/guides");
 const read = (file: string) => readFileSync(resolve(guides, file), "utf8");

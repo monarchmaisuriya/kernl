@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { type ChatForwarding, handleKernlRequest, referencedFiles } from "../../src/chatRequest";
 import { applyChatButtonReplacement, QUICK_ACTIONS, type SavedValue, statusBarText, type UserSetting } from "../../src/quickAccess";
+import { PANEL_COMMANDS } from "../../src/ui/panelCommands";
 
 function fakes(initial: unknown, exists = true) {
   let value = initial;
@@ -92,4 +93,33 @@ test("@kernl while the agent works says it's queued; an empty request or no work
   assert.match(out.at(-1)!, /Tell kernl what to do/);
   await handleKernlRequest({ prompt: "x", references: [] }, stream, { forward: async () => ({ error: "Open a folder first." }) });
   assert.equal(out.at(-1), "kernl couldn't take this: Open a folder first.");
+});
+
+test("@kernl /new: a command picked in VS Code's chat reaches kernl as /new, and the reply says it ran", async () => {
+  const out: string[] = [];
+  const forwarded: string[] = [];
+  const stream = { markdown: (t: string) => out.push(t), button: () => {} };
+  await handleKernlRequest({ command: "new", prompt: "", references: [] }, stream, { forward: async (text) => (forwarded.push(text), { workspace: "Main", ran: "new" }) });
+  assert.deepEqual(forwarded, ["/new"]);
+  assert.equal(out[0], "Ran kernl's **/new** in **Main**.");
+  await handleKernlRequest({ command: "new", prompt: "fix it", references: [] }, stream, { forward: async (text) => (forwarded.push(text), { error: "/new takes nothing after it." }) });
+  assert.equal(forwarded.at(-1), "/new fix it", "the text after it goes along, so kernl can refuse it");
+});
+
+test("@kernl lists exactly kernl's commands in VS Code's chat", () => {
+  const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../package.json"), "utf8"));
+  assert.deepEqual(pkg.contributes.chatParticipants[0].commands.map((c: any) => c.name), PANEL_COMMANDS.map((c) => c.name));
+});
+
+test("tab shortcuts act only while kernl's panel has focus; Cmd+W on the first tab does nothing instead of closing an editor", () => {
+  const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../package.json"), "utf8"));
+  const bound = (command: string) => pkg.contributes.keybindings.filter((k: any) => k.command === command);
+  for (const [command, mac] of [["kernl.newTab", "cmd+t"], ["kernl.closeTab", "cmd+w"], ["kernl.nextTab", undefined], ["kernl.previousTab", undefined]] as const) {
+    const [k] = bound(command);
+    assert.ok(k, `${command} has a key`);
+    assert.match(k.when, /^focusedView == kernl\.panel\b/, `${command} only in kernl's panel`);
+    if (mac) assert.equal(k.mac, mac);
+  }
+  assert.match(bound("kernl.closeTab")[0].when, /&& kernl\.tabClosable$/);
+  assert.deepEqual(bound("noop").map((k: any) => [k.mac, k.when]), [["cmd+w", "focusedView == kernl.panel && !kernl.tabClosable"]]);
 });

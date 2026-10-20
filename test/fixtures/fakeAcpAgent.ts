@@ -181,7 +181,7 @@ new acp.AgentSideConnection((conn) => ({
       await send({ sessionUpdate: "tool_call_update", toolCallId: "e1", status: "completed", content: [{ type: "diff", path: join(cwd, "src/a.ts"), oldText: "a\nb\n", newText: "a\nB\nc\n" }] });
       await send({ sessionUpdate: "plan", entries: [{ content: "Read the hook", status: "completed", priority: "high" }, { content: "Explain it", status: "in_progress", priority: "medium" }] });
       await send({ sessionUpdate: "usage_update", used: 150000, size: 200000, cost: { amount: 0.42, currency: "USD" } });
-      await send({ sessionUpdate: "available_commands_update", availableCommands: [{ name: "review", description: "Review the changes" }] });
+      await send({ sessionUpdate: "available_commands_update", availableCommands: [{ name: "review", description: "Review the changes", input: { hint: "[instructions]" } }] });
       await send({ sessionUpdate: "session_info_update", title: "Explain the rewards hook" });
       mode = "plan";
       await send({ sessionUpdate: "config_option_update", configOptions: [modeOption()] });

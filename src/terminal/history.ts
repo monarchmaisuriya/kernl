@@ -49,6 +49,26 @@ function credentialFile(commandLine: string): string | undefined {
     .find((t) => t && isSensitivePath(t));
 }
 
+/** What an agent gets instead of the output of a command that names a credential-like file. */
+const hiddenOutput = (file: string) => `[output hidden: this command names a credential-like file (${file}). Read that file itself: kernl asks the user before its contents go to the model.]`;
+
+/**
+ * The command line in VS Code's own view of a terminal's last command (its terminal_last_command tool, as
+ * VS Code 1.142 writes it: a fixed line, then the command); undefined when the text isn't in that form.
+ */
+export function screenCommand(text: string): string | undefined {
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => /^The following (?:is the last command run|command is currently executing) in the terminal:$/.test(l.trim()));
+  return at < 0 ? undefined : lines[at + 1]?.trim() || undefined;
+}
+
+/** VS Code's view of the last command, with its output hidden when the command names a credential-like file. */
+export function hideScreenCredentials(text: string): string {
+  const command = screenCommand(text);
+  const file = command && credentialFile(command);
+  return file ? `The last command was: ${command}\n${hiddenOutput(file)}` : text;
+}
+
 export interface TerminalSummary {
   /** 1-based, in the window's terminal order: how an agent names a terminal when names repeat. */
   index: number;
@@ -150,6 +170,29 @@ export class TerminalHistory implements vscode.Disposable {
     return (this.commands.get(terminal)?.length ?? 0) > 0;
   }
 
+  /**
+   * Why the user's selection in the active terminal isn't handed to an agent, or undefined: it shares a
+   * line with the output of a command that names a credential-like file. With nothing recorded there,
+   * `screen` (VS Code's view of the last command) decides.
+   */
+  selectionHidden(selection: string, screen?: string): string | undefined {
+    const terminal = this.events.activeTerminal();
+    const recorded = terminal ? (this.commands.get(terminal) ?? []) : [];
+    if (!recorded.length) {
+      const command = screen && screenCommand(screen);
+      const file = command && credentialFile(command);
+      return file ? hiddenOutput(file) : undefined;
+    }
+    const lines = selection.split("\n").map((l) => l.trim()).filter((l) => l.length >= 4);
+    for (const c of recorded) {
+      const file = credentialFile(c.commandLine);
+      if (!file) continue;
+      const output = cleanTerminalOutput(c.raw, RAW_LIMIT).text;
+      if (lines.some((l) => output.includes(l))) return hiddenOutput(file);
+    }
+    return undefined;
+  }
+
   /** The terminal's last `count` commands with their output, oldest first, as text for an agent. */
   read(terminal: vscode.Terminal, count = 5): string {
     const cmds = (this.commands.get(terminal) ?? []).slice(-Math.max(1, Math.min(count, COMMANDS_KEPT)));
@@ -166,7 +209,7 @@ export class TerminalHistory implements vscode.Disposable {
     for (const c of [...cmds].reverse()) {
       const secret = credentialFile(c.commandLine);
       const { text, truncated } = secret
-        ? { text: `[output hidden: this command names a credential-like file (${secret}). Read that file itself: kernl asks the user before its contents go to the model.]`, truncated: false }
+        ? { text: hiddenOutput(secret), truncated: false }
         : cleanTerminalOutput(c.raw, Math.min(OUTPUT_PER_COMMAND, Math.max(room, 200)));
       room -= text.length;
       const status = c.exitCode === undefined ? "still running" : c.exitCode === null ? "exit code unknown" : `exit code ${c.exitCode}`;

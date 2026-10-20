@@ -4,6 +4,22 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- kernl's own commands also work in Ask kernl and in VS Code's chat: `@kernl /` lists them and `@kernl /new` runs one, replying what ran.
+- The `/` menu shows what an agent's command takes when the agent says (`/review [instructions]`).
+- Tab shortcuts while kernl's panel has focus: Cmd+T (Ctrl+T) new tab, Cmd+W (Ctrl+W) close the shown tab, Ctrl+Tab and Ctrl+Shift+Tab next and previous tab.
+- The browser snapshot includes frames from the same site, and clicks, typing, and the covered check work inside them.
+
+### Changed
+
+- A CLI agent's own session tagged in several tabs is read once for the window, and again only after the agent reports it changed.
+
+### Fixed
+
+- Cmd+W in kernl's panel no longer closes the editor next to it.
+- A terminal selection or VS Code's own view of the last command no longer hands an agent the output of a command that names a credential file (`cat .env`).
+
 ## [0.8.1] - 2026-10-20
 
 ### Fixed
@@ -56,7 +72,6 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 ### Added
 
 - Tag other conversations in a message: `@` lists conversations from every workspace of the window and every agent next to files, and **+ → Conversations...** does the same. A tagged conversation shows as a chip, and on Send the agent (any agent, any model provider) gets its first request and newest turns as text, up to 20,000 characters, saying how many turns were left out. See [the panel](docs/guides/panel.md).
-
 - Tabs, like Cursor's: `+` in the strip above the conversation opens another session in the same folder (its own conversation, agent, model, and queue), working while you look at another. `kernl.tabs.max` (default 5) caps them; at the limit the tab shown longest ago that isn't working closes, and its conversation stays in Conversations. Tabs come back after a reload.
 - Queued messages can be edited: click one, change it, and press Enter. It doesn't send while you edit it.
 - **Conversations** is a view in place of the conversation, with Back (or Escape) and a search box, instead of a popup menu.

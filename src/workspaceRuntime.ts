@@ -39,6 +39,7 @@ import { runInTerminalTool, sendInputTool } from "./terminal/tool";
 import { gatedTool } from "./gate/gatedTool";
 import { type AgentOptionView, type Attachment, type HostToPanel, MAX_ATTACHED_TEXT, type SendMode, type ThreadRef, threadHandle, type WorkspaceView } from "./ui/protocol";
 import type { Checkpoints } from "./checkpoints";
+import type { AgentThreadCache } from "./agentThreads";
 import { cutHistory, type QueuedMessage, replayTranscript, type SessionRecord, type SessionStore, threadExcerpt, threadPage, threadTurns, type TranscriptEvent, turnsAfter } from "./sessions";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, relative, sep } from "node:path";
@@ -109,6 +110,8 @@ export interface RuntimeHost {
   scrub(text: string): string;
   /** Whether a folder is one of the window's workspaces (where a tagged agent session may be read). */
   knownRoot(root: string): boolean;
+  /** CLI agents' sessions read for tags, shared by the window's tabs. */
+  agentThreads: AgentThreadCache;
   /** VS Code's per-window state (workspaceState): the CLI agents' remembered model, thinking, and fast-mode choices. */
   state: Pick<vscode.Memento, "get" | "update">;
 }
@@ -148,6 +151,8 @@ export class WorkspaceRuntime {
   private starting = false;
   /** Stop was pressed while the snapshot was taken or the runner was built: the agent doesn't get the message. */
   private stopBeforeStart = false;
+  /** The CLI agent's own slash commands (ACP): kernl's commands of the same names leave them to the agent. */
+  commandNames: readonly string[] = [];
   /** Sends and session loads in progress: what stopAndWait waits for. */
   private runs = new Set<Promise<unknown>>();
   /** stopAndWait is ending the run to leave this conversation: queued messages don't send meanwhile. */
@@ -672,12 +677,9 @@ export class WorkspaceRuntime {
     );
   }
 
-  /** CLI agents' own sessions read for tags in this tab, by handle: read once, then reused by read_thread. */
-  private agentThreads = new Map<string, TranscriptEvent[]>();
-
   /**
    * A tagged thread's transcript: kernl's stored conversation, or a CLI agent's own session read through
-   * the agent (once per tab). A string says why it can't be read.
+   * the agent (once per version, for the whole window). A string says why it can't be read.
    */
   private async threadEvents(t: ThreadRef): Promise<{ events: TranscriptEvent[]; title?: string; updatedAt?: number } | string> {
     const s = t.agentSession;
@@ -685,14 +687,11 @@ export class WorkspaceRuntime {
       const record = await this.host.sessions.load(t.workspaceKey, t.id).catch((err) => `it couldn't be read (${err?.message ?? err})`);
       return typeof record === "string" ? record : record ? { events: record.events, title: record.title, updatedAt: record.updatedAt } : "it was deleted";
     }
-    const handle = threadHandle(t);
-    const cached = this.agentThreads.get(handle);
-    if (cached) return { events: cached };
-    if (!isCliAgentId(s.agent) || !this.host.knownRoot(s.root)) return "it isn't a session of an agent in this window's folders";
-    const events = await this.readAgentSession(s.agent, s.sessionId, s.root);
-    if (typeof events === "string") return events;
-    this.agentThreads.set(handle, events);
-    return { events };
+    const agent = s.agent;
+    if (!isCliAgentId(agent) || !this.host.knownRoot(s.root)) return "it isn't a session of an agent in this window's folders";
+    // The version the tag saw: read_thread later reads the same one, and a newer session is read again.
+    const events = await this.host.agentThreads.get(`${threadHandle(t)}@${t.updatedAt}`, () => this.readAgentSession(agent, s.sessionId, s.root));
+    return typeof events === "string" ? events : { events };
   }
 
   /**
@@ -1116,7 +1115,10 @@ export class WorkspaceRuntime {
       thinking: (delta) => delta && this.post({ type: "thinking", workspace: ws, delta }),
       plan: (entries) => this.post({ type: "plan", workspace: ws, entries }),
       context: (usage) => this.post({ type: "context", workspace: ws, ...usage }),
-      commands: (items) => this.post({ type: "commands", workspace: ws, items }),
+      commands: (items) => {
+        this.commandNames = items.map((c) => c.name);
+        this.post({ type: "commands", workspace: ws, items });
+      },
       title: (title) => {
         this.session.agentTitle = title;
         this.host.workspacesChanged();

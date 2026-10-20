@@ -21,7 +21,7 @@ Add a --dry-run flag to scripts/release.mjs that prints the steps without runnin
 - `+` attaches files and folders, another conversation, a GitHub issue, or a pull request.
 - In the Explorer, right-click files and pick **Add to kernl chat**.
 - In an editor, **Ask kernl about this file or selection** (kernl menu) attaches the selected lines.
-- `Ctrl+Alt+Shift+K` (**Ask kernl…**) takes a one-line request from anywhere and sends it to the workspace the panel shows.
+- `Ctrl+Alt+Shift+K` (**Ask kernl…**) takes a one-line request from anywhere and sends it to the workspace the panel shows. kernl's own commands work there too.
 
 For example, type `@app`, pick `src/app.ts`, and finish the message:
 
@@ -50,6 +50,7 @@ Type `/` to list them. They run at once, even while the agent works, and are nev
 
 - The same `/` menu lists the agent's own commands (Claude Code's `/compact`, for example) or, for kernl's agent, your skills.
 - When the agent has a command of the same name, `/<name>` goes to the agent and kernl's is `/kernl:<name>`.
+- They also work in Ask kernl, and in VS Code's chat as `@kernl /new`, `@kernl /tab`, and so on.
 - kernl's commands take nothing after them: `/new fix it` isn't sent, and a note says why.
 - Enter or a click runs the highlighted command; Tab only puts its name in the box.
 

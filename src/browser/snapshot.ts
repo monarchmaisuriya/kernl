@@ -37,19 +37,24 @@ export function newRefs(): (backendNodeId: number) => string {
   return (id) => refs.get(id) ?? (refs.set(id, `e${refs.size + 1}`), refs.get(id)!);
 }
 
+/** A frame inside the page: its tree, or none when kernl can't read it (a frame from another site). */
+export interface FrameTree {
+  url: string;
+  nodes?: readonly AxNode[];
+}
+
 /**
  * `refOf` names an element by its page node. The browser passes one that keeps an element's ref across
  * snapshots and never gives a ref to another element, so an approved ref still means the approved element.
+ * `frames`: the page's frames, each outlined after the page under its address.
  */
-export function outline(nodes: readonly AxNode[], page: { href: string; title: string }, refOf: (backendNodeId: number) => string = newRefs()): Snapshot {
-  const byId = new Map(nodes.map((n) => [n.nodeId, n]));
-  const root = nodes.find((n) => !n.parentId) ?? nodes[0];
+export function outline(nodes: readonly AxNode[], page: { href: string; title: string }, refOf: (backendNodeId: number) => string = newRefs(), frames: readonly FrameTree[] = []): Snapshot {
   const refs: Snapshot["refs"] = new Map();
   const lines: string[] = [];
   let truncated = false;
   const prop = (n: AxNode, name: string) => n.properties?.find((p) => p.name === name)?.value?.value;
 
-  const visit = (n: AxNode | undefined, depth: number) => {
+  const visit = (byId: Map<string, AxNode>, n: AxNode | undefined, depth: number) => {
     if (!n || truncated) return;
     const role = n.role?.value ?? "";
     const name = String(n.name?.value ?? "").replace(/\s+/g, " ").trim();
@@ -81,9 +86,15 @@ export function outline(nodes: readonly AxNode[], page: { href: string; title: s
     if (lines.length >= MAX_LINES) truncated = true;
     // Text inside a named element (a button's label) repeats its name: skipped.
     if (shown && ACTIONABLE.has(role)) return;
-    for (const id of n.childIds ?? []) visit(byId.get(id), shown ? depth + 1 : depth);
+    for (const id of n.childIds ?? []) visit(byId, byId.get(id), shown ? depth + 1 : depth);
   };
-  visit(root, 0);
+  const tree = (treeNodes: readonly AxNode[], depth: number) => visit(new Map(treeNodes.map((n) => [n.nodeId, n])), treeNodes.find((n) => !n.parentId) ?? treeNodes[0], depth);
+  tree(nodes, 0);
+  for (const f of frames) {
+    if (truncated) break;
+    lines.push(`- frame ${JSON.stringify(f.url)}${f.nodes?.length ? "" : " (from another site: kernl can't read inside it)"}`);
+    if (f.nodes?.length) tree(f.nodes, 1);
+  }
 
   let body = lines.join("\n");
   if (body.length > MAX_CHARS) (body = body.slice(0, MAX_CHARS)), (truncated = true);

@@ -1,6 +1,7 @@
 // The only contract between the extension host and the panel webview. Both sides import this file.
 import type { ConnectionStatus, FixAction } from "../connections/types";
 import type { ConversationPick, ConversationRow } from "./conversationRows";
+import type { PanelCommandName } from "./panelCommands";
 
 export interface ApprovalCard {
   id: string;
@@ -96,6 +97,8 @@ export const MAX_ATTACHED_TEXT = 20_000;
 export interface SkillView {
   name: string;
   description: string;
+  /** What the command takes, as the agent describes it (ACP `input.hint`, for example "[instructions]"). */
+  hint?: string;
 }
 
 /** The attachments line every agent gets with a message, whatever else its protocol carries. */
@@ -252,7 +255,9 @@ export type HostToPanel =
   /** The Conversations view's rows for a workspace (sent again as each agent's sessions arrive); `open`: show the view. */
   | { type: "conversations"; workspace: string; title: string; rows: ConversationRow[]; open?: boolean }
   /** A one-line note in the transcript, e.g. "Settings changed: the next message starts a new conversation." */
-  | { type: "notice"; workspace: string; text: string };
+  | { type: "notice"; workspace: string; text: string }
+  /** /mode (from any entry point): open the mode chip's menu. */
+  | { type: "openModeMenu"; workspace: string };
 
 export type PanelToHost =
   | { type: "ready" }
@@ -286,12 +291,8 @@ export type PanelToHost =
   /** The tab strip: a new tab for the shown workspace, or close a tab. */
   | { type: "newTab" }
   | { type: "closeTab"; workspace: string }
-  /** The /new command: a new chat in this workspace or tab (the host asks first while the agent works). */
-  | { type: "newChat"; workspace: string }
-  /** The /conversations command: open the Conversations view. */
-  | { type: "showConversations" }
-  /** The /help command: kernl's help page. */
-  | { type: "showHelp" }
+  /** One of kernl's own slash commands, chosen or typed in the message box; the host runs it. */
+  | { type: "runCommand"; workspace: string; name: PanelCommandName }
   /** A queued message's editing started (it won't send meanwhile) or ended. */
   | { type: "editQueued"; workspace: string; id: string; editing: boolean }
   /** A queued message's edited text (empty removes it). */
@@ -331,7 +332,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab", "newChat", "showConversations", "showHelp"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab", "runCommand"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

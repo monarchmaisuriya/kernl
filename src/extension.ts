@@ -24,6 +24,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("kernl.agentLogins", () => controller.agentLogins()),
     vscode.commands.registerCommand("kernl.pickHarness", () => controller.pickHarnessCommand()),
     vscode.commands.registerCommand("kernl.sessions", () => controller.showSessions()),
+    vscode.commands.registerCommand("kernl.newTab", () => controller.newTabCommand()),
+    vscode.commands.registerCommand("kernl.closeTab", () => controller.closeShownTab()),
+    vscode.commands.registerCommand("kernl.nextTab", () => controller.showTab(1)),
+    vscode.commands.registerCommand("kernl.previousTab", () => controller.showTab(-1)),
     vscode.commands.registerCommand("kernl.clearHistory", () => controller.clearHistory()),
     vscode.commands.registerCommand("kernl.attachToChat", (uri?: vscode.Uri, uris?: vscode.Uri[]) =>
       controller.attachUris((uris?.length ? uris : uri ? [uri] : []).map((u) => u.toString())),

@@ -3,7 +3,7 @@
 // "active"; limits; known secrets scrubbed; and a clear answer when a terminal has no shell integration.
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { COMMANDS_KEPT, type ShellEvents, TerminalHistory } from "../../src/terminal/history";
+import { COMMANDS_KEPT, hideScreenCredentials, screenCommand, type ShellEvents, TerminalHistory } from "../../src/terminal/history";
 
 function emitter<T>() {
   const listeners = new Set<(e: T) => void>();
@@ -145,4 +145,45 @@ test("with nothing recorded in the active terminal, terminal_read adds VS Code's
   assert.ok(!String(await read.invoke({})).includes("VS Code's view"), "recorded commands come first; no screen fallback needed");
   const [, , missing] = terminalReadTools(f.history, gate, { lastCommand: async () => undefined, selection: async () => undefined }, scrub);
   assert.match(String(await missing.invoke({})), /isn't available in this VS Code/);
+});
+
+// VS Code 1.142's terminal_last_command text, as its tool writes it (lines joined with "\n").
+const vsCodeLast = (command: string, output: string) => ["The following is the last command run in the terminal:", command, "It was run in the directory:", "/repo", "It exited with code: 0", "It has the following output:", output].join("\n");
+
+test("VS Code's own view of the last command: its command line is read, and a credential-like file hides the output", () => {
+  assert.equal(screenCommand(vsCodeLast("cat .env", "API_KEY=abc123")), "cat .env");
+  assert.equal(screenCommand(["The following command is currently executing in the terminal:", "tail -f log", "It is running in the directory:", "/repo"].join("\n")), "tail -f log");
+  assert.equal(screenCommand("No command has been run in the active terminal."), undefined);
+  const hidden = hideScreenCredentials(vsCodeLast("cat .env", "API_KEY=abc123"));
+  assert.ok(!hidden.includes("abc123"), hidden);
+  assert.match(hidden, /^The last command was: cat \.env\n\[output hidden: this command names a credential-like file \(\.env\)/);
+  const plain = vsCodeLast("ls", "environment.ts");
+  assert.equal(hideScreenCredentials(plain), plain, "other commands keep their output");
+});
+
+test("the terminal selection is hidden when it shares a line with a credential file's output, recorded or on VS Code's screen", async () => {
+  const f = fixture();
+  await f.run(f.user, "cat .env", ["API_KEY=abc123\nDEBUG=1\n"], 0);
+  await f.run(f.user, "ls", ["environment.ts\n"], 0);
+  assert.match(f.history.selectionHidden("API_KEY=abc123") ?? "", /credential-like file \(\.env\)/);
+  assert.equal(f.history.selectionHidden("environment.ts"), undefined, "a selection from other output is fine");
+  assert.equal(f.history.selectionHidden("ok"), undefined, "too short to match on");
+  f.setActive(f.plain);
+  assert.match(f.history.selectionHidden("anything", vsCodeLast("cat id_rsa", "-----KEY-----")) ?? "", /credential-like file \(id_rsa\)/, "nothing recorded: VS Code's last command decides");
+  assert.equal(f.history.selectionHidden("anything", vsCodeLast("ls", "x")), undefined);
+});
+
+test("terminal_read and terminal_selection apply the credential rule to VS Code's own view", async () => {
+  const { terminalReadTools } = await import("../../src/terminal/readTools");
+  const { ApprovalGate } = await import("../../src/gate/approvalGate");
+  const f = fixture();
+  const gate = new ApprovalGate({ ask: async () => assert.fail("reading asks nothing") }, { rules: () => [] });
+  const core = { lastCommand: async () => vsCodeLast("cat .env", "API_KEY=abc123"), selection: async () => "API_KEY=abc123" };
+  const [, read, selection] = terminalReadTools(f.history, gate, core);
+  const text = String(await read.invoke({}));
+  assert.ok(!text.includes("abc123"), text);
+  assert.match(text, /output hidden/);
+  const selected = String(await selection.invoke({}));
+  assert.ok(!selected.includes("abc123"), selected);
+  assert.match(selected, /output hidden/);
 });

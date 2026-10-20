@@ -1,7 +1,9 @@
 // kernl's own slash commands: panel actions (new chat, new tab, Conversations, agent, model, mode...)
-// that the message box runs instead of sending. They share the "/" menu with the agent's commands
-// (or kernl's skills), and the agent wins a clash: a name the agent offers goes to the agent, and
-// "/kernl:<name>" always reaches kernl's. Each runs the action its button runs and takes no text.
+// that run instead of being sent, from the panel's message box, Ask kernl, or @kernl. They share the
+// "/" menu with the agent's commands (or kernl's skills), and the agent wins a clash: a name the agent
+// offers goes to the agent, and "/kernl:<name>" always reaches kernl's. Each runs the action its button
+// runs and takes no text. The panel and the host both use this module; the host runs them.
+import type { WorkspaceView } from "./protocol";
 
 export interface PanelCommand {
   name: string;
@@ -44,6 +46,25 @@ export function commandFor(text: string, agentNames: ReadonlySet<string>): { com
   if (!explicit && agentNames.has(word)) return undefined;
   if (rest?.trim()) return { refusal: `/${explicit ?? ""}${word} takes nothing after it.` };
   return { command };
+}
+
+/**
+ * Whether a command can run in a workspace now, from what the panel also shows: a tab to close, an agent
+ * that isn't working, a model to choose, more than one permission mode outside Restricted Mode.
+ */
+export function commandAvailable(command: PanelCommand, view: WorkspaceView, restricted: boolean): boolean {
+  switch (command.name) {
+    case "close":
+      return !!view.tabOf;
+    case "agent":
+      return !view.running;
+    case "model":
+      return view.harness.startsWith("deepagents") || (!view.running && !!view.agentOptions?.some((o) => o.kind === "model"));
+    case "mode":
+      return !restricted && view.modes.length > 1;
+    default:
+      return true;
+  }
 }
 
 /**

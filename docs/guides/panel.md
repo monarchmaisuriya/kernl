@@ -7,8 +7,8 @@
 | The kernl button in the editor toolbar (top right of an editor) | The kernl menu |
 | `kernl` in the status bar | The same menu; it shows a warning and a count when the agents you're using need you (a login, a key) |
 | `Ctrl+Alt+K` | Open kernl |
-| `Ctrl+Alt+Shift+K` | Ask kernl…: type a request; it goes to the workspace the panel shows (queued if the agent is working) |
-| `@kernl` in VS Code's chat | Sends the request, and files it references, to the kernl panel; the work and approvals happen there |
+| `Ctrl+Alt+Shift+K` | Ask kernl…: type a request; it goes to the workspace the panel shows (queued if the agent is working). kernl's own commands (`/new`, `/tab`…) run there too |
+| `@kernl` in VS Code's chat | Sends the request, and files it references, to the kernl panel; the work and approvals happen there. `@kernl /` lists kernl's own commands, and `@kernl /new` runs one |
 
 **The kernl menu:**
 - Open kernl, Ask kernl…, and Ask kernl about this file or selection (attaches the file, or the selected lines, to the message box);
@@ -26,6 +26,7 @@
 
 - **Tabs:** the strip above the conversation shows the workspace's tabs, each named by its conversation, with a dot while it works (or waits for your approval, in the warning color).
   - `+` opens a tab: another session in the same folder, with its own conversation, agent, model, mode, and queue. It keeps working while you look at another tab.
+  - While kernl's panel has focus: Cmd+T (Ctrl+T) opens a tab, Cmd+W (Ctrl+W) closes the shown one (on the workspace's first tab it does nothing, rather than close your editor), and Ctrl+Tab and Ctrl+Shift+Tab show the next and previous tab.
   - `×` closes a tab (a working one asks first); its conversation stays in Conversations. The first tab is the workspace itself and stays.
   - `kernl.tabs.max` (default 5; `0` for no limit) caps the tabs per workspace. At the limit, a new tab closes the one shown longest ago that isn't working.
   - Tabs come back after a reload; each opens its conversation when you first show it.
@@ -40,7 +41,7 @@
 - **Composer:**
   - `+` attaches Files & Folders, another Conversation, a GitHub Issue, or a Pull Request;
   - `@` autocompletes workspace paths; picked files and folders appear as highlighted `@path` mentions in your message (Backspace removes a whole mention);
-  - `@` also finds conversations, from every workspace of the window and every agent (shown with the agent, workspace, and when it was last active), and the CLI agents' own sessions there that kernl hasn't opened ("Claude Code session"). A picked one shows as a chip. On Send, the agent gets that conversation as text, read at that moment (an agent's own session is read through the agent): a numbered outline of every turn, its first request, and its newest turns, up to 20,000 characters. The agent can read any other turn with its `read_thread` tool, by number or by words; it reads only conversations tagged in its own conversation. Any agent and model provider can read it, since every conversation is kept in one format;
+  - `@` also finds conversations, from every workspace of the window and every agent (shown with the agent, workspace, and when it was last active), and the CLI agents' own sessions there that kernl hasn't opened ("Claude Code session"). A picked one shows as a chip. On Send, the agent gets that conversation as text, read at that moment (an agent's own session is read through the agent, once for the whole window until the agent reports it changed): a numbered outline of every turn, its first request, and its newest turns, up to 20,000 characters. The agent can read any other turn with its `read_thread` tool, by number or by words; it reads only conversations tagged in its own conversation. Any agent and model provider can read it, since every conversation is kept in one format;
   - the file open in the editor is offered as a dashed "+ file" suggestion;
   - `/` lists kernl's commands, then kernl's skills or the CLI agent's own commands (see Slash commands below);
   - right-click files or folders in the Explorer and pick **Add to kernl chat** (several at once with a multi-selection); a file from another folder of the window names that folder: switch to it with the workspace chip;
@@ -75,7 +76,7 @@
   - Click a row for its arguments and output.
 - **Plan:** the agent's plan (or kernl's to-do list) is pinned above the input. It shows "Current: …" and how far along it is; click it for every step.
 - **Context:** agents that report it get a ring in the footer showing how full the context window is. It turns yellow from 75%, orange from 90%, and red from 95%; hover for the numbers and cost.
-- **Slash commands:** "/" lists kernl's own commands first, then kernl's skills (for its own agent) or the CLI agent's own commands. kernl's commands run at once, even while the agent works, and are never sent to the agent. Enter or a click runs one; Tab puts its name in the box. The list, and what happens when the agent has a command of the same name, are in [kernl help](help.md#kernls-commands). `/help` opens that page in VS Code's Markdown preview (also **kernl help** in the kernl menu and **kernl: Help** in the Command Palette).
+- **Slash commands:** "/" lists kernl's own commands first, then kernl's skills (for its own agent) or the CLI agent's own commands, with what each command takes when the agent says (`/review [instructions]`). kernl's commands run at once, even while the agent works, and are never sent to the agent. Enter or a click runs one; Tab puts its name in the box. The list, and what happens when the agent has a command of the same name, are in [kernl help](help.md#kernls-commands). `/help` opens that page in VS Code's Markdown preview (also **kernl help** in the kernl menu and **kernl: Help** in the Command Palette).
 - **Approvals:** Approve allows once. An agent's own "always" option shows in its words when it offers one, and is never the default. Shortcuts: ⌘/Ctrl+Y allows once, ⌘/Ctrl+⌥/Alt+Y allows always, ⌘/Ctrl+⌥/Alt+Z rejects. They don't fire while you're typing a message.
 - **Accessibility:** screen readers hear "Reply finished" with the reply, approvals, and errors, not every streamed word; each turn has a heading. Animations stop with Reduce Motion, and high-contrast themes get borders.
 - **Replies:** agent replies render as Markdown (code blocks with Copy, lists, tables, links). Only `http(s)` links are clickable and they open in your browser; images are never loaded; raw HTML in a reply shows as text. Your own messages, tool output, and approval cards stay plain text.

@@ -657,7 +657,7 @@ export class AcpRunner implements Runner {
             if (typeof u.used === "number" && typeof u.size === "number" && u.size > 0) this.o.events.context?.({ used: u.used, size: u.size, cost: u.cost ?? undefined });
             return;
           case "available_commands_update":
-            this.o.events.commands?.((u.availableCommands ?? []).map((c: any) => ({ name: String(c.name), description: String(c.description ?? "") })));
+            this.o.events.commands?.((u.availableCommands ?? []).map((c: any) => ({ name: String(c.name), description: String(c.description ?? ""), ...(typeof c.input?.hint === "string" && c.input.hint.trim() ? { hint: c.input.hint.trim() } : {}) })));
             return;
           case "session_info_update":
             if (typeof u.title === "string" && u.title.trim()) this.o.events.title?.(u.title.trim());

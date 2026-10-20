@@ -51,6 +51,8 @@ import { HARNESSES, isHarness, NAMED_AGENT_PREFIX, type RuntimeHost, WorkspaceRu
 import { type Prompts, vscodePrompts, WorkspaceCommands } from "./workspaces/commands";
 import { git, isNotARepository } from "./workspaces/git";
 import { currentWorkspaceScope } from "./workspaceScope";
+import { AgentThreadCache } from "./agentThreads";
+import { commandAvailable, commandFor, PANEL_COMMANDS, type PanelCommandName } from "./ui/panelCommands";
 import { listWorkspaces, repoRoot, type WorkspaceInfo } from "./workspaces/worktrees";
 
 const MAIN = "main";
@@ -121,6 +123,8 @@ export class Controller implements vscode.Disposable {
   private sharedBrowser: IntegratedBrowser | undefined;
   /** Whether kernl's panel has keyboard focus (the panel reports it), so focus can go back there. */
   private panelHasKeyboard = false;
+  /** kernl's skills for the shown folder: the names kernl's own agent offers on "/" (see agentCommandNames). */
+  private skillNames: readonly string[] = [];
   /** Every connection's status (agents, keys, MCP servers, plugins); the agent chip, menu, and Connections view read it. */
   readonly connections = new ConnectionMonitor();
   /** "kernl" in the status bar: opens the kernl menu, and warns when a connection needs the user. */
@@ -215,6 +219,7 @@ export class Controller implements vscode.Disposable {
       coreTerminalTools: () => coreTerminalTools,
       scrub: (text) => this.redactor.scrub(text),
       knownRoot: (root) => [...this.workspaces.values()].some((w) => w.root === root),
+      agentThreads: new AgentThreadCache(),
     };
     this.commands = new WorkspaceCommands({
       log: this.log,
@@ -373,9 +378,19 @@ export class Controller implements vscode.Disposable {
    * A message from outside the panel (Ask kernl, @kernl in VS Code's chat) to the shown workspace,
    * through the panel's own Send: the same checks, and queued while the agent runs.
    */
-  async sendFromOutside(text: string, files: readonly string[]): Promise<{ workspace: string; agent: string; queued: boolean } | { error: string }> {
+  async sendFromOutside(text: string, files: readonly string[]): Promise<{ workspace: string; agent: string; queued: boolean } | { workspace: string; ran: string } | { error: string }> {
     const ws = this.workspace(this.active);
     if (!ws) return { error: this.noWorkspaceReason() ?? "kernl has no workspace to send to yet." };
+    // One of kernl's own commands runs here, as in the panel's message box; anything else is sent.
+    const match = commandFor(text, new Set(this.agentCommandNames(ws)));
+    if (match) {
+      if ("refusal" in match) return { error: match.refusal };
+      if (!commandAvailable(match.command, ws.view(), this.restricted())) return { error: match.command.unavailable ?? `/${match.command.name} can't run now.` };
+      await this.panel.reveal();
+      // Not awaited: a command can open a menu that waits for the user, and Ask kernl or @kernl shouldn't.
+      void this.runCommand(ws.id, match.command.name as PanelCommandName).catch((err) => this.fail(`Couldn't run /${match.command.name}`, err));
+      return { workspace: ws.label, ran: match.command.name };
+    }
     const { attachments, outside, unusable } = files.length ? await resolveUris(ws.root, [...files]) : { attachments: [], outside: [], unusable: [] };
     const skipped = outside.length + unusable.length;
     if (skipped) this.log.info(`a message from outside the panel referenced ${skipped} file(s) outside ${ws.label}; not attached`);
@@ -385,6 +400,51 @@ export class Controller implements vscode.Disposable {
     // kernl's box and an @kernl reply open until the agent finished (or forever, behind an approval).
     void this.onPanelMessage({ type: "send", workspace: ws.id, text, attachments }).catch((err) => this.fail("Couldn't send to kernl", err));
     return { workspace: ws.label, agent: this.harnessList().find((h) => h.id === ws.harness)?.label ?? ws.harness, queued };
+  }
+
+  /** What the shown agent offers on "/" (its commands, or kernl's skills for its own agent): those names go to the agent, not to kernl's commands. */
+  private agentCommandNames(ws: WorkspaceRuntime): readonly string[] {
+    return ws.harness.startsWith("deepagents") ? this.skillNames : ws.commandNames;
+  }
+
+  /** Restricted Mode: the window's folder isn't trusted (agents can only read). */
+  private restricted(): boolean {
+    const scope = currentWorkspaceScope();
+    return scope.ok && !scope.trusted;
+  }
+
+  /** Runs one of kernl's own commands (from the panel's "/" menu, Ask kernl, or @kernl) in a workspace: the one place they run. */
+  private async runCommand(workspace: string, name: PanelCommandName): Promise<void> {
+    const ws = this.workspace(workspace);
+    if (!ws) return;
+    switch (name) {
+      case "new":
+        return this.newChat(ws.id);
+      case "tab":
+        return this.newTab();
+      case "close":
+        return this.closeTab(ws.id);
+      case "conversations":
+        return this.showSessions();
+      case "agent":
+        return this.anchored("agent", () => this.pickHarness());
+      case "model": {
+        const option = ws.view().agentOptions?.find((o) => o.kind === "model");
+        return this.anchored("model", () => (option ? this.pickAgentOption(ws.id, option.id) : this.pickModel()));
+      }
+      case "mode":
+        return void this.panel.post({ type: "openModeMenu", workspace: ws.id });
+      case "connections":
+        return this.showConnections();
+      case "settings":
+        return this.openSettings();
+      case "help":
+        return this.showHelp();
+      default: {
+        const unhandled: never = name;
+        throw new Error(`kernl's /${unhandled} command has no action`);
+      }
+    }
   }
 
   /** What @kernl in VS Code's chat calls. */
@@ -474,6 +534,22 @@ export class Controller implements vscode.Disposable {
   }
 
   /** A workspace's tabs, itself first, then by number. */
+  /** The tab shortcuts (while kernl's panel has focus): a new tab, close the shown one, or show the next or previous one (wrapping). */
+  newTabCommand() {
+    return this.newTab();
+  }
+  closeShownTab() {
+    return this.closeTab(this.active);
+  }
+  showTab(step: 1 | -1) {
+    const shown = this.workspace(this.active);
+    if (!shown) return;
+    const tabs = this.tabsOf(shown.tabOf ?? shown.id);
+    if (tabs.length < 2) return;
+    const next = tabs[(tabs.indexOf(shown) + step + tabs.length) % tabs.length];
+    this.postWorkspaces(next.id);
+  }
+
   private tabsOf(workspace: string): WorkspaceRuntime[] {
     const tabs = [...this.workspaces.values()].filter((w) => w.tabOf === workspace);
     const n = (w: WorkspaceRuntime) => Number(w.id.slice(w.id.lastIndexOf("~") + 1));
@@ -1240,7 +1316,9 @@ export class Controller implements vscode.Disposable {
     const root = this.activeFolder()?.root ?? "";
     const trusted = vscode.workspace.isTrusted && !!root;
     const { imports, commandsDir } = await this.loadSources(root, trusted);
-    this.panel.post({ type: "skills", items: await listSkills({ userDir: userCustomisationDir(), imported: imports.skillFolders, commandsDir, projectRoot: root, trusted }) });
+    const items = await listSkills({ userDir: userCustomisationDir(), imported: imports.skillFolders, commandsDir, projectRoot: root, trusted });
+    this.skillNames = items.map((s) => s.name);
+    this.panel.post({ type: "skills", items });
   }
 
   /** The command (walkthrough, palette): same menu as the agent chip, for the shown workspace. */
@@ -1454,12 +1532,12 @@ export class Controller implements vscode.Disposable {
         return this.newTab();
       case "closeTab":
         return this.closeTab(m.workspace);
-      case "newChat":
-        return this.newChat(m.workspace);
-      case "showConversations":
-        return this.showSessions();
-      case "showHelp":
-        return this.showHelp();
+      case "runCommand": {
+        // The panel names a command; the host checks it, like any other input at this boundary.
+        const command = PANEL_COMMANDS.find((c) => c.name === m.name);
+        if (!command) return void this.log.info(`the panel asked for an unknown kernl command: ${String(m.name).slice(0, 40)}`);
+        return this.runCommand(m.workspace, command.name);
+      }
       case "editQueued":
         return this.workspace(m.workspace)?.editingQueue(m.id, m.editing);
       case "updateQueued":
@@ -1518,6 +1596,8 @@ export class Controller implements vscode.Disposable {
       case "focus": {
         const folderBefore = this.folderIdOf(this.active);
         if (this.workspace(m.workspace)) this.active = m.workspace;
+        // Cmd+W closes a tab only when the shown one can close (the workspace's first can't); otherwise the key does nothing in kernl.
+        void vscode.commands.executeCommand("setContext", "kernl.tabClosable", !!this.workspace(this.active)?.tabOf);
         this.tabUsed.set(this.active, Date.now());
         // A tab restored after a reload opens its conversation when it's first shown.
         const conversation = this.tabConversation.get(this.active);

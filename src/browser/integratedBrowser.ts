@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import WebSocket from "ws";
-import { type AxNode, outline, type Snapshot } from "./snapshot";
+import { type AxNode, type FrameTree, outline, type Snapshot } from "./snapshot";
 import { assertNavigableUrl } from "./urlPolicy";
 
 /**
@@ -27,21 +27,43 @@ export interface InputResult {
 /** VS Code's commands that focus editor group 1 to 8. */
 const FOCUS_GROUP = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth"].map((n) => `workbench.action.focus${n}EditorGroup`);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Frames a snapshot reads (ads and embeds can nest many). */
+const MAX_FRAMES = 10;
 
 /**
- * Run on an element: what a click at (x, y) would hit instead of it ("" when it's the element or inside
- * it). Shadow DOM is searched from the element's own root. Elements inside a frame aren't checked: the
- * point is in the top page's coordinates.
+ * Run on an element: what a click at (x, y), in the top page's coordinates, would hit instead of it (""
+ * when it's the element or inside it). In a frame, each page from the top down must hit the frame at that
+ * point, and the point moves into the frame; Shadow DOM is searched from the element's own root. A frame
+ * from another site can't be looked into from here: its element isn't checked.
  */
 const HIT_TEST = `function(x, y) {
-  if (window !== window.top) return "";
+  const describe = (hit) => {
+    if (!hit) return "it isn't on screen";
+    const text = (hit.getAttribute("aria-label") || hit.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 60);
+    return "it's covered by <" + hit.tagName.toLowerCase() + (hit.id ? "#" + hit.id : "") + ">" + (text ? " \\"" + text + "\\"" : "");
+  };
+  const frames = [];
+  for (let w = window; w !== w.top; w = w.parent) {
+    let frame = null;
+    try { frame = w.frameElement; } catch {}
+    if (!frame) return "";
+    frames.unshift(frame);
+  }
+  let px = x, py = y;
+  for (const frame of frames) {
+    const hit = frame.ownerDocument.elementFromPoint(px, py);
+    if (hit !== frame) return describe(hit);
+    const r = frame.getBoundingClientRect(), s = frame.ownerDocument.defaultView.getComputedStyle(frame);
+    px -= r.left + frame.clientLeft + parseFloat(s.paddingLeft);
+    py -= r.top + frame.clientTop + parseFloat(s.paddingTop);
+  }
   const root = this.getRootNode();
-  const hit = (typeof root.elementFromPoint === "function" ? root : document).elementFromPoint(x, y);
-  if (!hit) return "it isn't on screen";
-  if (hit === this || this.contains(hit)) return "";
-  const text = (hit.getAttribute("aria-label") || hit.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 60);
-  return "it's covered by <" + hit.tagName.toLowerCase() + (hit.id ? "#" + hit.id : "") + ">" + (text ? " \\"" + text + "\\"" : "");
+  const hit = (typeof root.elementFromPoint === "function" ? root : document).elementFromPoint(px, py);
+  return hit === this || (hit && this.contains(hit)) ? "" : describe(hit);
 }`;
+
+/** Run in the page: the document holding keyboard focus, inside same-site frames (where a key press arrives). */
+const FOCUSED_DOCUMENT = `(() => { let d = document; for (;;) { const a = d.activeElement; let inner = null; try { inner = a && a.tagName === "IFRAME" ? a.contentDocument : null; } catch {} if (!inner) return d; d = inner; } })()`;
 
 /** A console error, an uncaught exception, or a failed request, collected between actions. */
 export interface PageEvent {
@@ -252,9 +274,23 @@ export class IntegratedBrowser implements vscode.Disposable {
   async snapshot(): Promise<Snapshot> {
     const { nodes } = await this.send("Accessibility.getFullAXTree");
     const page = await this.evaluate<{ href: string; title: string }>("({href: location.href, title: document.title})");
-    const snap = outline(nodes as AxNode[], page, this.refOf);
+    const snap = outline(nodes as AxNode[], page, this.refOf, await this.frameTrees());
     for (const [ref, node] of snap.refs) this.refs.set(ref, node);
     return snap;
+  }
+
+  /**
+   * The page's frames, nested ones too (up to MAX_FRAMES), each with its tree; a frame from another site
+   * runs in its own process, which this connection can't read, so it comes without one.
+   */
+  private async frameTrees(): Promise<FrameTree[]> {
+    const { frameTree } = await this.send("Page.getFrameTree");
+    const frames: { id: string; url: string }[] = [];
+    const walk = (t: any) => {
+      for (const c of t.childFrames ?? []) if (frames.length < MAX_FRAMES) (frames.push({ id: c.frame.id, url: c.frame.url }), walk(c));
+    };
+    walk(frameTree);
+    return Promise.all(frames.map(async (f) => ({ url: f.url, nodes: (await this.send("Accessibility.getFullAXTree", { frameId: f.id }).catch(() => undefined))?.nodes as AxNode[] | undefined })));
   }
 
   /** A ref from this page's snapshots, or why it can't be used. */
@@ -319,6 +355,7 @@ export class IntegratedBrowser implements vscode.Disposable {
     const { object } = await this.send("DOM.resolveNode", { backendNodeId });
     const real = await this.withRealInput(async () => {
       await this.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {});
+      // Marked in the element's own window (a frame's, for an element in a frame).
       await this.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){ window.__kernlClicked = false; this.addEventListener('click', () => (window.__kernlClicked = true), { once: true, capture: true }); }" });
       const { model } = await this.send("DOM.getBoxModel", { backendNodeId });
       const q = model.content as number[];
@@ -330,7 +367,8 @@ export class IntegratedBrowser implements vscode.Disposable {
       await this.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
       await this.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 });
       // A click that loaded a new page arrived too: that page has no mark (undefined, not false), or can't be asked yet.
-      return this.evaluate<boolean>("window.__kernlClicked !== false").catch(() => true);
+      const arrived = await this.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){ return window.__kernlClicked !== false; }", returnByValue: true }).catch(() => undefined);
+      return arrived?.result?.value !== false;
     });
     if (real.ok) return { via: "input", note: real.note };
     await this.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){ this.click(); }" });
@@ -391,15 +429,16 @@ export class IntegratedBrowser implements vscode.Disposable {
     if (!k) throw new Error(`Unknown key "${key}": use Enter, Tab, Escape, Backspace, Delete, Space, an arrow (ArrowUp...), PageUp, PageDown, or a single character.`);
     const base = { key: key === "Space" ? " " : key, code: k.code, windowsVirtualKeyCode: k.vk };
     const real = await this.withRealInput(async () => {
-      await this.evaluate("window.__kernlKey = false; window.addEventListener('keydown', () => (window.__kernlKey = true), { once: true, capture: true })");
+      // Marked in the window that has keyboard focus (a frame's, when a field in a frame is focused).
+      await this.evaluate(`(() => { const w = ${FOCUSED_DOCUMENT}.defaultView; w.__kernlKey = false; w.addEventListener('keydown', () => (w.__kernlKey = true), { once: true, capture: true }); window.__kernlKeyWindow = w; })()`);
       await this.send("Input.dispatchKeyEvent", { type: k.text ? "keyDown" : "rawKeyDown", ...base, ...(k.text ? { text: k.text } : {}) });
       await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
       // A key that loaded a new page (Enter in a form) arrived too: that page has no mark (undefined, not false), or can't be asked yet.
-      return this.evaluate<boolean>("window.__kernlKey !== false").catch(() => true);
+      return this.evaluate<boolean>("(window.__kernlKeyWindow ?? window).__kernlKey !== false").catch(() => true);
     });
     if (real.ok) return { via: "input", note: real.note };
     await this.evaluate(
-      `(() => { const el = document.activeElement ?? document.body; const init = { key: ${JSON.stringify(base.key)}, code: ${JSON.stringify(k.code)}, bubbles: true, cancelable: true };
+      `(() => { const doc = ${FOCUSED_DOCUMENT}; const el = doc.activeElement ?? doc.body; const init = { key: ${JSON.stringify(base.key)}, code: ${JSON.stringify(k.code)}, bubbles: true, cancelable: true };
         const go = el.dispatchEvent(new KeyboardEvent('keydown', init)); el.dispatchEvent(new KeyboardEvent('keyup', init));
         if (go && init.key === 'Enter' && el.form && el.tagName !== 'TEXTAREA') el.form.requestSubmit(); })()`,
     );

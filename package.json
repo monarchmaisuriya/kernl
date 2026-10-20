@@ -173,6 +173,26 @@
         "command": "kernl.help",
         "title": "Help",
         "category": "kernl"
+      },
+      {
+        "command": "kernl.newTab",
+        "title": "New tab",
+        "category": "kernl"
+      },
+      {
+        "command": "kernl.closeTab",
+        "title": "Close tab",
+        "category": "kernl"
+      },
+      {
+        "command": "kernl.nextTab",
+        "title": "Next tab",
+        "category": "kernl"
+      },
+      {
+        "command": "kernl.previousTab",
+        "title": "Previous tab",
+        "category": "kernl"
       }
     ],
     "configuration": [
@@ -665,6 +685,18 @@
         {
           "command": "kernl.attachToChat",
           "when": "false"
+        },
+        {
+          "command": "kernl.closeTab",
+          "when": "false"
+        },
+        {
+          "command": "kernl.nextTab",
+          "when": "false"
+        },
+        {
+          "command": "kernl.previousTab",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -781,6 +813,34 @@
       {
         "command": "kernl.ask",
         "key": "ctrl+alt+shift+k"
+      },
+      {
+        "command": "kernl.newTab",
+        "key": "ctrl+t",
+        "mac": "cmd+t",
+        "when": "focusedView == kernl.panel"
+      },
+      {
+        "command": "kernl.closeTab",
+        "key": "ctrl+w",
+        "mac": "cmd+w",
+        "when": "focusedView == kernl.panel && kernl.tabClosable"
+      },
+      {
+        "command": "noop",
+        "key": "ctrl+w",
+        "mac": "cmd+w",
+        "when": "focusedView == kernl.panel && !kernl.tabClosable"
+      },
+      {
+        "command": "kernl.nextTab",
+        "key": "ctrl+tab",
+        "when": "focusedView == kernl.panel"
+      },
+      {
+        "command": "kernl.previousTab",
+        "key": "ctrl+shift+tab",
+        "when": "focusedView == kernl.panel"
       }
     ],
     "chatParticipants": [
@@ -789,7 +849,49 @@
         "name": "kernl",
         "fullName": "kernl",
         "description": "Send this to kernl's panel (the agent and workspace it shows)",
-        "isSticky": false
+        "isSticky": false,
+        "commands": [
+          {
+            "name": "new",
+            "description": "New chat in the shown tab"
+          },
+          {
+            "name": "tab",
+            "description": "New tab"
+          },
+          {
+            "name": "close",
+            "description": "Close the shown tab"
+          },
+          {
+            "name": "conversations",
+            "description": "Open an earlier conversation"
+          },
+          {
+            "name": "agent",
+            "description": "Choose the agent"
+          },
+          {
+            "name": "model",
+            "description": "Choose the model"
+          },
+          {
+            "name": "mode",
+            "description": "Choose the permission mode"
+          },
+          {
+            "name": "connections",
+            "description": "Show logins, keys, and MCP servers"
+          },
+          {
+            "name": "settings",
+            "description": "kernl settings"
+          },
+          {
+            "name": "help",
+            "description": "What kernl can do, with examples"
+          }
+        ]
       }
     ]
   },

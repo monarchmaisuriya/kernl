@@ -41,7 +41,7 @@ function harness(scenario: string, answer: boolean | "never", askMode: AskMode |
       thinking: (d) => events.push(`thinking:${d}`),
       plan: (entries) => events.push(`plan:${entries.map((e) => `${e.status}=${e.content}`).join("|")}`),
       context: (c) => events.push(`context:${c.used}/${c.size}:${c.cost?.amount}`),
-      commands: (items) => events.push(`commands:${items.map((c) => c.name).join(",")}`),
+      commands: (items) => events.push(`commands:${items.map((c) => (c.hint ? `${c.name} ${c.hint}` : c.name)).join(",")}`),
       title: (t) => events.push(`title:${t}`),
       configChanged: (v) => events.push(`config:mode=${v.mode}`),
       agentOptions: (options) => options.length && events.push(`options:${options.map((o) => `${o.id}=${o.value}`).join(",")}`),
@@ -245,7 +245,7 @@ test("a full agent's updates all reach the panel: thinking, one tool call merged
   assert.ok(e.includes("diff:e1:changed"));
   assert.ok(e.includes("plan:completed=Read the hook|in_progress=Explain it"));
   assert.ok(e.includes("context:150000/200000:0.42"));
-  assert.ok(e.includes("commands:review"));
+  assert.ok(e.includes("commands:review [instructions]"), "the command and what it takes (ACP input.hint)");
   assert.ok(e.includes("title:Explain the rewards hook"));
   assert.ok(e.includes("config:mode=plan"));
   assert.equal(e.at(-1), "finished:done");

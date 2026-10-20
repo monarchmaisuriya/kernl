@@ -71,3 +71,18 @@ test("with the browser's numbering, an element keeps its ref in every snapshot a
   assert.deepEqual(second.refs.get("e2"), { backendNodeId: 9, role: "button", name: "Delete" });
   assert.match(second.text, /- button "Delete" \[ref=e2\]\n- button "Accept" \[ref=e1\]/);
 });
+
+test("frames are outlined after the page under their address, with refs that keep counting; a frame kernl can't read says so", () => {
+  const refOf = newRefs();
+  const snap = outline(
+    tree(n("RootWebArea", "", [...n("button", "Outer", [], { backendDOMNodeId: 1 })])),
+    page,
+    refOf,
+    [
+      { url: "http://site.test/inner", nodes: tree(n("RootWebArea", "", [...n("button", "Inner Buy", [], { backendDOMNodeId: 2 })])) },
+      { url: "https://ads.example/x" },
+    ],
+  );
+  assert.match(snap.text, /- button "Outer" \[ref=e1\]\n- frame "http:\/\/site\.test\/inner"\n  - button "Inner Buy" \[ref=e2\]\n- frame "https:\/\/ads\.example\/x" \(from another site: kernl can't read inside it\)/);
+  assert.deepEqual(snap.refs.get("e2"), { backendNodeId: 2, role: "button", name: "Inner Buy" });
+});

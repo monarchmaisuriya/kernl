@@ -15,9 +15,9 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
 }
 
 /** `complete`: what Tab does when it differs from choosing (a kernl command's name goes into the text instead of running). */
-type Suggestion = { label: string; detail?: string; choose: () => void; complete?: () => void };
+type Suggestion = { label: string; hint?: string; detail?: string; choose: () => void; complete?: () => void };
 /** A "/" menu row: `run` runs it when chosen with Enter or a click (a kernl command); otherwise, and on Tab, its label goes into the text. */
-export type SlashRow = { label: string; detail?: string; run?: () => void };
+export type SlashRow = { label: string; detail?: string; hint?: string; run?: () => void };
 
 const AT_QUERY = /(^|\s)@([^\s@]*)$/;
 const SLASH_QUERY = /^\/([\w:-]*)$/;
@@ -178,6 +178,7 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
         const row = el("div", i === selected ? "suggestion selected" : "suggestion");
         row.setAttribute("role", "option");
         row.append(el("span", "suggestion-label", s.label));
+        if (s.hint) row.append(el("span", "suggestion-hint", s.hint));
         if (s.detail) row.append(el("span", "suggestion-detail", s.detail));
         row.addEventListener("mousedown", (e) => (e.preventDefault(), s.choose()));
         return row;
@@ -216,7 +217,7 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
     if (slash) {
       const insert = (r: SlashRow) => () => (replaceTrigger(SLASH_QUERY, `${r.label} `), close(), refresh(), changed());
       const choose = (r: SlashRow) => (r.run ? () => (replaceTrigger(SLASH_QUERY, ""), close(), refresh(), changed(), r.run!()) : insert(r));
-      return show(slashRows(slash[1]).map((r) => ({ label: r.label, detail: r.detail, choose: choose(r), complete: insert(r) })));
+      return show(slashRows(slash[1]).map((r) => ({ label: r.label, hint: r.hint, detail: r.detail, choose: choose(r), complete: insert(r) })));
     }
     close();
   }
