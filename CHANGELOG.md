@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-20
+
 ### Added
 
 - Tag other conversations in a message: `@` lists conversations from every workspace of the window and every agent next to files, and **+ → Conversations...** does the same. A tagged conversation shows as a chip, and on Send the agent (any agent, any model provider) gets its first request and newest turns as text, up to 20,000 characters, saying how many turns were left out. See [the panel](docs/guides/panel.md).
@@ -131,7 +133,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/pushowl/kernl/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/pushowl/kernl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/pushowl/kernl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/pushowl/kernl/compare/v0.1.0...v0.2.0
