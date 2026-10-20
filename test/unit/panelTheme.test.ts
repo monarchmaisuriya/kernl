@@ -54,7 +54,11 @@ test("the composer's buttons and the footer's are spaced alike: one gap, chevron
   };
   const gap = (selector: string) => /gap: (\d+px);/.exec(rule(selector))?.[1];
   assert.equal(gap(".toolbar"), "8px");
-  assert.equal(gap(".footer"), gap(".toolbar"), "both rows use the same gap");
+  for (const row of [".footer", ".toolbar-options", ".footer-chips"]) assert.equal(gap(row), gap(".toolbar"), `${row} uses the same gap`);
+  assert.match(rule(".toolbar"), /justify-content: space-between;/, "+ at the start, Send at the end, the options between them");
+  for (const row of [".toolbar-options", ".footer-chips"]) assert.match(rule(row), /display: grid; grid-auto-flow: column; grid-auto-columns: minmax\(0, 1fr\);/, `${row}: equal-width buttons`);
+  assert.match(rule(".footer-chips"), /flex: 1;/, "the footer's columns span the row");
+  for (const [chip, side] of [[".workspace", "start"], [".agent-pair", "center"], [".mode", "end"]]) assert.match(rule(`.footer-chips > ${chip}`), new RegExp(`justify-self: ${side};`), `${chip} sits at the ${side} of its column`);
   assert.match(rule(".chip > .icon:last-child:not(:first-child)"), /margin-right: -4px;/, "a trailing chevron's empty side hangs into the chip's padding");
   assert.match(rule(".attach"), /flex: none;/, "+ doesn't shrink below its icon in a narrow panel");
   assert.match(rule(".usage:empty"), /display: none;/, "an empty usage counter takes no gap");

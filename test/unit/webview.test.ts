@@ -1593,7 +1593,7 @@ test("the agent chip and its setup warning sit in the bottom row between the wor
   const p = loadPanel();
   p.host(STATUS);
   p.host(workspaces([MAIN]));
-  const footer = [...p.doc.querySelector(".footer")!.children].map((c) => c.className);
+  const footer = [...p.doc.querySelectorAll(".footer .chip")].map((c) => c.className);
   const at = (cls: string) => footer.findIndex((c) => c.split(" ").includes(cls));
   assert.ok(at("workspace") < at("setup") && at("setup") < at("harness") && at("harness") < at("mode"), footer.join(" | "));
   assert.equal(p.doc.querySelector(".toolbar .harness"), null);

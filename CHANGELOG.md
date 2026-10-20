@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- Under the message box, + stays at the start and Send at the end, with the agent's options (model, thinking, Fast) as equal-width buttons centered between them. In the footer, the workspace sits at the start (lined up with the message text), the agent in the center, and the mode at the end (under Send).
+
 ## [0.10.7] - 2026-10-20
 
 ### Changed

@@ -172,7 +172,10 @@ const toolbar = el("div", "toolbar");
 const setupButton = el("button", "chip setup");
 setupButton.hidden = true;
 setupButton.append(icon("warning", 14));
-toolbar.append(attachButton, modelChip, thinkingChip, fastChip, el("span", "spacer"), sendButton);
+// + at the start, Send at the end, and the agent's options centered between them.
+const toolbarOptions = el("div", "toolbar-options");
+toolbarOptions.append(modelChip, thinkingChip, fastChip);
+toolbar.append(attachButton, toolbarOptions, sendButton);
 const context = el("div", "context-row");
 context.append(attachments.suggestion, attachments.chips);
 const inputWrap = el("div", "input-wrap");
@@ -211,8 +214,12 @@ jobsChip.addEventListener("click", () => send({ type: "pickJob" }));
 const usage = el("span", "usage");
 const contextRing = createContextRing();
 const planBar = createPlanBar();
-// Where, who, how: the workspace, its agent (with its setup warning), then the agent's mode.
-footer.append(modeMenu.menu, workspaceChip, setupButton, agentChip, modeChip, jobsChip, el("span", "spacer"), contextRing.ring, usage);
+// Where, who, how: the workspace, its agent (with its setup warning), then the agent's mode, spread across the row.
+const agentPair = el("span", "agent-pair");
+agentPair.append(setupButton, agentChip);
+const footerChips = el("div", "footer-chips");
+footerChips.append(workspaceChip, agentPair, modeChip, jobsChip);
+footer.append(modeMenu.menu, footerChips, contextRing.ring, usage);
 const connectionsView = createConnectionsView(send);
 const conversationsView = createConversationsView(send, () => input.focus());
 const tabStrip = createTabStrip(send, (id) => select(id));
