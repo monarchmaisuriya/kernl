@@ -123,6 +123,8 @@ export class Controller implements vscode.Disposable {
   private sharedBrowser: IntegratedBrowser | undefined;
   /** Whether kernl's panel has keyboard focus (the panel reports it), so focus can go back there. */
   private panelHasKeyboard = false;
+  /** Whether the saved tab list has been read since the workspaces loaded (saveTabs waits for it). */
+  private tabsRestored = false;
   /** The panel gaining or losing keyboard focus (the integration suite's timeline shows it). */
   private panelFocus = new vscode.EventEmitter<boolean>();
   /** kernl's skills for the shown folder: the names kernl's own agent offers on "/" (see agentCommandNames). */
@@ -613,6 +615,9 @@ export class Controller implements vscode.Disposable {
 
   /** The open tabs and their conversations, kept for the window so they come back after a reload. */
   private saveTabs() {
+    // Until the saved list is read, it's the only record of the tabs: an early save (a restored queue
+    // changes the workspaces during startup) would replace it with none.
+    if (!this.tabsRestored) return;
     const tabs: Record<string, { n: number; conversation: string }[]> = {};
     for (const w of this.workspaces.values()) {
       if (!w.tabOf) continue;
@@ -633,6 +638,7 @@ export class Controller implements vscode.Disposable {
         if (typeof t.conversation === "string") this.tabConversation.set(tab.id, t.conversation);
       }
     }
+    this.tabsRestored = true;
   }
 
   /** The shown workspace's folder: whose repository new worktrees come from, and whose skills and agents are offered. */
@@ -1866,6 +1872,8 @@ export class Controller implements vscode.Disposable {
 
   /** A different folder is open: start over with that folder's workspaces. */
   private async reloadWorkspaces() {
+    // The saved tab list is read again below; it isn't written until then.
+    this.tabsRestored = false;
     for (const ws of this.workspaces.values()) ws.dispose();
     this.workspaces.clear();
     this.worktreeFolder.clear();

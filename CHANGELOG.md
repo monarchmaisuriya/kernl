@@ -4,6 +4,14 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- Tabs lead with their state (spinner, waiting dot, finished dot), so it stays in view in a narrow panel, and pills shrink (the full title is in the tooltip) before the strip scrolls, so every tab is visible.
+
+### Fixed
+
+- Tabs could disappear after a window reload when the first tab had a queued message: kernl saved an empty tab list before reading the saved one.
+
 ## [0.10.0] - 2026-10-20
 
 ### Changed

@@ -1848,6 +1848,35 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await closeTabs();
   });
 
+  await check("tabs: they come back after a reload even when the first tab has a queued message (restoring that queue changes the workspaces before the tabs are read)", async () => {
+    await closeTabs();
+    let from = delivered.length;
+    await testing.receive({ type: "newTab" });
+    const tab = tabIds(from)[0];
+    assert.ok(tab, "a tab opened");
+    await testing.receive({ type: "focus", workspace: "main" });
+    let queuedId: string | undefined;
+    try {
+      from = delivered.length;
+      const run = testing.receive({ type: "send", workspace: "main", text: "running, so the next message queues" });
+      await waitFor("main's card", (m) => m.type === "approval" && m.card.workspaceId === "main", from);
+      await testing.receive({ type: "send", workspace: "main", text: "queued across the reload" });
+      // Stop pauses the queue (a rejected approval would let the turn end normally and send it).
+      await testing.receive({ type: "stop", workspace: "main" });
+      await run;
+      const queued = lastWorkspaces().items.find((w: any) => w.id === "main").queue;
+      assert.equal(queued.length, 1, "the message stays queued, paused");
+      queuedId = queued[0].id;
+      from = delivered.length;
+      await testing.reloadWorkspaces();
+      assert.deepEqual(tabIds(from), [tab], "the tab is back");
+    } finally {
+      await testing.receive({ type: "stop", workspace: "main" });
+      if (queuedId) await testing.receive({ type: "unqueue", workspace: "main", id: queuedId });
+      await closeTabs();
+    }
+  });
+
   await check("before the first message: the shown workspace's CLI agent starts its session, so its model and thinking chips can be chosen first", async () => {
     const from = delivered.length;
     await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_SCENARIO: "options" } } }), vscode.ConfigurationTarget.Global);
