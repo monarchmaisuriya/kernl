@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-20
+
 ### Fixed
 
 - Picking another conversation while a stored session was loading sent a message queued during the load, then stopped it in the conversation being left. It now stays queued, waiting for Send now.
@@ -178,7 +180,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/pushowl/kernl/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/pushowl/kernl/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/pushowl/kernl/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/pushowl/kernl/compare/v0.6.0...v0.7.0
