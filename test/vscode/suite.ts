@@ -2314,6 +2314,17 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await vscode.commands.executeCommand("kernl.sessions");
     const rows = (await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from)).rows;
     assert.ok(rows.some((r: any) => r.title === "tab one, then closed"), "tab 1's conversation is kept");
+    // Export finds the folder without its tab 1 (each workspace is given by a tab still open).
+    const exported = vscode.Uri.file(join(tmpdir(), `kernl-equal-tabs-export-${Date.now()}.json`));
+    testing.usePrompts({ ...scriptedPrompts, pick: async (items: any[]) => items[0], confirm: async () => true });
+    try {
+      await vscode.commands.executeCommand("kernl.exportData", exported);
+      const titles = JSON.parse(readFileSync(exported.fsPath, "utf8")).folders.flatMap((f: any) => f.workspaces.flatMap((w: any) => w.conversations.map((c: any) => c.title)));
+      assert.ok(titles.includes("tab one, then closed"), `exported with tab 1 closed: ${JSON.stringify(titles)}`);
+    } finally {
+      testing.usePrompts(scriptedPrompts);
+      rmSync(exported.fsPath, { force: true });
+    }
     scripted = { ...scripted, menu: /Main/ };
     from = delivered.length;
     await testing.receive({ type: "pickWorkspace" });
