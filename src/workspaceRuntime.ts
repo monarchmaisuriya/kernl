@@ -849,7 +849,9 @@ export class WorkspaceRuntime {
   private replay() {
     this.holdQueue();
     this.host.post({ type: "cleared", workspace: this.id });
-    for (const e of this.session.events) this.host.post(e);
+    // A saved event names the workspace it was first shown in (another tab, the folder in another window,
+    // another machine's import); shown here, it's this workspace's, or the panel would file it elsewhere.
+    for (const e of this.session.events) this.host.post({ ...e, workspace: this.id });
   }
 
   /**

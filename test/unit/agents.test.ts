@@ -98,3 +98,11 @@ test("with kernl's terminal, OpenCode's bash is denied on top of every mode's as
   assert.equal(JSON.parse(own.env.OPENCODE_CONFIG_CONTENT).permission.bash, "ask");
   assert.deepEqual(JSON.parse(denyOpencodeBash(undefined)), { permission: { bash: "deny" } });
 });
+
+test("registerAll reads every agent's stored key into a fresh redactor", async () => {
+  const map = new Map<string, string>([["kernl.agentKey.codex", "sk-codex-agent-secret-6"], ["kernl.agentBaseUrl.codex", "https://example.test"]]);
+  const secrets = { get: async (k: string) => map.get(k), store: async (k: string, v: string) => void map.set(k, v), delete: async (k: string) => void map.delete(k) };
+  const redactor = new Redactor();
+  await new AgentCredentials(secrets, redactor).registerAll();
+  assert.equal(redactor.scrub("key sk-codex-agent-secret-6"), "key [redacted]");
+});

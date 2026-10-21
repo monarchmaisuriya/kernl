@@ -23,6 +23,10 @@ export class Redactor {
   scrub(text: string): string {
     return redact(text, this.secrets);
   }
+  /** Whether any registered secret occurs in `text`: what scrub() would replace. */
+  leaks(text: string): boolean {
+    return redact(text, this.secrets) !== text;
+  }
 }
 
 export interface LineSink {

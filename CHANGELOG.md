@@ -4,6 +4,14 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- **kernl: Export data** and **kernl: Import data** move your conversations (with their tool images) and kernl settings to another machine, or back them up, in one file. API keys are never in it: every stored key and any key-shaped text is replaced with `[redacted]`, the export stops if a stored key survives, and the machine-only settings that can hold tokens (`kernl.agentCommands`, `kernl.mcpServers`) stay behind. Import places conversations in the open folder with the same name, never overwrites one that's already here, and shows every setting it would change before asking once.
+
+### Fixed
+
+- A conversation opened from Conversations in a tab, or in a folder that was saved in another window layout (alone or in a multi-folder window), shows its transcript there instead of an empty one.
+
 ## [0.10.8] - 2026-10-20
 
 ### Changed

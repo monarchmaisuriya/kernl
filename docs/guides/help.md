@@ -96,6 +96,8 @@ More: [the panel](panel.md#in-the-panel), [workspaces](workspaces.md).
 - `/conversations` (or the clock icon) lists this workspace's conversations, and each CLI agent's own sessions in this folder (for example ones started with `claude` in a terminal). Picking one while the agent works asks first, then stops the agent and opens it.
 - `@` also finds conversations from every workspace and agent. A tagged one goes to the agent as text: an outline of every turn, the first request, and the newest turns. The agent can read any other turn with its `read_thread` tool.
 
+- **kernl: Export data** and **kernl: Import data** (Command Palette, or the panel's menu) move your conversations and settings to another machine, without API keys. For example, export on the old laptop, open the same folder on the new one, import the file, then set your keys again. More: [Moving conversations and settings](panel.md#moving-conversations-and-settings).
+
 For example, type `@` and part of a conversation's title, pick it (it becomes a chip), then ask:
 
 ```text

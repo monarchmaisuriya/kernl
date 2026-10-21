@@ -24,3 +24,11 @@ test("forgotten keys are no longer scrubbed, and short strings are never treated
   redactor.forget("long-secret-value");
   assert.equal(redactor.scrub("abc long-secret-value"), "abc long-secret-value");
 });
+
+test("leaks() reports a registered key in text, the same keys scrub() replaces (short ones ignored)", () => {
+  const redactor = new Redactor();
+  redactor.register("sk-ant-api03-SECRETSECRETSECRET");
+  redactor.register("short");
+  assert.equal(redactor.leaks("x sk-ant-api03-SECRETSECRETSECRET y"), true);
+  assert.equal(redactor.leaks("x [redacted] y and short"), false);
+});
