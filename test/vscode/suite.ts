@@ -1485,15 +1485,26 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     }
   });
 
-  await check("current-file suggestion: the panel is told about a workspace file open in the editor, and not about one outside it", async () => {
+  await check("current-file suggestion: any open file is offered; a workspace file attaches by its path, one outside the workspace (and Ask kernl about it) by its text", async () => {
     let from = delivered.length;
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(join(root, "README.md")));
-    await waitFor("the open workspace file", (m) => m.type === "activeFile" && m.path === "README.md", from, 10_000);
-    const outside = join(mkdtempSync(join(tmpdir(), "kernl-outside-")), "notes.txt");
-    writeFileSync(outside, "x\n");
+    await waitFor("the open workspace file", (m) => m.type === "activeFile" && m.path === "README.md" && !m.outside, from, 10_000);
     from = delivered.length;
-    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(outside));
-    await waitFor("no suggestion for a file outside the workspace", (m) => m.type === "activeFile" && m.path === undefined, from, 10_000);
+    await testing.receive({ type: "attachActiveFile" });
+    assert.deepEqual((await waitFor("its attachment", (m) => m.type === "addAttachments", from)).items, [{ kind: "file", path: "README.md" }]);
+    const outside = join(mkdtempSync(join(tmpdir(), "kernl-outside-")), "notes.txt");
+    writeFileSync(outside, "outside notes\n");
+    from = delivered.length;
+    const editor = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(outside));
+    await waitFor("the outside file offered", (m) => m.type === "activeFile" && m.path === outside && m.outside === true, from, 10_000);
+    await editor.edit((e) => e.insert(new vscode.Position(1, 0), "unsaved line\n"));
+    from = delivered.length;
+    await testing.receive({ type: "attachActiveFile" });
+    assert.deepEqual((await waitFor("its text", (m) => m.type === "addAttachments", from)).items, [{ kind: "text", path: outside, text: "outside notes\nunsaved line\n" }], "its current text, unsaved edits included");
+    from = delivered.length;
+    await vscode.commands.executeCommand("kernl.askAboutSelection");
+    assert.equal((await waitFor("Ask kernl about the outside file", (m) => m.type === "addAttachments", from)).items[0].kind, "text", "Ask kernl about this file attaches it too");
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
   });
 
@@ -1841,8 +1852,10 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       let from = delivered.length;
       await testing.receive({ type: "newTab" });
       const firstTab = tabIds(from)[0];
-      // Tab 1 shown since: the new tab is the one shown longest ago.
-      await testing.receive({ type: "focus", workspace: "main" });
+      // Tab 1 shown since, through the panel itself (a simulated focus could land before the panel's own
+      // report of showing the new tab): the new tab is now the one shown longest ago.
+      await vscode.commands.executeCommand("kernl.previousTab");
+      await panelShows("main");
       from = delivered.length;
       await testing.receive({ type: "newTab" });
       const now = tabIds(from);

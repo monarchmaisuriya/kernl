@@ -4,6 +4,12 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- The "+ file" suggestion offers whatever file is open in the editor, not only workspace files: one from another folder, anywhere on disk, or a new unsaved file is attached as its text (unsaved edits included). **Ask kernl about this file or selection** attaches such a file the same way instead of warning.
+- An attached file's chip shows the file's name first, with its whole path in the tooltip (selected lines too: `app.ts:3-5`).
+- The context ring moved from the footer to the message box's top right, above Send.
+
 ## [0.12.0] - 2026-10-21
 
 ### Changed

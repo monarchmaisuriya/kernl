@@ -276,8 +276,11 @@ body.vscode-reduce-motion .working-label, body.vscode-reduce-motion .tool[data-s
 .input::selection { color: transparent; background: var(--selection); }
 .input-layer { position: absolute; inset: 0; overflow: hidden; color: var(--input-fg); pointer-events: none; }
 .mention { color: var(--fg); background: var(--accent-soft); border-radius: 3px; }
-.context-row { display: flex; flex-wrap: wrap; gap: 4px; }
+/* One line: the attachments wrap within their own area, so the ring keeps its place at the end. */
+.context-row { display: flex; align-items: flex-start; gap: 4px; }
 .context-row:not(:has(> :not([hidden]))) { display: none; }
+/* The composer's top right, inset like Send's own padding. */
+.context-row > .context-ring { margin-left: auto; margin-right: 3px; flex: none; }
 .suggest-file { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 6px; border-radius: var(--radius-sm); border: 1px dashed var(--border); color: var(--muted); font-size: 0.88em; }
 .suggest-file .chip-text { font-style: italic; }
 .file-badge { font-size: 0.75em; font-weight: 600; color: var(--muted); }

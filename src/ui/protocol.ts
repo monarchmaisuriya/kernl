@@ -227,8 +227,12 @@ export type HostToPanel =
   | { type: "subagentText"; workspace: string; id: string; delta: string }
   /** Background jobs in a workspace (the footer's jobs chip). */
   | { type: "jobs"; workspace: string; running: number; total: number }
-  /** The file open in the editor, relative to the shown workspace (offered as a suggestion); undefined when none or outside it. */
-  | { type: "activeFile"; path?: string }
+  /**
+   * The file open in the editor, offered as a suggestion; undefined when none. A workspace file is named by its
+   * path; any other (another folder, anywhere on disk, a new unsaved file) by a label, with `outside` set: it
+   * attaches as its text.
+   */
+  | { type: "activeFile"; path?: string; outside?: boolean }
   | { type: "text"; workspace: string; delta: string }
   /** Sent again with the same id as the call progresses: the panel updates that row. */
   | ({ type: "toolCall"; workspace: string; id: string; name: string; args: string } & ToolInfo)
@@ -275,6 +279,8 @@ export type PanelToHost =
   | { type: "dropUris"; uris: string[] }
   /** A drop that attached nothing: what it carried, for kernl's log. */
   | { type: "dropIgnored"; types: string[] }
+  /** Attach the file open in the editor (the suggestion's click); the host reads its own active editor. */
+  | { type: "attachActiveFile" }
   /** Restore the files (and maybe the conversation) to how they were before this message. */
   | { type: "restore"; workspace: string; messageId: string }
   /** The footer's jobs chip: show or stop a background job. */
@@ -334,7 +340,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab", "runCommand"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab", "runCommand", "attachActiveFile"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

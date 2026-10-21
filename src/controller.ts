@@ -186,8 +186,10 @@ export class Controller implements vscode.Disposable {
   private multiRoot = false;
   /** Every workspace (folders and worktrees), by id: what its tabs share. */
   private spaces = new Map<string, WorkspaceRecord>();
-  /** When each tab was last shown: at kernl.tabs.max, the one shown longest ago (and idle) closes. */
+  /** Each tab's last use, as a use count: at kernl.tabs.max, the one shown longest ago (and idle) closes. */
   private tabUsed = new Map<string, number>();
+  /** Counts tab uses, so "shown most recently" is a strict order (two uses in one millisecond would tie on the clock). */
+  private tabUses = 0;
   /** The highest tab number used for each workspace in this window. */
   private tabNumbers = new Map<string, number>();
   /** Tabs restored after a reload: the conversation each opens when it's first shown. */
@@ -391,7 +393,7 @@ export class Controller implements vscode.Disposable {
     const editor = vscode.window.activeTextEditor;
     if (!editor) return void vscode.window.showInformationMessage("Open a file first; kernl attaches it, or the lines you select.");
     const doc = editor.document;
-    if (editor.selection.isEmpty) return this.attachUris([doc.uri.toString()]);
+    if (editor.selection.isEmpty) return this.openTextDocument() ? this.attachOpenFile(doc) : this.attachUris([doc.uri.toString()]);
     const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
     const name = folder ? vscode.workspace.asRelativePath(doc.uri, false) : doc.uri.fsPath;
     const { start, end } = editor.selection;
@@ -588,6 +590,11 @@ export class Controller implements vscode.Disposable {
     return [...this.workspaces.values()].filter((w) => w.tabOf === workspace).sort((a, b) => tabNumber(a) - tabNumber(b));
   }
 
+  /** Records that a tab was just shown. */
+  private markUsed(id: string) {
+    this.tabUsed.set(id, ++this.tabUses);
+  }
+
   /** The tab to show for a workspace: the one shown last, or its first. */
   private shownTabOf(workspace: string): string | undefined {
     return [...this.tabsOf(workspace)].sort((a, b) => (this.tabUsed.get(b.id) ?? 0) - (this.tabUsed.get(a.id) ?? 0))[0]?.id;
@@ -614,7 +621,7 @@ export class Controller implements vscode.Disposable {
     }
     const tab = this.addTab(space);
     this.active = tab.id;
-    this.tabUsed.set(tab.id, Date.now());
+    this.markUsed(tab.id);
     if (givesWay) await this.closeTab(givesWay.id, false);
     this.postWorkspaces(tab.id);
   }
@@ -1355,12 +1362,34 @@ export class Controller implements vscode.Disposable {
     }
   }
 
-  /** The file open in the editor, offered in the composer when it's inside the shown workspace. */
+  /** The file open in the editor, offered in the composer: a workspace file by its path, any other by a label (it attaches as its text). */
   private postActiveFile() {
+    const doc = this.openTextDocument();
+    if (!doc) return void this.panel.post({ type: "activeFile" });
+    const inside = this.openFileInWorkspace(doc);
+    this.panel.post(inside ? { type: "activeFile", path: inside.path } : { type: "activeFile", path: vscode.workspace.asRelativePath(doc.uri, true), outside: true });
+  }
+
+  /** The active editor's document when it's a file on disk or a new, unsaved one (not an output panel, a git view, ...). */
+  private openTextDocument(): vscode.TextDocument | undefined {
+    const doc = vscode.window.activeTextEditor?.document;
+    return doc && (doc.uri.scheme === "file" || doc.uri.scheme === "untitled") ? doc : undefined;
+  }
+
+  /** The open file as a path attachment when it's in the shown workspace. */
+  private openFileInWorkspace(doc: vscode.TextDocument): Attachment | undefined {
     const root = this.workspace(this.active)?.root;
-    const uri = vscode.window.activeTextEditor?.document.uri;
-    const path = root && uri?.scheme === "file" ? toAttachment(root, uri.fsPath, "file")?.path : undefined;
-    this.panel.post({ type: "activeFile", path });
+    return root && doc.uri.scheme === "file" ? toAttachment(root, doc.uri.fsPath, "file") : undefined;
+  }
+
+  /**
+   * The open file into the shown tab's message: a workspace file by its path (the agent reads it there); any
+   * other (another folder, anywhere on disk, a new unsaved file) by its current text, unsaved edits included.
+   */
+  private async attachOpenFile(doc: vscode.TextDocument) {
+    const item = this.openFileInWorkspace(doc) ?? { kind: "text" as const, path: vscode.workspace.asRelativePath(doc.uri, true), text: doc.getText() };
+    this.panel.post({ type: "addAttachments", items: [item] });
+    await this.panel.reveal();
   }
 
   /** The jobs chip: show a job's terminal or stop it. */
@@ -1744,6 +1773,10 @@ export class Controller implements vscode.Disposable {
         return this.anchored("attach", () => this.pickAttachments());
       case "dropUris":
         return this.attachUris(m.uris);
+      case "attachActiveFile": {
+        const doc = this.openTextDocument();
+        return doc ? this.attachOpenFile(doc) : undefined;
+      }
       case "dropIgnored":
         // Logged, so the next "a drop does nothing" can be diagnosed from what it carried.
         return void this.log.info(`a drop on the panel attached nothing; it carried: ${m.types.join(", ") || "no data"}`);
@@ -1787,7 +1820,7 @@ export class Controller implements vscode.Disposable {
         if (this.workspace(m.workspace)) this.active = m.workspace;
         // Cmd+W closes a tab only when the shown one can close (not its workspace's last); otherwise the key does nothing in kernl.
         void vscode.commands.executeCommand("setContext", "kernl.tabClosable", this.tabsOf(this.spaceIdOf(this.active)).length > 1);
-        this.tabUsed.set(this.active, Date.now());
+        this.markUsed(this.active);
         // A tab restored after a reload opens its conversation when it's first shown.
         const conversation = this.tabConversation.get(this.active);
         if (conversation) (this.tabConversation.delete(this.active), void this.openConversation(this.active, { kind: "kernl", id: conversation }));

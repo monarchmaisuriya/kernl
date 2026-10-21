@@ -383,7 +383,7 @@ test("Backspace right after a mention removes all of it, and it's no longer atta
   assert.deepEqual(p.sent.at(-1), { type: "send", workspace: "main", text: "see @notpicked please" });
 });
 
-test("the file open in the editor is offered as a dashed suggestion until it's mentioned", () => {
+test("the file open in the editor is offered as a dashed suggestion until it's mentioned; a click asks the host to attach it", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
   const chip = p.doc.querySelector<HTMLButtonElement>(".suggest-file")!;
@@ -393,10 +393,32 @@ test("the file open in the editor is offered as a dashed suggestion until it's m
   assert.equal(chip.textContent, "TSuseRewards.ts");
   assert.match(chip.title, /src\/hooks\/useRewards\.ts/);
   chip.click();
+  assert.deepEqual(p.sent.at(-1), { type: "attachActiveFile" }, "the host reads its own open editor");
+  p.host({ type: "addAttachments", items: [{ kind: "file", path: "src/hooks/useRewards.ts" }] });
   assert.equal(p.doc.querySelector<HTMLTextAreaElement>(".input")!.value, "@src/hooks/useRewards.ts ");
   assert.equal(chip.hidden, true);
   p.host({ type: "activeFile" });
   assert.equal(chip.hidden, true);
+});
+
+test("a file open from outside the workspace is offered too; it attaches as its text, and the chip goes once it's attached", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const chip = p.doc.querySelector<HTMLButtonElement>(".suggest-file")!;
+  p.host({ type: "activeFile", path: "/Users/me/notes/todo.md", outside: true });
+  assert.equal(chip.hidden, false);
+  assert.equal(chip.textContent, "MDtodo.md");
+  assert.match(chip.title, /outside this workspace, so it's attached as its text/);
+  chip.click();
+  assert.deepEqual(p.sent.at(-1), { type: "attachActiveFile" });
+  p.host({ type: "addAttachments", items: [{ kind: "text", path: "/Users/me/notes/todo.md", text: "- ship it" }] });
+  assert.equal(chip.hidden, true, "already in the message");
+  const attached = p.doc.querySelector<HTMLElement>(".attachments .attachment")!;
+  assert.equal(attached.querySelector(".chip-text")!.textContent, "todo.md", "the file's name first");
+  assert.equal(attached.title, "/Users/me/notes/todo.md", "its whole path in the tooltip");
+  p.host({ type: "addAttachments", items: [{ kind: "text", path: "src/hooks/useRewards.ts:3-5", text: "x" }, { kind: "text", path: "PR #12", text: "y" }] });
+  assert.deepEqual(p.all(".attachments .attachment .chip-text").map((c) => c.textContent), ["todo.md", "useRewards.ts:3-5", "PR #12"], "selections show the file's name too; other labels stay");
+  assert.equal(p.doc.querySelector<HTMLTextAreaElement>(".input")!.value, "", "a text attachment is a chip, not a mention");
 });
 
 test("text typed into the composer is drawn as text by the highlight layer, never as HTML", () => {
@@ -1070,10 +1092,12 @@ test("the plan is pinned above the input: what's being done now and how far alon
   assert.equal(bar.hidden, true);
 });
 
-test("the context ring shows how full the context is, with warning levels and the numbers in its label", () => {
+test("the context ring shows how full the context is, with warning levels and the numbers in its label; it sits at the composer's top right", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
   const ring = p.doc.querySelector<HTMLElement>(".context-ring")!;
+  assert.ok(ring.closest(".composer .context-row"), "in the composer's top row (above Send), not the footer");
+  assert.equal(p.doc.querySelector(".footer .context-ring"), null);
   assert.equal(ring.hidden, true, "hidden until the agent reports it");
   p.host({ type: "context", workspace: "main", used: 150000, size: 200000, cost: { amount: 0.42, currency: "USD" } });
   assert.equal(ring.querySelector(".context-label")!.textContent, "75%");

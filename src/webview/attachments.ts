@@ -44,7 +44,8 @@ export function threadDetail(a: Attachment, now = Date.now()): string {
 export function attachmentChip(a: Attachment, onRemove?: () => void): HTMLElement {
   const chip = el("span", "attachment");
   chip.title = a.kind === "folder" ? `${a.path}/ (folder)` : a.kind === "thread" ? `Conversation: ${a.path} (${threadDetail(a)})` : a.path;
-  const name = a.kind === "text" || a.kind === "thread" ? a.path : a.path.split("/").pop() || a.path;
+  // A file's name first (its whole path is in the tooltip), for workspace files and files attached as their text alike.
+  const name = a.kind === "thread" ? a.path : a.path.split(/[\\/]/).pop() || a.path;
   chip.append(icon(a.kind === "folder" ? "folder" : a.kind === "thread" ? "chat" : a.kind === "text" ? "kernl" : "file", 13), el("span", "chip-text", name));
   if (onRemove) {
     const remove = el("button", "attachment-remove");
@@ -87,6 +88,8 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   let lastQuery: string | undefined;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let activeFile: string | undefined;
+  /** The open file is outside the shown workspace: it attaches as its text, under its label. */
+  let activeOutside = false;
 
   /** Known mentions present in the text as whole tokens (followed by whitespace or the end). */
   function present(): string[] {
@@ -118,15 +121,17 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
   function renderChips() {
     chips.replaceChildren(...texts.map((a) => attachmentChip(a, () => ((texts = texts.filter((x) => x !== a)), renderChips(), changed()))));
     chips.hidden = texts.length === 0;
+    renderSuggestion();
   }
 
   function renderSuggestion() {
-    const show = !!activeFile && !present().includes(mentionText({ path: activeFile, kind: "file" }));
+    const added = activeOutside ? texts.some((t) => t.path === activeFile) : present().includes(mentionText({ path: activeFile ?? "", kind: "file" }));
+    const show = !!activeFile && !added;
     suggestion.hidden = !show;
     if (!show) return;
     const name = activeFile!.split("/").pop()!;
     suggestion.replaceChildren(icon("plus", 12), el("span", "file-badge", badge(name)), el("span", "chip-text", name));
-    suggestion.title = `Add ${activeFile} (open in the editor)`;
+    suggestion.title = activeOutside ? `Add ${activeFile} (open in the editor; outside this workspace, so it's attached as its text)` : `Add ${activeFile} (open in the editor)`;
     suggestion.setAttribute("aria-label", `Add the open file ${activeFile}`);
   }
 
@@ -295,7 +300,8 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
     if (!attached.length) send({ type: "dropIgnored", types });
   }
 
-  suggestion.addEventListener("click", () => activeFile && (add([{ path: activeFile, kind: "file" }]), input.focus()));
+  // The host reads its own open editor and attaches it (by path in the workspace, else by its text).
+  suggestion.addEventListener("click", () => activeFile && send({ type: "attachActiveFile" }));
   input.addEventListener("scroll", () => (layer.scrollTop = input.scrollTop));
   renderChips();
   refresh();
@@ -313,9 +319,10 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
     onDrop,
     /** The "/" menu's rows for the text after "/". */
     setSlashRows: (rows: (query: string) => SlashRow[]) => (slashRows = rows),
-    /** The workspace file open in the editor (offered as a suggestion), or undefined. */
-    setActiveFile(path: string | undefined) {
+    /** The file open in the editor (offered as a suggestion), or undefined; `outside` when it's not in the shown workspace. */
+    setActiveFile(path: string | undefined, outside = false) {
       activeFile = path;
+      activeOutside = outside;
       renderSuggestion();
     },
     /** The attachments now (mentions still in the text, then text chips), without clearing them: for the saved draft. */

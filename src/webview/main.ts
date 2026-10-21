@@ -176,8 +176,10 @@ setupButton.append(icon("warning", 14));
 const toolbarOptions = el("div", "toolbar-options");
 toolbarOptions.append(modelChip, thinkingChip, fastChip);
 toolbar.append(attachButton, toolbarOptions, sendButton);
+const contextRing = createContextRing();
 const context = el("div", "context-row");
-context.append(attachments.suggestion, attachments.chips);
+// The context ring sits at the row's end: the composer's top right, above Send.
+context.append(attachments.suggestion, attachments.chips, contextRing.ring);
 const inputWrap = el("div", "input-wrap");
 inputWrap.append(attachments.layer, input);
 // Messages waiting for the current run to end (kept by the host).
@@ -212,14 +214,13 @@ jobsChip.dataset.anchor = "jobs";
 const anchoredMenu = createMenu((id, index) => send(index === undefined ? { type: "menuPick", id } : { type: "menuPick", id, index }));
 jobsChip.addEventListener("click", () => send({ type: "pickJob" }));
 const usage = el("span", "usage");
-const contextRing = createContextRing();
 const planBar = createPlanBar();
 // Where, who, how: the workspace, its agent (with its setup warning), then the agent's mode, spread across the row.
 const agentPair = el("span", "agent-pair");
 agentPair.append(setupButton, agentChip);
 const footerChips = el("div", "footer-chips");
 footerChips.append(workspaceChip, agentPair, modeChip, jobsChip);
-footer.append(modeMenu.menu, footerChips, contextRing.ring, usage);
+footer.append(modeMenu.menu, footerChips, usage);
 const connectionsView = createConnectionsView(send);
 const conversationsView = createConversationsView(send, () => input.focus());
 const tabStrip = createTabStrip(send, (id) => select(id));
@@ -777,7 +778,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       kernlSkills = m.items;
       return;
     case "activeFile":
-      attachments.setActiveFile(m.path);
+      attachments.setActiveFile(m.path, m.outside);
       return;
     case "restoreDraft":
       // Never over what was typed since the panel opened.
