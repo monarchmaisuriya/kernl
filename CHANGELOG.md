@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-21
+
 ### Changed
 
 - The "+ file" suggestion offers whatever file is open in the editor, not only workspace files: one from another folder, anywhere on disk, or a new unsaved file is attached as its text (unsaved edits included). **Ask kernl about this file or selection** attaches such a file the same way instead of warning.
@@ -289,7 +291,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/pushowl/kernl/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/pushowl/kernl/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/pushowl/kernl/compare/v0.10.8...v0.11.0
 [0.10.8]: https://github.com/pushowl/kernl/compare/v0.10.7...v0.10.8
