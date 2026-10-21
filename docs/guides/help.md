@@ -39,7 +39,7 @@ Type `/` to list them. They run at once, even while the agent works, and are nev
 | --- | --- |
 | `/new` (or `/clear`) | A new chat in this tab. While the agent works, kernl asks first. |
 | `/tab` | A new tab: another session in the same folder. |
-| `/close` | Close this tab (not the first). |
+| `/close` | Close this tab (not the workspace's last). |
 | `/conversations` (or `/resume`) | Open an earlier conversation. |
 | `/agent` | Choose the agent. |
 | `/model` | Choose the model. |

@@ -27,9 +27,9 @@
 - **Tabs:** the row above the conversation, framed by a line above and below, shows the workspace's tabs as cells divided by lines, each named by its conversation. The shown tab's name is in full-strength text. Each tab leads with its state: a spinner while it works, a warning dot while it waits for your approval, and an accent dot when it finished while you looked at another tab (until you show it). On hover or keyboard focus, × appears at its end. When the tabs don't fit, the strip scrolls sideways (the wheel works), with `+` always in view.
   - `+` opens a tab: another session in the same folder, with its own conversation, agent, model, mode, and queue. It keeps working while you look at another tab.
   - Mouse: middle-click closes a tab; double-click on the strip's empty space opens one. Keyboard: the shown tab is the strip's one Tab stop; Left and Right (Home, End) show another, and Delete closes it.
-  - While kernl's panel has focus: Cmd+T (Ctrl+T) opens a tab, Cmd+W (Ctrl+W) closes the shown one (on the workspace's first tab it does nothing, rather than close your editor), and Ctrl+Tab and Ctrl+Shift+Tab show the next and previous tab.
-  - `×` closes a tab (a working one asks first); its conversation stays in Conversations. The first tab is the workspace itself and stays.
-  - `kernl.tabs.max` (default 5; `0` for no limit) caps the tabs per workspace. At the limit, a new tab closes the one shown longest ago that isn't working.
+  - While kernl's panel has focus: Cmd+T (Ctrl+T) opens a tab, Cmd+W (Ctrl+W) closes the shown one (on the workspace's last tab it does nothing, rather than close your editor), and Ctrl+Tab and Ctrl+Shift+Tab show the next and previous tab.
+  - `×` closes any tab while the workspace has two or more, the first one too (a working one asks first); its conversation stays in Conversations. The last tab stays, so a workspace always has one. A closed first tab stays closed after a reload.
+  - `kernl.tabs.max` (default 5; `0` for no limit) caps the tabs per workspace. At the limit, a new tab opens and the one shown longest ago that isn't working closes (the first tab too).
   - Tabs come back after a reload; each opens its conversation when you first show it.
   - Tabs share the folder: two tabs can change the same files, and kernl says so when you start one while another works. For separate work, use a worktree workspace.
 - **Title bar:**

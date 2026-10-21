@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- Any tab can close, the first one too, while the workspace has two or more; the last tab stays (no ×, Cmd+W does nothing, and `/close` says so). A closed first tab stays closed after a reload, and the workspace menu, new tabs, and a worktree's Merge and Discard work whichever tabs are open. At `kernl.tabs.max`, the first tab can be the one that gives way.
+
 ## [0.10.8] - 2026-10-20
 
 ### Changed

@@ -16,7 +16,7 @@ export interface PanelCommand {
 export const PANEL_COMMANDS = [
   { name: "new", aliases: ["clear"], description: "New chat in this tab" },
   { name: "tab", aliases: [], description: "New tab" },
-  { name: "close", aliases: [], description: "Close this tab", unavailable: "The first tab can't be closed." },
+  { name: "close", aliases: [], description: "Close this tab", unavailable: "The last tab can't be closed." },
   { name: "conversations", aliases: ["resume"], description: "Open an earlier conversation" },
   { name: "agent", aliases: [], description: "Choose the agent", unavailable: "The agent can't be changed while it's working." },
   { name: "model", aliases: [], description: "Choose the model", unavailable: "This agent has no model to choose here." },
@@ -49,13 +49,14 @@ export function commandFor(text: string, agentNames: ReadonlySet<string>): { com
 }
 
 /**
- * Whether a command can run in a workspace now, from what the panel also shows: a tab to close, an agent
- * that isn't working, a model to choose, more than one permission mode outside Restricted Mode.
+ * Whether a command can run in a tab now, from what the panel also shows: another tab open in its
+ * workspace (`openTabs`, this one included), an agent that isn't working, a model to choose, more than
+ * one permission mode outside Restricted Mode.
  */
-export function commandAvailable(command: PanelCommand, view: WorkspaceView, restricted: boolean): boolean {
+export function commandAvailable(command: PanelCommand, view: WorkspaceView, restricted: boolean, openTabs: number): boolean {
   switch (command.name) {
     case "close":
-      return !!view.tabOf;
+      return openTabs > 1;
     case "agent":
       return !view.running;
     case "model":

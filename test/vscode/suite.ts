@@ -1391,7 +1391,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await waitFor("a new chat", (m) => m.type === "cleared" && m.workspace === "main", from);
     assert.ok(!delivered.slice(from).some((m) => m.type === "userMessage"), "nothing sent to the agent");
     assert.deepEqual(await testing.sendFromOutside("/new fix it"), { error: "/new takes nothing after it." });
-    assert.deepEqual(await testing.sendFromOutside("/close"), { error: "The first tab can't be closed." });
+    assert.deepEqual(await testing.sendFromOutside("/close"), { error: "The last tab can't be closed." });
   });
 
   await check("replace option: turning kernl.replaceChatButton on hides VS Code's chat button (its own setting), and off puts back what was there", async () => {
@@ -1688,7 +1688,8 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
   });
 
   const lastWorkspaces = (from = 0) => delivered.slice(from).filter((m) => m.type === "workspaces").at(-1);
-  const tabIds = (from = 0) => lastWorkspaces(from)?.items.filter((w: any) => w.tabOf === "main").map((w: any) => w.id) ?? [];
+  // Main's tabs after tab 1 (tab 1's id is "main").
+  const tabIds = (from = 0) => lastWorkspaces(from)?.items.filter((w: any) => w.tabOf === "main" && w.id !== "main").map((w: any) => w.id) ?? [];
   const closeTabs = async () => {
     for (const id of tabIds()) await testing.receive({ type: "closeTab", workspace: id });
     await testing.receive({ type: "focus", workspace: "main" });
@@ -1699,7 +1700,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     let from = delivered.length;
     await testing.receive({ type: "newTab" });
     const tabsNow = lastWorkspaces(from);
-    const tab = tabsNow.items.find((w: any) => w.tabOf === "main");
+    const tab = tabsNow.items.find((w: any) => w.tabOf === "main" && w.id !== "main");
     assert.ok(tab, JSON.stringify(tabsNow.items.map((w: any) => w.id)));
     assert.equal(tabsNow.focus, tab.id, "the new tab is shown");
     assert.equal(tab.harness, tabsNow.items.find((w: any) => w.id === "main").harness, "with the workspace's agent");
@@ -1811,7 +1812,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await panelShows("main");
     from = delivered.length;
     await vscode.commands.executeCommand("kernl.closeTab");
-    assert.ok(lastWorkspaces(from) === undefined || lastWorkspaces(from).items.some((w: any) => w.id === "main"), "the first tab stays");
+    assert.ok(lastWorkspaces(from) === undefined || lastWorkspaces(from).items.some((w: any) => w.id === "main"), "the last tab stays");
   });
 
   await check("tabs: at kernl.tabs.max the tab shown longest ago that's idle closes for a new one; with every tab busy nothing closes and kernl says why", async () => {
@@ -1820,20 +1821,27 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
       let from = delivered.length;
       await testing.receive({ type: "newTab" });
       const firstTab = tabIds(from)[0];
+      // Tab 1 shown since: the new tab is the one shown longest ago.
+      await testing.receive({ type: "focus", workspace: "main" });
       from = delivered.length;
       await testing.receive({ type: "newTab" });
       const now = tabIds(from);
       assert.equal(now.length, 1, "still two tabs with the workspace");
       assert.notEqual(now[0], firstTab, "the idle tab closed for the new one");
+      // Both tabs busy (tab 1 too: it can give way like any tab).
       from = delivered.length;
       const busy = testing.receive({ type: "send", workspace: now[0], text: "keep busy" });
       const card = (await waitFor("its card", (m) => m.type === "approval" && m.card.workspaceId === now[0], from)).card;
+      const busyFirst = testing.receive({ type: "send", workspace: "main", text: "keep tab 1 busy" });
+      const firstCard = (await waitFor("tab 1's card", (m) => m.type === "approval" && m.card.workspaceId === "main", from)).card;
       from = delivered.length;
       await testing.receive({ type: "newTab" });
       await waitFor("why", (m) => m.type === "notice" && /All 2 tabs are busy \(kernl\.tabs\.max is 2\)/.test(m.text), from);
       assert.deepEqual(tabIds(), now, "nothing closed");
+      assert.ok(lastWorkspaces().items.some((w: any) => w.id === "main"), "tab 1 stays");
       await testing.receive({ type: "answer", id: card.id, approved: false });
-      await busy;
+      await testing.receive({ type: "answer", id: firstCard.id, approved: false });
+      await Promise.all([busy, busyFirst]);
     } finally {
       await config.update("tabs.max", undefined, vscode.ConfigurationTarget.Global);
       await closeTabs();
@@ -2157,17 +2165,20 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
 
   // A tab of the worktree left working: Merge refuses here, and the Discard check below removes it with the worktree.
   let worktreeTabWork: Promise<unknown> = Promise.resolve();
-  await check("worktree tabs: Merge refuses while one of the worktree's tabs works", async () => {
+  await check("worktree tabs: with the worktree's tab 1 closed, Merge refuses while its other tab works", async () => {
     await testing.receive({ type: "focus", workspace: "wt:ui-ws" });
     let from = delivered.length;
     await testing.receive({ type: "newTab" });
-    const tab = delivered.slice(from).filter((m) => m.type === "workspaces").at(-1).items.find((w: any) => w.tabOf === "wt:ui-ws")?.id;
+    const tab = delivered.slice(from).filter((m) => m.type === "workspaces").at(-1).items.find((w: any) => w.tabOf === "wt:ui-ws" && w.id !== "wt:ui-ws")?.id;
     assert.ok(tab, "a tab of the worktree");
+    // Its tab 1 closes: Merge, and Discard below, work on the worktree through the tab left.
+    await testing.receive({ type: "closeTab", workspace: "wt:ui-ws" });
+    assert.ok(!lastWorkspaces().items.some((w: any) => w.id === "wt:ui-ws"), "tab 1 closed");
     from = delivered.length;
     worktreeTabWork = testing.receive({ type: "send", workspace: tab, text: "tab working in the worktree" });
     await waitFor("its card", (m) => m.type === "approval" && m.card.workspaceId === tab, from);
     const headBefore = await git(root, ["rev-parse", "HEAD"]);
-    await testing.receive({ type: "focus", workspace: "wt:ui-ws" });
+    await testing.receive({ type: "focus", workspace: tab });
     scripted = { ...scripted, confirm: true, menu: /Merge/ };
     from = delivered.length;
     await testing.receive({ type: "pickWorkspace" });
@@ -2183,12 +2194,56 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     scripted = { ...scripted, confirm: true };
     const from = delivered.length;
     await testing.receive({ type: "pickWorkspace" });
-    const ws = await waitFor("the tab disappearing", (m) => m.type === "workspaces" && !m.items.some((w: any) => w.id === "wt:ui-ws"), from);
+    const ws = await waitFor("its tabs disappearing", (m) => m.type === "workspaces" && !m.items.some((w: any) => w.tabOf === "wt:ui-ws"), from);
     assert.equal(ws.focus, "main");
     assert.ok(!ws.items.some((w: any) => w.tabOf === "wt:ui-ws"), "its working tab went with it (stopped before the folder was removed)");
     await worktreeTabWork;
     assert.equal(await worktreePath(), undefined);
     assert.equal((await git(root, ["branch", "--list", "kernl/ui-ws"])).trim(), "");
+  });
+
+  // Last: Main's tab 1 stays closed from here on.
+  await check("equal tabs: Main's tab 1 closes like any tab (its conversation stays); the last tab stays; the menu, a new tab, and a reload work without tab 1", async () => {
+    await closeTabs();
+    let from = delivered.length;
+    await testing.receive({ type: "newTab" });
+    const second = tabIds(from)[0];
+    assert.ok(second, "a second tab");
+    await testing.receive({ type: "focus", workspace: "main" });
+    from = delivered.length;
+    const run = testing.receive({ type: "send", workspace: "main", text: "tab one, then closed" });
+    const card = (await waitFor("its card", (m) => m.type === "approval" && m.card.workspaceId === "main", from)).card;
+    await testing.receive({ type: "answer", id: card.id, approved: false });
+    await run;
+    from = delivered.length;
+    await testing.receive({ type: "closeTab", workspace: "main" });
+    let ws = lastWorkspaces(from);
+    assert.deepEqual(ws.items.filter((w: any) => w.tabOf === "main").map((w: any) => w.id), [second], "tab 1 closed");
+    assert.equal(ws.focus, second, "the tab to its right is shown");
+    assert.equal(ws.items.find((w: any) => w.id === second).workspaceLabel, "Main", "the workspace keeps its name");
+    await panelShows(second);
+    from = delivered.length;
+    await testing.receive({ type: "closeTab", workspace: second });
+    await vscode.commands.executeCommand("kernl.closeTab");
+    assert.ok(!lastWorkspaces(from) || lastWorkspaces(from).items.some((w: any) => w.id === second), "the last tab stays");
+    assert.deepEqual(await testing.sendFromOutside("/close"), { error: "The last tab can't be closed." });
+    from = delivered.length;
+    await vscode.commands.executeCommand("kernl.sessions");
+    const rows = (await waitFor("the Conversations view", (m) => m.type === "conversations" && m.open, from)).rows;
+    assert.ok(rows.some((r: any) => r.title === "tab one, then closed"), "tab 1's conversation is kept");
+    scripted = { ...scripted, menu: /Main/ };
+    from = delivered.length;
+    await testing.receive({ type: "pickWorkspace" });
+    scripted = { ...scripted, menu: undefined };
+    assert.equal(lastWorkspaces(from).focus, second, "the workspace menu shows its open tab");
+    from = delivered.length;
+    await testing.receive({ type: "newTab" });
+    ws = lastWorkspaces(from);
+    const third = ws.focus;
+    assert.equal(ws.items.find((w: any) => w.id === third).harness, ws.items.find((w: any) => w.id === second).harness, "a new tab uses the workspace's agent");
+    from = delivered.length;
+    await testing.reloadWorkspaces();
+    assert.deepEqual(lastWorkspaces(from).items.filter((w: any) => w.tabOf === "main").map((w: any) => w.id), [second, third], "after a reload tab 1 stays closed and the others come back");
   });
 }
 

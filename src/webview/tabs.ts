@@ -1,8 +1,8 @@
-// The tab strip: the shown workspace's tabs (the workspace itself first), each a pill named by its
+// The tab strip: the shown workspace's tabs (by number), each a pill named by its
 // conversation. A pill leads with its state, where it stays in view: working (a spinner), waiting for
 // the user (a warning dot), or finished while another tab was shown (an accent dot, until it's shown).
 // Pills shrink (titles get an ellipsis; the full one is in the tooltip) before the strip scrolls. A
-// closable pill keeps a slot at its end for ×, shown on hover or keyboard focus (the first tab can't close). Keyboard: the
+// closable pill keeps a slot at its end for ×, shown on hover or keyboard focus (any tab while two or more are open; the last can't close). Keyboard: the
 // shown tab is the strip's one Tab stop; arrows, Home, and End show another; Delete closes. Mouse:
 // middle-click closes; double-click on the strip's empty space opens a tab; the wheel scrolls it sideways.
 // A tab is another session in the same folder; the host owns them. Built with createElement + textContent only.
@@ -55,7 +55,7 @@ export function createTabStrip(send: (m: PanelToHost) => void, select: (id: stri
     button.append(el("span", "tab-title", title));
     button.addEventListener("click", () => select(view.id));
     t.append(button);
-    if (view.tabOf) {
+    if (shownTabs.length > 1) {
       const slot = el("span", "tab-slot");
       const x = el("button", "icon-button tab-close");
       x.tabIndex = -1;
@@ -80,9 +80,10 @@ export function createTabStrip(send: (m: PanelToHost) => void, select: (id: stri
   /** The tabs of the workspace `shown` belongs to. */
   function render(views: readonly WorkspaceView[], shown: string | undefined) {
     const current = views.find((v) => v.id === shown);
-    const base = current?.tabOf ?? current?.id;
-    const number = (v: WorkspaceView) => (v.tabOf ? Number(v.id.slice(v.id.lastIndexOf("~") + 1)) : 1);
-    shownTabs = views.filter((v) => v.id === base || v.tabOf === base).sort((a, b) => number(a) - number(b));
+    const base = current?.tabOf;
+    // Tab 1's id is its workspace's own; tab n's ends in "~n".
+    const number = (v: WorkspaceView) => (v.id === v.tabOf ? 1 : Number(v.id.slice(v.id.lastIndexOf("~") + 1)));
+    shownTabs = views.filter((v) => v.tabOf === base).sort((a, b) => number(a) - number(b));
     for (const v of shownTabs) {
       if (wasRunning.get(v.id) && !v.running && v.id !== shown) finished.add(v.id);
       if (v.id === shown) finished.delete(v.id);
@@ -118,7 +119,7 @@ export function createTabStrip(send: (m: PanelToHost) => void, select: (id: stri
     else if (e.key === "ArrowLeft") go(at - 1);
     else if (e.key === "Home") go(0);
     else if (e.key === "End") go(shownTabs.length - 1);
-    else if (e.key === "Delete" && shownTabs[at].tabOf) (e.preventDefault(), close(shownTabs[at]));
+    else if (e.key === "Delete" && shownTabs.length > 1) (e.preventDefault(), close(shownTabs[at]));
   });
   // Double-click on the strip's empty space opens a tab, as in browsers.
   bar.addEventListener("dblclick", (e) => (e.target === strip || e.target === bar) && send({ type: "newTab" }));

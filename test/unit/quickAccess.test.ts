@@ -111,7 +111,7 @@ test("@kernl lists exactly kernl's commands in VS Code's chat", () => {
   assert.deepEqual(pkg.contributes.chatParticipants[0].commands.map((c: any) => c.name), PANEL_COMMANDS.map((c) => c.name));
 });
 
-test("tab shortcuts act only while kernl's panel has focus; Cmd+W on the first tab does nothing instead of closing an editor", () => {
+test("tab shortcuts act only while kernl's panel has focus; Cmd+W on a workspace's last tab does nothing instead of closing an editor", () => {
   const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../package.json"), "utf8"));
   const bound = (command: string) => pkg.contributes.keybindings.filter((k: any) => k.command === command);
   for (const [command, mac] of [["kernl.newTab", "cmd+t"], ["kernl.closeTab", "cmd+w"], ["kernl.nextTab", undefined], ["kernl.previousTab", undefined]] as const) {

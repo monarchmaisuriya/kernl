@@ -48,13 +48,13 @@ test("menu rows match a name or alias prefix (exact first, not an alias the agen
   assert.equal(menuRows("mo", new Set(["model"]), all)[0].clash, true);
 });
 
-test("availability comes from the workspace's view: a tab to close, an idle agent, a model to choose, two or more modes outside Restricted Mode", () => {
-  const view: WorkspaceView = { id: "main", label: "Main", harness: "claude-code", running: false, waiting: 0, disclosure: "", queue: [], queuePaused: false, mode: "ask", modes: [] };
-  const can = (name: string, v: WorkspaceView, restricted = false) => commandAvailable(PANEL_COMMANDS.find((c) => c.name === name)!, v, restricted);
+test("availability comes from the tab's view: another tab to leave open, an idle agent, a model to choose, two or more modes outside Restricted Mode", () => {
+  const view: WorkspaceView = { id: "main", tabOf: "main", label: "Main", workspaceLabel: "Main", harness: "claude-code", running: false, waiting: 0, disclosure: "", queue: [], queuePaused: false, mode: "ask", modes: [] };
+  const can = (name: string, v: WorkspaceView, restricted = false, openTabs = 1) => commandAvailable(PANEL_COMMANDS.find((c) => c.name === name)!, v, restricted, openTabs);
   const mode = { id: "ask", label: "Ask", icon: "shield", description: "" };
   const model = { id: "model", name: "Model", kind: "model" as const, value: "big" };
-  assert.equal(can("close", view), false);
-  assert.equal(can("close", { ...view, id: "main~2", tabOf: "main" }), true);
+  assert.equal(can("close", view), false, "a workspace's last tab stays");
+  assert.equal(can("close", view, false, 2), true, "any tab closes while two or more are open, tab 1 too");
   assert.equal(can("agent", { ...view, running: true }), false);
   assert.equal(can("model", view), false, "a CLI agent without a model option");
   assert.equal(can("model", { ...view, agentOptions: [model] as any }), true);

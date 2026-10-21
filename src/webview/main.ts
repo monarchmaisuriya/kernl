@@ -371,9 +371,8 @@ function render() {
   tabStrip.render([...panes.values()].map((q) => q.view), p?.view.id);
   if (p) {
     // The chip names the workspace (a tab shows its workspace's name); the tab strip shows its own tabs' states.
-    const base = p.view.tabOf ?? p.view.id;
-    const workspaceLabel = panes.get(base)?.view.label ?? p.view.label;
-    const others = [...panes.values()].filter((q) => (q.view.tabOf ?? q.view.id) !== base);
+    const workspaceLabel = p.view.workspaceLabel;
+    const others = [...panes.values()].filter((q) => q.view.tabOf !== p.view.tabOf);
     const attention = others.some((q) => q.view.waiting > 0) ? "waiting" : others.some((q) => q.view.running) ? "running" : "";
     workspaceChip.replaceChildren(icon(p.view.branch ? "branch" : "folder", 14), el("span", "chip-text", workspaceLabel));
     if (attention) workspaceChip.append(el("span", `dot ${attention}`));
@@ -600,7 +599,7 @@ function agentSlash(p: Pane): SkillView[] {
 }
 
 /** Whether a kernl command can run in the shown tab (the host decides the same way when it runs it). */
-const available = (p: Pane, c: PanelCommand) => commandAvailable(c, p.view, !!status?.restricted);
+const available = (p: Pane, c: PanelCommand) => commandAvailable(c, p.view, !!status?.restricted, [...panes.values()].filter((q) => q.view.tabOf === p.view.tabOf).length);
 
 /** A kernl command, run by the host in the shown tab. */
 const runCommand = (name: PanelCommandName) => send({ type: "runCommand", name });

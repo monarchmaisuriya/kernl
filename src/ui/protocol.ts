@@ -150,8 +150,10 @@ export interface WorkspaceView {
   forkLimit?: string;
   /** A CLI agent's model, thinking, and fast-mode switches (its last session's, before the first message); absent for kernl. */
   agentOptions?: AgentOptionView[];
-  /** A tab's workspace (its first tab); absent for a workspace itself. */
-  tabOf?: string;
+  /** The workspace this tab belongs to; tab 1's id is the workspace's own. */
+  tabOf: string;
+  /** The workspace's name (the footer's workspace chip), whichever of its tabs is open. */
+  workspaceLabel: string;
   /** The conversation's title, for its tab (absent before the first message). */
   title?: string;
 }

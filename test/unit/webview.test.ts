@@ -37,8 +37,8 @@ function loadPanel() {
   return { window, doc, sent, host, all, button, visibleLog };
 }
 
-const MAIN: WorkspaceView = { id: "main", label: "Main", harness: "deepagents", running: false, waiting: 0, disclosure: "Deep Agents asks before every edit.", queue: [], queuePaused: false, mode: "ask", modes: [] };
-const WT: WorkspaceView = { id: "wt:fix", label: "fix", harness: "claude-code", branch: "kernl/fix", running: false, waiting: 0, disclosure: "Claude Code runs approved actions itself.", queue: [], queuePaused: false, mode: "ask", modes: [], forkLimit: "Claude Code can fork only from the last message" };
+const MAIN: WorkspaceView = { id: "main", tabOf: "main", label: "Main", workspaceLabel: "Main", harness: "deepagents", running: false, waiting: 0, disclosure: "Deep Agents asks before every edit.", queue: [], queuePaused: false, mode: "ask", modes: [] };
+const WT: WorkspaceView = { id: "wt:fix", tabOf: "wt:fix", label: "fix", workspaceLabel: "fix", harness: "claude-code", branch: "kernl/fix", running: false, waiting: 0, disclosure: "Claude Code runs approved actions itself.", queue: [], queuePaused: false, mode: "ask", modes: [], forkLimit: "Claude Code can fork only from the last message" };
 const STATUS: HostToPanel = { type: "status", ready: true, provider: "deepseek", model: "deepseek-flash", restricted: false, thinkingDisplay: "auto" };
 const HARNESSES: HarnessView[] = [
   { id: "deepagents", label: "kernl", group: "kernl", ready: true },
@@ -524,7 +524,7 @@ test("/ lists kernl's own commands for every agent; choosing or typing one runs 
   const labels = () => p.all(".suggestion .suggestion-label").map((s) => s.textContent);
   const sends = () => p.sent.filter((m) => m.type === "send");
 
-  // kernl's agent: kernl's commands, then its skills; /close is left out on the first tab.
+  // kernl's agent: kernl's commands, then its skills; /close is left out on a workspace's last tab.
   let input = type(p, "/c");
   assert.deepEqual(labels(), ["/new", "/conversations", "/connections", "/connect-db"]);
   assert.equal(p.all(".suggestion .suggestion-detail")[0].textContent, "New chat in this tab · kernl");
@@ -715,7 +715,7 @@ test("send options: no separate arrow; resting the pointer on Send opens its men
   assert.deepEqual(options.map((o) => (o as HTMLButtonElement).disabled), [false, false, true]);
 });
 
-test("tabs: pills named by conversation with a state slot (working, waiting, finished while away); + opens one, × closes one, a click switches; the chip keeps the workspace's name", () => {
+test("tabs: pills named by conversation with a state slot (working, waiting, finished while away); + opens one, × closes any but the last, a click switches; the chip keeps the workspace's name", () => {
   const p = loadPanel();
   const tab2 = { ...MAIN, id: "main~2", label: "Main · tab 2", tabOf: "main", title: "Fix the login loop", running: true };
   const tab3 = { ...MAIN, id: "main~3", label: "Main · tab 3", tabOf: "main", waiting: 1 };
@@ -726,8 +726,7 @@ test("tabs: pills named by conversation with a state slot (working, waiting, fin
   assert.deepEqual(tabs().map((t) => t.querySelector(".tab-state")?.className ?? ""), ["tab-state working", "tab-state working", "tab-state waiting"]);
   assert.equal(tabs()[1].querySelector(".tab-button")!.getAttribute("aria-label"), "Fix the login loop, working");
   assert.equal(tabs()[1].querySelector(".tab-button")!.firstElementChild!.className, "tab-state working", "the state leads the pill, where it stays in view when titles are cut");
-  assert.equal(tabs()[0].querySelector(".tab-slot"), null, "only a closable tab keeps a slot for ×");
-  assert.equal(tabs()[0].querySelector(".tab-close"), null, "the first tab can't be closed");
+  assert.ok(tabs().every((t) => t.querySelector(".tab-slot .tab-close")), "every tab closes while two or more are open, the first too");
   assert.equal(p.doc.querySelector(".workspace .chip-text")!.textContent, "Main", "the chip names the workspace");
 
   // The first tab finishes while another is shown: it keeps a dot until it's shown.
@@ -742,6 +741,11 @@ test("tabs: pills named by conversation with a state slot (working, waiting, fin
   assert.deepEqual(p.sent.at(-1), { type: "newTab" });
   p.button("Close tab Fix the login loop")!.click();
   assert.deepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main~2" });
+
+  // Tab 1 closed: the chip still names the workspace; the last tab left keeps no slot for ×.
+  p.host(workspaces([tab2, WT], "main~2"));
+  assert.equal(p.doc.querySelector(".workspace .chip-text")!.textContent, "Main", "the chip names the workspace without its tab 1");
+  assert.equal(tabs()[0].querySelector(".tab-slot"), null, "the last tab can't be closed");
 });
 
 test("tabs with the same title are numbered in strip order (empty ones are all \"New chat\"), in the pill, its label, and its close button", () => {
@@ -772,7 +776,7 @@ test("tabs: one Tab stop (the shown tab); arrows, Home, and End show another; De
   press("ArrowRight");
   assert.deepEqual(p.sent.at(-1), { type: "focus", workspace: "main" }, "wraps around");
   press("Delete");
-  assert.notDeepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main" }, "the first tab doesn't close");
+  assert.deepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main" }, "the first tab closes too");
   press("Home");
   press("ArrowLeft");
   press("Delete");
@@ -781,6 +785,12 @@ test("tabs: one Tab stop (the shown tab); arrows, Home, and End show another; De
   assert.deepEqual(p.sent.at(-1), { type: "closeTab", workspace: "main~2" }, "middle-click closes");
   p.doc.querySelector(".tabs")!.dispatchEvent(new p.window.MouseEvent("dblclick", { bubbles: true }));
   assert.deepEqual(p.sent.at(-1), { type: "newTab" }, "double-click on empty space opens a tab");
+
+  p.host(workspaces([{ ...MAIN, title: "First" }], "main"));
+  buttons()[0].focus();
+  const before = p.sent.length;
+  press("Delete");
+  assert.ok(!p.sent.slice(before).some((m) => m.type === "closeTab"), "the last tab doesn't close");
 });
 
 test("a queued message is edited in place: clicking it opens an editor (it won't send meanwhile); Enter saves, Escape cancels", () => {

@@ -204,8 +204,10 @@ export class WorkspaceRuntime {
     readonly info?: WorkspaceInfo,
     /** Whether a change to kernl.harness switches this workspace's agent (a single folder's does; worktrees and multi-root folders keep their own). */
     readonly followsHarnessSetting = info === undefined,
-    /** For a tab: its workspace's id (the first tab). A tab is another session in the same folder, with its own conversation and queue. */
-    readonly tabOf?: string,
+    /** The workspace this tab belongs to (a folder or a worktree). Every tab has one; tab 1's id is the workspace's own. A tab is a session in the workspace's folder, with its own conversation and queue. */
+    readonly tabOf: string = id,
+    /** The workspace's name, shown for every tab of it (a tab's own label says which tab). */
+    readonly workspaceLabel: string = label,
   ) {
     this.approvals = new PendingApprovals(
       (approvalId, request) => host.showApproval(this, approvalId, request),
@@ -261,7 +263,7 @@ export class WorkspaceRuntime {
     const modeList = PERMISSION_MODES.filter((m) => modes[m]).map((m) => ({ id: m, label: MODE_INFO[m].label, icon: MODE_INFO[m].icon, description: modes[m]! }));
     const forkLimit = this.forkLimit();
     const agentOptions = this.agentOptions();
-    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused, mode: this.permissionMode, modes: modeList, ...(forkLimit ? { forkLimit } : {}), ...(agentOptions ? { agentOptions } : {}), ...(this.tabOf ? { tabOf: this.tabOf } : {}), ...(this.conversationTitle ? { title: this.conversationTitle } : {}) };
+    return { id: this.id, label: this.label, harness: this.harness, branch: this.info?.branch, running: this.running, waiting: this.approvals.size, disclosure, queue, queuePaused: this.queuePaused, mode: this.permissionMode, modes: modeList, ...(forkLimit ? { forkLimit } : {}), ...(agentOptions ? { agentOptions } : {}), tabOf: this.tabOf, workspaceLabel: this.workspaceLabel, ...(this.conversationTitle ? { title: this.conversationTitle } : {}) };
   }
 
   private optionsKey(harness = this.harness) {
@@ -751,8 +753,9 @@ export class WorkspaceRuntime {
   }
 
   /** Where this workspace's queue is kept: the workspace's own key; a tab's adds its number, so tabs don't share a queue. */
+  /** Tab 1 keeps the workspace's queue file; tab n has its own. */
   get queueKey() {
-    return this.tabOf ? `${this.sessionKey}~${this.id.slice(this.id.lastIndexOf("~") + 1)}` : this.sessionKey;
+    return this.id === this.tabOf ? this.sessionKey : `${this.sessionKey}~${this.id.slice(this.id.lastIndexOf("~") + 1)}`;
   }
 
   /** The conversation's title for its tab: the agent's title, else the first message (short); undefined before one. */
