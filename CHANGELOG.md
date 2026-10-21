@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-21
+
 ### Added
 
 - **kernl: Export data** and **kernl: Import data** move your conversations (with their tool images) and kernl settings to another machine, or back them up, in one file. API keys are never in it: every stored key and any key-shaped text is replaced with `[redacted]`, the export stops if a stored key survives, and the machine-only settings that can hold tokens (`kernl.agentCommands`, `kernl.mcpServers`) stay behind. Import places conversations in the open folder with the same name, never overwrites one that's already here, and shows every setting it would change before asking once.
@@ -275,7 +277,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.10.8...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/pushowl/kernl/compare/v0.10.8...v0.11.0
 [0.10.8]: https://github.com/pushowl/kernl/compare/v0.10.7...v0.10.8
 [0.10.7]: https://github.com/pushowl/kernl/compare/v0.10.6...v0.10.7
 [0.10.6]: https://github.com/pushowl/kernl/compare/v0.10.5...v0.10.6
