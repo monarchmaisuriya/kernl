@@ -1,6 +1,6 @@
-// How full the agent's context window is, as a small ring in the footer: the percentage, with the
-// session-usage RFD's thresholds (yellow from 75%, orange from 90%, red from 95%) and the exact
-// numbers and cost in its tooltip. Built with createElement + setAttribute only.
+// How full the agent's context window is, as a small ring at the composer's top right (no number beside
+// it): the session-usage RFD's thresholds (yellow from 75%, orange from 90%, red from 95%), with the
+// percentage, the exact numbers, and the cost in its tooltip. Built with createElement + setAttribute only.
 const NS = "http://www.w3.org/2000/svg";
 const R = 6;
 const CIRCUMFERENCE = 2 * Math.PI * R;
@@ -32,9 +32,7 @@ export function createContextRing() {
   fill.setAttribute("transform", "rotate(-90 8 8)");
   fill.setAttribute("stroke-dasharray", String(CIRCUMFERENCE));
   svg.append(track, fill);
-  const label = document.createElement("span");
-  label.className = "context-label";
-  ring.append(svg, label);
+  ring.append(svg);
 
   function show(usage: ContextUsage | undefined) {
     ring.hidden = !usage;
@@ -42,7 +40,6 @@ export function createContextRing() {
     const percent = Math.min(100, Math.round((usage.used / usage.size) * 100));
     fill.setAttribute("stroke-dashoffset", String(CIRCUMFERENCE * (1 - percent / 100)));
     ring.dataset.level = contextLevel(percent);
-    label.textContent = `${percent}%`;
     const cost = usage.cost ? ` · ${new Intl.NumberFormat(undefined, { style: "currency", currency: usage.cost.currency }).format(usage.cost.amount)}` : "";
     const warning = percent >= 95 ? " · nearly full: the next message may fail; start a new conversation" : percent >= 75 ? " · filling up" : "";
     const text = `Context: ${compact(usage.used)} of ${compact(usage.size)} tokens (${percent}%)${cost}${warning}`;

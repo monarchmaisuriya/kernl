@@ -178,8 +178,7 @@ toolbarOptions.append(modelChip, thinkingChip, fastChip);
 toolbar.append(attachButton, toolbarOptions, sendButton);
 const contextRing = createContextRing();
 const context = el("div", "context-row");
-// The context ring sits at the row's end: the composer's top right, above Send.
-context.append(attachments.suggestion, attachments.chips, contextRing.ring);
+context.append(attachments.suggestion, attachments.chips);
 const inputWrap = el("div", "input-wrap");
 inputWrap.append(attachments.layer, input);
 // Messages waiting for the current run to end (kept by the host).
@@ -187,7 +186,8 @@ const queueList = el("div", "queue");
 // Shown while a drag is over the panel (which happens only with Shift held).
 const dropHint = el("div", "drop-hint", "Drop to attach");
 dropHint.hidden = true;
-composer.append(attachments.popover, sendMenu.menu, queueList, context, attachments.dropNote, inputWrap, dropHint, toolbar);
+// The context ring is pinned to the composer's top right, centered over Send (panel.css).
+composer.append(attachments.popover, sendMenu.menu, queueList, context, attachments.dropNote, inputWrap, dropHint, toolbar, contextRing.ring);
 
 const footer = el("div", "footer");
 const workspaceChip = el("button", "chip workspace");

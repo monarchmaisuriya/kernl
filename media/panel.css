@@ -280,7 +280,6 @@ body.vscode-reduce-motion .working-label, body.vscode-reduce-motion .tool[data-s
 .context-row { display: flex; align-items: flex-start; gap: 4px; }
 .context-row:not(:has(> :not([hidden]))) { display: none; }
 /* The composer's top right, inset like Send's own padding. */
-.context-row > .context-ring { margin-left: auto; margin-right: 3px; flex: none; }
 .suggest-file { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 6px; border-radius: var(--radius-sm); border: 1px dashed var(--border); color: var(--muted); font-size: 0.88em; }
 .suggest-file .chip-text { font-style: italic; }
 .file-badge { font-size: 0.75em; font-weight: 600; color: var(--muted); }
@@ -409,7 +408,10 @@ body.vscode-high-contrast .chip, body.vscode-high-contrast .tool, body.vscode-hi
 .plan-entry[data-status="completed"] .plan-mark { border: none; color: var(--success); }
 
 /* How full the context window is */
-.context-ring { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 0.85em; font-variant-numeric: tabular-nums; }
+/* The composer's top right: on its first line, centered over Send's arrow; the rows below keep clear of it. */
+.context-ring { display: inline-flex; color: var(--muted); }
+.composer > .context-ring { position: absolute; top: 13px; right: 25px; }
+.composer:has(> .context-ring:not([hidden])) :is(.queue, .context-row, .input-wrap) { padding-right: 20px; }
 .context-track { stroke: var(--border); }
 .context-fill { stroke: var(--accent); }
 .context-ring[data-level="filling"] .context-fill { stroke: var(--warning); }

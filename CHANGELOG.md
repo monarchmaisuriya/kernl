@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Changed
+
+- The context ring is an icon only (the percentage, numbers, and cost are in its tooltip), pinned to the message box's top right on its first line, centered over Send; it no longer takes a row of its own.
+
 ## [0.12.1] - 2026-10-21
 
 ### Changed

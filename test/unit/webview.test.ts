@@ -1092,15 +1092,16 @@ test("the plan is pinned above the input: what's being done now and how far alon
   assert.equal(bar.hidden, true);
 });
 
-test("the context ring shows how full the context is, with warning levels and the numbers in its label; it sits at the composer's top right", () => {
+test("the context ring shows how full the context is: an icon only, with warning levels and the numbers in its label; it's pinned to the composer's top right", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
   const ring = p.doc.querySelector<HTMLElement>(".context-ring")!;
-  assert.ok(ring.closest(".composer .context-row"), "in the composer's top row (above Send), not the footer");
+  assert.equal(ring.parentElement, p.doc.querySelector(".composer"), "pinned in the composer (above Send), not in a row of its own or the footer");
   assert.equal(p.doc.querySelector(".footer .context-ring"), null);
   assert.equal(ring.hidden, true, "hidden until the agent reports it");
   p.host({ type: "context", workspace: "main", used: 150000, size: 200000, cost: { amount: 0.42, currency: "USD" } });
-  assert.equal(ring.querySelector(".context-label")!.textContent, "75%");
+  assert.equal(ring.querySelector(".context-label"), null, "no number beside the icon");
+  assert.match(ring.title, /\(75%\)/, "the percentage is in its tooltip");
   assert.equal(ring.dataset.level, "filling");
   assert.match(ring.getAttribute("aria-label")!, /150k of 200k tokens \(75%\).*0\.42/);
   p.host({ type: "context", workspace: "main", used: 196000, size: 200000 });
