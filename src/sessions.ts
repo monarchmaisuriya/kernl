@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { type Attachment, type HostToPanel, PREVIEW_TYPES } from "./ui/protocol";
+import { type Attachment, type HostToPanel, PREVIEW_FILE, PREVIEW_TYPES } from "./ui/protocol";
 
 /**
  * Conversations per workspace, kept across window reloads (VS Code's workspace storage).
@@ -148,6 +148,20 @@ export class SessionStore {
     s.updatedAt = Date.now();
     await mkdir(this.folder(workspaceKey), { recursive: true });
     await this.write(join(this.folder(workspaceKey), `${s.id}.json`), JSON.stringify(s));
+  }
+
+  /** Writes an imported conversation as it is (the importer validated it): unlike save(), its title and times are kept. */
+  async saveImported(workspaceKey: string, s: SessionRecord): Promise<void> {
+    await mkdir(this.folder(workspaceKey), { recursive: true });
+    await this.write(join(this.folder(workspaceKey), `${s.id}.json`), JSON.stringify(s));
+  }
+
+  /** Writes an imported tool image at its path under `previewsDir` (`<session>/<file>`, as savePreview names them). */
+  async saveImportedPreview(path: string, bytes: Uint8Array): Promise<void> {
+    if (!PREVIEW_FILE.test(path)) throw new Error(`Expected an image path like <session>/<file>.png, got ${JSON.stringify(path)}`);
+    if (!bytes.length || bytes.length > PREVIEW_MAX_BYTES) throw new Error(`Expected an image of 1 to ${PREVIEW_MAX_BYTES} bytes at ${path}, got ${bytes.length}`);
+    await mkdir(join(this.previewsDir, path.split("/")[0]), { recursive: true });
+    await this.write(join(this.previewsDir, path), bytes);
   }
 
   async load(workspaceKey: string, id: string): Promise<SessionRecord | undefined> {

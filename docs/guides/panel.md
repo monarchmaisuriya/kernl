@@ -37,7 +37,7 @@
   - `+` starts a new chat in the workspace you're looking at;
   - the branch icon creates a workspace;
   - the clock icon opens the Conversations view in place of the conversation: New conversation, a search box, the workspace's conversations (kept across restarts) at once, then the CLI agents' own sessions in this folder as each agent answers, with "Looking for … sessions" until it does (see [CLI agents](cli-agents.md#sessions-started-outside-kernl)). Pick one to open it. While the agent works, picking one asks first, then stops the agent, waits for its turn to end (up to 15 s), and opens it. Back (or Escape) returns to the conversation;
-  - the menu icon (three lines) holds Choose agent, Manage providers, Agent logins, settings, Show connections, and Show loaded sources.
+  - the menu icon (three lines) holds Choose agent, Manage providers, Agent logins, settings, Show connections, and Show loaded sources, then Export data and Import data (see [Moving conversations and settings](#moving-conversations-and-settings)).
   - Every list (agent, model, workspace, attach, conversations, setup steps) opens in the panel next to the button that opened it, with a search box for long lists; Escape or a click outside closes it. From the Command Palette, with the panel hidden, VS Code's own list is used. Typed answers (keys, names) still use VS Code's input box.
 - **Composer:** the message box runs the panel's full width, framed by a line above and below; its text lines up with the conversation's.
   - `+` attaches Files & Folders, another Conversation, a GitHub Issue, or a Pull Request;
@@ -83,3 +83,31 @@
 - **Replies:** agent replies render as Markdown (code blocks with Copy, lists, tables, links). Only `http(s)` links are clickable and they open in your browser; images are never loaded; raw HTML in a reply shows as text. Your own messages, tool output, and approval cards stay plain text.
 - **Colors:** one accent (your theme's button color) marks what's primary or in progress: Send, Approve, the working mark, running workspaces, the plan step in progress, the context ring, and waiting cards. Links use the link color; warnings, errors, and success use one color each, always with an icon or words. Everything follows your theme, including high contrast.
 - **Footer:** the workspace chip (a dot means another workspace is running, or waiting for your approval), the agent chip (with a warning button when the agent still needs setup), and the permission mode chip (below).
+
+## Moving conversations and settings
+
+**kernl: Export data** and **kernl: Import data** (Command Palette, or the panel's menu) move your conversations and settings to another machine, or keep a backup. API keys never go in the file.
+
+- **What's exported:**
+  - the conversations of the folders open in this window, with their worktree workspaces and the tool images they show;
+  - your kernl user settings.
+- **What isn't:**
+  - API keys, agent keys, and secret header values: set them again with **kernl: Set API key** and **Agent logins**;
+  - `kernl.agentCommands` and `kernl.mcpServers`: they belong to one machine and can hold tokens (VS Code's own Settings Sync leaves this kind of setting behind too);
+  - Restore points, tabs, drafts, queued messages, your `~/.kernl` files, and a CLI agent's own sessions.
+- **Keys are removed:**
+  - every key kernl stores is replaced with `[redacted]`, and so is text shaped like a key (for example `sk-…`, `AIza…`, `ghp_…`, `AKIA…`, or a private key block);
+  - if a stored key were still in the data, the export stops and writes nothing;
+  - a token you pasted that has no known shape can't be recognized, so look through an export before you share it.
+- **Importing:**
+  - conversations go to the open folder with the same name (kernl asks when none or several match), and a worktree's go to the worktree on the same branch, or else its folder;
+  - a conversation that's already here is left as it is, never overwritten;
+  - kernl lists every setting it would change (current and new value, and which ones let more run without asking), then asks once.
+
+Import only files you made yourself: a conversation's history becomes the agent's context when you continue it.
+
+For example, to move to a new laptop:
+
+1. On the old one, run **kernl: Export data**, choose Conversations and settings, and save `kernl-data-2026-10-21.json`.
+2. On the new one, open the same project folder, run **kernl: Import data**, pick the file, check the list, and choose Import.
+3. Set your API keys again with **kernl: Set API key**.

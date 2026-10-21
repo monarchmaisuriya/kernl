@@ -74,6 +74,22 @@ export async function run() {
     },
     confirm: async () => true,
   });
+  /**
+   * Shows a workspace the way a user does (the workspace menu) and waits until the real panel reports it.
+   * The panel reports what it shows on its own too (it switches to a workspace that gets a card), so a
+   * simulated focus message can be overwritten by a report still on its way; a report answering the
+   * host's own request comes after any earlier one (both directions keep order).
+   */
+  const show = async (id: string) => {
+    const label = lastWorkspaces().items.find((w: any) => w.id === id).label;
+    scripted = { menu: [new RegExp(`^(\\$\\(check\\) )?${label}$`)] };
+    await testing.receive({ type: "pickWorkspace" });
+    const deadline = Date.now() + 10_000;
+    while (testing.activeWorkspace() !== id) {
+      if (Date.now() > deadline) throw new Error(`the panel never reported showing ${id}; the host has ${testing.activeWorkspace()}`);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
   const fakeAgent = { command: process.execPath, args: [join(__dirname, "fakeAcpAgent.cjs")], env: { FAKE_SCENARIO: "write" } };
   const config = vscode.workspace.getConfiguration("kernl");
   await config.update("agentCommands", agentCommands({ "claude-code": fakeAgent }), vscode.ConfigurationTarget.Global);
@@ -102,7 +118,7 @@ export async function run() {
 
   await check("threads: from alpha, @ finds beta's Claude Code conversation; tagged, it reaches the agent as text; a deleted one sends a note", async () => {
     await testing.setHarness("folder:alpha", "claude-code");
-    await testing.receive({ type: "focus", workspace: "folder:alpha" });
+    await show("folder:alpha");
     let from = delivered.length;
     await testing.receive({ type: "searchFiles", query: "hello" });
     const matches = await waitFor("search results", (m) => m.type === "fileMatches" && m.query === "hello", from);
@@ -123,7 +139,7 @@ export async function run() {
   });
 
   await check("multi-root: a new worktree workspace comes from the shown folder's repository, and stays that folder's when another folder is shown during the prompts", async () => {
-    await testing.receive({ type: "focus", workspace: "folder:beta" });
+    await show("folder:beta");
     scripted = { inputs: ["feature"], menu: [/kernl/], whileAsked: () => testing.receive({ type: "focus", workspace: "folder:alpha" }) };
     const from = delivered.length;
     await vscode.commands.executeCommand("kernl.newWorkspace");
@@ -137,7 +153,7 @@ export async function run() {
   });
 
   await check("Agent logins: a ready agent can be used in the shown workspace right away", async () => {
-    await testing.receive({ type: "focus", workspace: "folder:alpha" });
+    await show("folder:alpha");
     scripted = { menu: [/^Claude Code$/, /^Use Claude Code in this workspace$/] };
     await vscode.commands.executeCommand("kernl.agentLogins");
     const actions = menusShown.at(-1)!.map((i: any) => i.label);

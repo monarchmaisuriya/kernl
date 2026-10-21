@@ -29,6 +29,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("kernl.nextTab", () => controller.showTab(1)),
     vscode.commands.registerCommand("kernl.previousTab", () => controller.showTab(-1)),
     vscode.commands.registerCommand("kernl.clearHistory", () => controller.clearHistory()),
+    vscode.commands.registerCommand("kernl.exportData", (target?: unknown) => controller.exportData(fileLocation(target))),
+    vscode.commands.registerCommand("kernl.importData", (source?: unknown) => controller.importData(fileLocation(source))),
     vscode.commands.registerCommand("kernl.attachToChat", (uri?: vscode.Uri, uris?: vscode.Uri[]) =>
       controller.attachUris((uris?.length ? uris : uri ? [uri] : []).map((u) => u.toString())),
     ),
@@ -41,3 +43,8 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {}
+
+/** A command's file argument, when it is one: kernl's panel menu passes its own options ({ preserveFocus }), which mean "ask where". */
+function fileLocation(arg: unknown): vscode.Uri | undefined {
+  return arg instanceof vscode.Uri ? arg : undefined;
+}

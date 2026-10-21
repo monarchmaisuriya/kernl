@@ -2,6 +2,7 @@
 // integrated browser. Restart persistence of keys is not testable here: the test instance uses
 // in-memory application storage ("Initializing fallback application storage (path: in-memory)").
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -677,6 +678,25 @@ export async function run() {
       assert.match(await ws.readThread(other.id, {}), /^Only threads tagged in this conversation can be read; tagged here: /);
     } finally {
       ws.dispose();
+    }
+  });
+
+  await check("a saved conversation opened in another workspace (a tab, the folder in a multi-root window, an import) shows there: its events carry the showing workspace", async () => {
+    const posted: any[] = [];
+    const host = runtimeHost(true, () => true, posted);
+    const saved = host.sessions.create("deepagents");
+    saved.events.push({ type: "userMessage", workspace: "main", text: "saved in Main" }, { type: "text", workspace: "main", delta: "ok" });
+    for (const [id, tabOf] of [["main~2", "main"], ["folder:kernl", undefined]] as const) {
+      const ws = new WorkspaceRuntime(id, id, root, "deepagents", host, undefined, true, tabOf);
+      try {
+        posted.length = 0;
+        await ws.openSession(structuredClone(saved));
+        const shown = posted.filter((m) => m.type === "userMessage" || m.type === "text");
+        assert.equal(shown.length, 2, JSON.stringify(posted));
+        assert.deepEqual([...new Set(shown.map((m) => m.workspace))], [id], `every event goes to ${id}'s pane`);
+      } finally {
+        ws.dispose();
+      }
     }
   });
 
@@ -2200,6 +2220,69 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await worktreeTabWork;
     assert.equal(await worktreePath(), undefined);
     assert.equal((await git(root, ["branch", "--list", "kernl/ui-ws"])).trim(), "");
+  });
+
+  await check("data: Export leaves out stored keys, key-shaped text, and machine-only settings; Import into a cleared store adds the conversation and settings only after confirming", async () => {
+    const { keys } = await ext.activate();
+    const store = testing.sessions;
+    // The key the controller uses for the folder: the hash of its path as VS Code gives it.
+    const mainKey = createHash("sha256").update(vscode.workspace.workspaceFolders![0].uri.fsPath).digest("hex").slice(0, 16);
+    const key = "sk-suite-export-key-0123456789abcdef";
+    const token = `ghp_${"b".repeat(36)}`;
+    const file = vscode.Uri.file(join(tmpdir(), `kernl-data-check-${Date.now()}.json`));
+    const kernlConfig = vscode.workspace.getConfiguration("kernl");
+    const tabsMax = kernlConfig.inspect("tabs.max")?.globalValue;
+    const record = { id: "suite-export-1", title: "export check", harness: "deepagents", createdAt: 1, updatedAt: 2, events: [{ type: "userMessage" as const, workspace: "main", text: `use ${key} and ${token}` }] };
+    try {
+      await keys.store("custom:suite-export", key);
+      await store.saveImported(mainKey, record);
+      await kernlConfig.update("tabs.max", 5, vscode.ConfigurationTarget.Global);
+      let confirm = true;
+      testing.usePrompts({ ...scriptedPrompts, pick: async (items: any[]) => items[0], confirm: async () => confirm });
+      await vscode.commands.executeCommand("kernl.exportData", file);
+      const text = readFileSync(file.fsPath, "utf8");
+      assert.ok(!text.includes(key) && !text.includes(token), "no stored key or token in the file");
+      const doc = JSON.parse(text);
+      assert.equal(doc.settings["kernl.tabs.max"], 5);
+      assert.ok(!("kernl.agentCommands" in doc.settings), "machine-only settings stay behind (the suite sets agentCommands)");
+      const exported = doc.folders.flatMap((f: any) => f.workspaces.flatMap((w: any) => w.conversations)).find((c: any) => c.id === record.id);
+      assert.equal(exported.events[0].text, "use [redacted] and [redacted]");
+
+      await store.remove(mainKey, record.id);
+      await kernlConfig.update("tabs.max", 7, vscode.ConfigurationTarget.Global);
+      confirm = false;
+      await vscode.commands.executeCommand("kernl.importData", file);
+      assert.ok(!(await store.list(mainKey)).some((s: any) => s.id === record.id), "declining writes nothing");
+      assert.equal(vscode.workspace.getConfiguration("kernl").get("tabs.max"), 7, "declining changes no setting");
+      confirm = true;
+      await vscode.commands.executeCommand("kernl.importData", file);
+      const listed = (await store.list(mainKey)).find((s: any) => s.id === record.id);
+      assert.deepEqual([listed?.title, listed?.updatedAt], ["export check", 2], "imported with its title and date");
+      assert.equal(vscode.workspace.getConfiguration("kernl").get("tabs.max"), 5, "the setting applied after confirming");
+      await vscode.commands.executeCommand("kernl.importData", file);
+      assert.equal((await store.list(mainKey)).filter((s: any) => s.id === record.id).length, 1, "importing again leaves it as it is");
+    } finally {
+      testing.usePrompts(scriptedPrompts);
+      await store.remove(mainKey, record.id);
+      await kernlConfig.update("tabs.max", tabsMax, vscode.ConfigurationTarget.Global);
+      await keys.remove("custom:suite-export");
+    }
+  });
+
+  await check("data: started from kernl's menu (which passes { preserveFocus: false }), Export and Import ask where to save and what to open", async () => {
+    const file = vscode.Uri.file(join(tmpdir(), `kernl-data-menu-${Date.now()}.json`));
+    const asked: string[] = [];
+    testing.useFileDialogs({ save: async () => (asked.push("save"), file), open: async () => (asked.push("open"), [file]) });
+    testing.usePrompts({ ...scriptedPrompts, pick: async (items: any[]) => items.find((i) => i.label === "Settings") ?? items[0], confirm: async () => false });
+    try {
+      await vscode.commands.executeCommand("kernl.exportData", { preserveFocus: false });
+      assert.ok(existsSync(file.fsPath), "written where the save dialog said");
+      await vscode.commands.executeCommand("kernl.importData", { preserveFocus: false });
+      assert.deepEqual(asked, ["save", "open"], "each asked its dialog instead of taking the menu's options for a file");
+    } finally {
+      testing.usePrompts(scriptedPrompts);
+      rmSync(file.fsPath, { force: true });
+    }
   });
 
   // Last: Main's tab 1 stays closed from here on.

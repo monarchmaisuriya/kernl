@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
@@ -52,6 +52,7 @@ import { type Prompts, vscodePrompts, WorkspaceCommands } from "./workspaces/com
 import { git, isNotARepository } from "./workspaces/git";
 import { currentWorkspaceScope } from "./workspaceScope";
 import { AgentThreadCache } from "./agentThreads";
+import { buildExport, type ExportedFolder, type ExportedWorkspace, exportableSettings, IMPORT_MAX_BYTES, type ImportTarget, matchFolders, parseImport, planImport, settingSpecs, settingsChanges } from "./dataTransfer";
 import { commandAvailable, commandFor, PANEL_COMMANDS, type PanelCommandName } from "./ui/panelCommands";
 import { listWorkspaces, repoRoot, type WorkspaceInfo } from "./workspaces/worktrees";
 
@@ -1219,6 +1220,141 @@ export class Controller implements vscode.Disposable {
     for (const ws of this.workspaces.values()) if (!ws.running) ws.newThread();
   }
 
+  /**
+   * This window's folders, each with its own workspace and its worktree workspaces, each given by one of
+   * its tabs (a workspace's tabs share its conversations and worktree; it always has one open).
+   */
+  private dataFolders(): { name: string; main: WorkspaceRuntime; worktrees: WorkspaceRuntime[] }[] {
+    const scope = currentWorkspaceScope();
+    if (!scope.ok) return [];
+    const spaces = [...this.spaces.values()];
+    return scope.folders.flatMap((f) => {
+      const folder = spaces.find((s) => !s.info && s.root === f.root);
+      const main = folder && this.tabsOf(folder.id)[0];
+      return main ? [{ name: f.name, main, worktrees: spaces.filter((s) => s.info && s.folderId === folder.id).flatMap((s) => this.tabsOf(s.id).slice(0, 1)) }] : [];
+    });
+  }
+
+  /** Each folder's conversations (a CLI agent's own sessions stay with the agent) and the tool images they show. */
+  private async exportFolders(): Promise<ExportedFolder[]> {
+    const out: ExportedFolder[] = [];
+    for (const f of this.dataFolders()) {
+      const previews: Record<string, string> = {};
+      const workspaces: ExportedWorkspace[] = [];
+      for (const ws of [f.main, ...f.worktrees]) {
+        const conversations: SessionRecord[] = [];
+        for (const summary of await this.host.sessions.list(ws.sessionKey)) {
+          const record = await this.host.sessions.load(ws.sessionKey, summary.id);
+          if (!record || record.importedFrom) continue;
+          conversations.push(record);
+          for (const e of record.events) {
+            if (e.type !== "toolPreview" || previews[e.file]) continue;
+            // An image deleted since (Delete conversations) is left out; the transcript shows it as missing, as it does here.
+            const bytes = await readFile(join(this.host.sessions.previewsDir, e.file)).catch((err) => (err?.code === "ENOENT" ? undefined : Promise.reject(err)));
+            if (bytes) previews[e.file] = bytes.toString("base64");
+          }
+        }
+        workspaces.push({ name: ws.info?.name ?? f.name, ...(ws.info ? { branch: ws.info.branch } : {}), conversations });
+      }
+      out.push({ name: f.name, workspaces, previews });
+    }
+    return out;
+  }
+
+  /** The save and open dialogs of Export and Import data (the integration suite answers them). */
+  private fileDialogs = {
+    save: (options: vscode.SaveDialogOptions) => vscode.window.showSaveDialog(options),
+    open: (options: vscode.OpenDialogOptions) => vscode.window.showOpenDialog(options),
+  };
+
+  /** kernl: Export data: this window's folders' conversations and the user's kernl settings in one file, never with an API key. `target` skips the save dialog. */
+  async exportData(target?: vscode.Uri) {
+    const choice = await this.prompts.pick(
+      [
+        { label: "Conversations and settings", conversations: true, settings: true },
+        { label: "Conversations", conversations: true, settings: false },
+        { label: "Settings", conversations: false, settings: true },
+      ],
+      { title: "Export kernl data (API keys are never exported)" },
+    );
+    if (!choice) return;
+    try {
+      const folders = choice.conversations ? await this.exportFolders() : [];
+      const specs = settingSpecs(this.context.extension.packageJSON);
+      const config = vscode.workspace.getConfiguration();
+      const settings = choice.settings ? exportableSettings(Object.fromEntries([...specs.keys()].map((k) => [k, config.inspect(k)?.globalValue])), specs) : {};
+      // Every stored key, so the scrub (and the check after it) knows them all, not only those used in this window.
+      await this.keys.registerAll();
+      await this.agentCredentials.registerAll();
+      const { text, redacted } = buildExport({ kernlVersion: String(this.context.extension.packageJSON.version), exportedAt: new Date().toISOString(), settings, folders }, this.redactor);
+      const uri = target ?? (await this.fileDialogs.save({ defaultUri: vscode.Uri.file(join(homedir(), `kernl-data-${new Date().toISOString().slice(0, 10)}.json`)), filters: { "kernl data": ["json"] }, saveLabel: "Export" }));
+      if (!uri) return;
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(text, "utf8"));
+      const count = folders.reduce((n, f) => n + f.workspaces.reduce((m, w) => m + w.conversations.length, 0), 0);
+      void vscode.window.showInformationMessage(
+        `Exported ${count} conversation${count === 1 ? "" : "s"} and ${Object.keys(settings).length} setting${Object.keys(settings).length === 1 ? "" : "s"} to ${basename(uri.fsPath)}. ` +
+          `Replaced ${redacted.storedKeys} stored key${redacted.storedKeys === 1 ? "" : "s"} and ${redacted.keyShaped} key-shaped text${redacted.keyShaped === 1 ? "" : "s"} with [redacted]. API keys are never exported: set them again with kernl: Set API key.`,
+      );
+    } catch (err) {
+      this.fail("Couldn't export kernl data", err);
+    }
+  }
+
+  private async conversationIds(workspaceKey: string): Promise<Set<string>> {
+    return new Set((await this.host.sessions.list(workspaceKey)).map((s) => s.id));
+  }
+
+  /** kernl: Import data: conversations into the open folder with the same name (never over one already here) and settings, after one confirmation. `source` skips the open dialog. */
+  async importData(source?: vscode.Uri) {
+    const uri = source ?? (await this.fileDialogs.open({ canSelectMany: false, filters: { "kernl data": ["json"] }, openLabel: "Import" }))?.[0];
+    if (!uri) return;
+    try {
+      const { size } = await vscode.workspace.fs.stat(uri);
+      if (size > IMPORT_MAX_BYTES) throw new Error(`${basename(uri.fsPath)} is ${Math.ceil(size / 1048576)} MB; kernl imports files up to ${IMPORT_MAX_BYTES / 1048576} MB`);
+      const doc = parseImport(Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8"), settingSpecs(this.context.extension.packageJSON));
+      const targets: ImportTarget[] = [];
+      for (const f of this.dataFolders()) {
+        const worktrees = [];
+        for (const w of f.worktrees) worktrees.push({ branch: w.info!.branch, key: w.sessionKey, existing: await this.conversationIds(w.sessionKey) });
+        targets.push({ name: f.name, key: f.main.sessionKey, existing: await this.conversationIds(f.main.sessionKey), worktrees });
+      }
+      const placement = matchFolders(doc, targets);
+      for (const [i, folder] of doc.folders.entries()) {
+        if (placement[i] !== undefined || !targets.length || !folder.workspaces.some((w) => w.conversations.length)) continue;
+        const picked = await this.prompts.pick(
+          [...targets.map((t, index) => ({ label: t.name, index: index as number | undefined })), { label: "Skip these conversations", index: undefined }],
+          { title: `Import the conversations from "${folder.name}" into which folder?` },
+        );
+        if (!picked) return;
+        placement[i] = picked.index;
+      }
+      const plan = planImport(doc, targets, placement);
+      const config = vscode.workspace.getConfiguration();
+      const changes = settingsChanges(doc.settings, Object.fromEntries(Object.keys(doc.settings).map((k) => [k, config.inspect(k)?.globalValue])));
+      if (!plan.conversations.length && !changes.length) {
+        void vscode.window.showInformationMessage(`Nothing to import from ${basename(uri.fsPath)}: ${plan.skipped ? `its ${plan.skipped} conversation${plan.skipped === 1 ? " is" : "s are"} already here` : "no new conversations"}, and no setting would change.`);
+        return;
+      }
+      const show = (v: unknown) => (v === undefined ? "(not set)" : JSON.stringify(v));
+      const detail = [
+        `${plan.conversations.length} conversation${plan.conversations.length === 1 ? "" : "s"} to add${plan.skipped ? `; ${plan.skipped} already here, left as they are` : ""}.`,
+        ...(changes.length ? ["", "Settings:", ...changes.map((c) => `${c.key}: ${show(c.from)} → ${show(c.to)}${c.widens ? " (lets more run without asking)" : ""}`)] : []),
+        ...(doc.refusedSettings.length ? ["", "Not applied:", ...doc.refusedSettings.map((r) => `${r.key}: ${r.reason}`)] : []),
+        "",
+        "Import only files you made yourself: a conversation's history becomes the agent's context when you continue it.",
+      ].join("\n");
+      if (!(await this.prompts.confirm(`Import kernl data from ${basename(uri.fsPath)}?`, detail, "Import"))) return;
+      for (const p of plan.previews) await this.host.sessions.saveImportedPreview(p.path, Buffer.from(p.data, "base64"));
+      for (const c of plan.conversations) await this.host.sessions.saveImported(c.key, c.record);
+      for (const c of changes) await config.update(c.key, c.to, vscode.ConfigurationTarget.Global);
+      void vscode.window.showInformationMessage(
+        `Imported ${plan.conversations.length} conversation${plan.conversations.length === 1 ? "" : "s"} and ${changes.length} setting${changes.length === 1 ? "" : "s"}. Open Conversations to see them.`,
+      );
+    } catch (err) {
+      this.fail("Couldn't import kernl data", err);
+    }
+  }
+
   /** The file open in the editor, offered in the composer when it's inside the shown workspace. */
   private postActiveFile() {
     const root = this.workspace(this.active)?.root;
@@ -1950,6 +2086,10 @@ export class Controller implements vscode.Disposable {
       /** The panel's webview resolving, showing, hiding, saying ready, and going away; panelState() is where it is now. */
       onPanelLifecycle: this.panel.onLifecycle,
       panelState: () => this.panel.lifecycleState(),
+      /** The controller's own conversation store (Export and Import data read and write it). */
+      sessions: this.host.sessions,
+      /** Answers Export and Import data's save and open dialogs. */
+      useFileDialogs: (dialogs: { save: (o: vscode.SaveDialogOptions) => Thenable<vscode.Uri | undefined>; open: (o: vscode.OpenDialogOptions) => Thenable<vscode.Uri[] | undefined> }) => (this.fileDialogs = dialogs),
       usePrompts: (p: Prompts) => (this.prompts = p),
       /** Back to the real prompts (in-panel menus), after usePrompts. */
       usePanelPrompts: () => (this.prompts = this.panelPrompts),

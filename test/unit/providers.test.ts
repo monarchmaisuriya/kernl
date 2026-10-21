@@ -259,3 +259,13 @@ test("a secret header without a stored value is named, so no request is sent wit
   assert.equal(missingSecretHeader(entry, { secretHeaders: { "X-Token": "t", "X-Org": "o" } }), undefined);
   assert.equal(missingSecretHeader({ ...entry, secretHeaders: [] }, {}), undefined);
 });
+
+test("registerAll reads every stored provider key and secret header value into a fresh redactor (built-in names and the index)", async () => {
+  const secrets = memorySecrets();
+  await new KeyStore(secrets, new Redactor()).store("custom:openrouter", "sk-openrouter-secret-1");
+  await new KeyStore(secrets, new Redactor()).storeHeader("custom:openrouter", "X-Team-Token", "team-token-value-5");
+  secrets.map.set("kernl.apiKey.anthropic", "sk-stored-before-the-index-2");
+  const redactor = new Redactor();
+  await new KeyStore(secrets, redactor).registerAll();
+  assert.equal(redactor.scrub("sk-openrouter-secret-1 team-token-value-5 sk-stored-before-the-index-2"), "[redacted] [redacted] [redacted]");
+});

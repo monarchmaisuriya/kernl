@@ -69,15 +69,23 @@ export class KeyStore {
     if (index.includes(name)) await this.secrets.store(INDEX, JSON.stringify(index.filter((n) => n !== name)));
   }
 
+  /** Reads every stored provider key and secret header value into the redactor (so an export can scrub them all); nothing is returned. */
+  async registerAll(): Promise<void> {
+    for (const name of await this.storedNames()) await this.read(name);
+  }
+
   /** Removes every provider key and secret header value, including those of custom providers no longer in settings. */
   async clearAll(): Promise<void> {
-    // Built-in names too: keys stored before the index existed are not in it.
-    const names = new Set([...BUILT_IN_PROVIDERS.map(secretName), ...(await this.index())]);
-    for (const name of names) {
+    for (const name of await this.storedNames()) {
       this.redactor.forget(await this.secrets.get(name));
       await this.secrets.delete(name);
     }
     await this.secrets.delete(INDEX);
+  }
+
+  /** Every name a provider key or header value may be stored under; built-in names too: keys stored before the index existed are not in it. */
+  private async storedNames(): Promise<Set<string>> {
+    return new Set([...BUILT_IN_PROVIDERS.map(secretName), ...(await this.index())]);
   }
 
   private async index(): Promise<string[]> {

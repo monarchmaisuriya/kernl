@@ -70,6 +70,11 @@ export class AgentCredentials {
     await this.secrets.delete(baseUrlName(id));
   }
 
+  /** Reads every agent's stored key into the redactor (so an export can scrub them all); nothing is returned. */
+  async registerAll(): Promise<void> {
+    for (const id of CLI_AGENT_IDS) await this.get(id);
+  }
+
   async clearAll(): Promise<void> {
     for (const id of CLI_AGENT_IDS) {
       this.redactor.forget(await this.secrets.get(keyName(id)));

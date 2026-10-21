@@ -196,3 +196,14 @@ test("many saves of one conversation at once end with the last one, whole, and t
   assert.equal(loaded?.events.length, 31, "the last save wins, whole");
   assert.equal((await store.list("ws")).length, 1, "the conversation list still reads");
 });
+
+test("an imported conversation keeps its title and times and is listed; an imported image lands at its path, and only at an image path", async () => {
+  const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-")));
+  const record = { id: "c1", title: "From the laptop", harness: "deepagents", createdAt: 10, updatedAt: 20, events: [{ type: "userMessage" as const, workspace: "main", text: "hi" }] };
+  await store.saveImported("ws1", record);
+  assert.deepEqual((await store.list("ws1")).map((s) => [s.id, s.title, s.updatedAt]), [["c1", "From the laptop", 20]]);
+  await store.saveImportedPreview("c1/i-1.png", Buffer.from("png-bytes"));
+  assert.equal(readFileSync(join(store.previewsDir, "c1", "i-1.png"), "utf8"), "png-bytes");
+  await assert.rejects(store.saveImportedPreview("../c1/x.png", Buffer.from("x")), /Expected an image path like <session>\/<file>\.png, got "\.\.\/c1\/x\.png"/);
+  await assert.rejects(store.saveImportedPreview("c1/x.png", new Uint8Array()), /Expected an image of 1 to 5242880 bytes/);
+});

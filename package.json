@@ -7,7 +7,7 @@
     "color": "#18191D",
     "theme": "dark"
   },
-  "version": "0.10.8",
+  "version": "0.11.0",
   "publisher": "local",
   "private": true,
   "license": "UNLICENSED",
@@ -156,6 +156,16 @@
       {
         "command": "kernl.clearHistory",
         "title": "Delete conversations and checkpoints",
+        "category": "kernl"
+      },
+      {
+        "command": "kernl.exportData",
+        "title": "Export data (conversations and settings, no API keys)…",
+        "category": "kernl"
+      },
+      {
+        "command": "kernl.importData",
+        "title": "Import data…",
         "category": "kernl"
       },
       {
@@ -683,6 +693,14 @@
         {
           "command": "kernl.showSources",
           "group": "3_settings@3"
+        },
+        {
+          "command": "kernl.exportData",
+          "group": "4_data@1"
+        },
+        {
+          "command": "kernl.importData",
+          "group": "4_data@2"
         }
       ],
       "explorer/context": [
