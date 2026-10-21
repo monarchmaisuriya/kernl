@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-10-21
+
 ### Changed
 
 - The context ring is an icon only (the percentage, numbers, and cost are in its tooltip), pinned to the message box's top right on its first line, centered over Send; it no longer takes a row of its own.
@@ -295,7 +297,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.12.2...HEAD
+[0.12.2]: https://github.com/pushowl/kernl/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/pushowl/kernl/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/pushowl/kernl/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/pushowl/kernl/compare/v0.10.8...v0.11.0
