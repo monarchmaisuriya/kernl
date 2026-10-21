@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-21
+
 ### Changed
 
 - Any tab can close, the first one too, while the workspace has two or more; the last tab stays (no ×, Cmd+W does nothing, and `/close` says so). A closed first tab stays closed after a reload, and the workspace menu, new tabs, and a worktree's Merge and Discard work whichever tabs are open. At `kernl.tabs.max`, the first tab can be the one that gives way.
@@ -281,7 +283,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/pushowl/kernl/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/pushowl/kernl/compare/v0.10.8...v0.11.0
 [0.10.8]: https://github.com/pushowl/kernl/compare/v0.10.7...v0.10.8
 [0.10.7]: https://github.com/pushowl/kernl/compare/v0.10.6...v0.10.7
