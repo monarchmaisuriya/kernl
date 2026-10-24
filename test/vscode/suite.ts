@@ -1603,6 +1603,64 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await waitFor("a fresh view", (m) => m.type === "cleared" && m.workspace === "main", from);
   });
 
+  await check("conversations: Archive moves the open conversation to Archived and the tab to a new one; it's left out of @; opened again it stays archived through a send; Unarchive while open holds through a send", async () => {
+    const rowsOf = async (from: number, open: boolean, ok: (rows: any[]) => boolean = () => true) =>
+      (await waitFor("the Conversations view", (m) => m.type === "conversations" && !!m.open === open && ok(m.rows), from)).rows;
+    // The fake agent asks to write hello.txt on every message: rejected, so nothing is written.
+    const sendAndFinish = async (text: string) => {
+      const from = delivered.length;
+      const sending = testing.receive({ type: "send", workspace: "main", text });
+      const first = await waitFor("the run's card or its end", (m) => m.type === "approval" || (m.type === "finished" && m.workspace === "main"), from);
+      if (first.type === "approval") await testing.receive({ type: "answer", id: first.card.id, approved: false });
+      await sending;
+      await waitFor("the run finishing", (m) => m.type === "finished" && m.workspace === "main", from);
+    };
+    await sendAndFinish("archive this one");
+    let from = delivered.length;
+    await vscode.commands.executeCommand("kernl.sessions");
+    const row = (await rowsOf(from, true)).find((r: any) => r.title === "archive this one");
+    assert.ok(row?.current && !row.archived, "listed, open, not archived");
+    from = delivered.length;
+    await testing.receive({ type: "archiveConversation", workspace: "main", id: row.id });
+    await waitFor("the tab on a new conversation", (m) => m.type === "cleared" && m.workspace === "main", from);
+    // Drawn again in place, and an agent asked for its sessions there answers: no "Looking for…" row is left behind.
+    const archived = await rowsOf(from, false, (rows) => rows.some((r) => r.id === row.id && r.archived) && !rows.some((r) => r.kind === "pending"));
+    assert.deepEqual([archived.at(-1).id, archived.at(-1).group, archived.at(-1).current], [row.id, "Archived", false], "last, under Archived");
+    assert.ok(!archived.some((r: any) => r.id === row.id && r.group === "Conversations"), "out of the list");
+    from = delivered.length;
+    await testing.receive({ type: "searchFiles", query: "archive this" });
+    const tagged = (await waitFor("search results", (m) => m.type === "fileMatches" && m.query === "archive this", from)).items;
+    assert.ok(!tagged.some((a: any) => a.thread?.id === row.id), "@ leaves it out");
+    // Opened again it stays archived: the tab's copy carries the state into its saves.
+    from = delivered.length;
+    await testing.receive({ type: "openConversation", workspace: "main", pick: { kind: "kernl", id: row.id } });
+    await waitFor("the conversation shown again", (m) => m.type === "userMessage" && m.text === "archive this one", from);
+    await sendAndFinish("still archived after this");
+    from = delivered.length;
+    await vscode.commands.executeCommand("kernl.sessions");
+    assert.deepEqual((await rowsOf(from, true)).filter((r: any) => r.id === row.id).map((r: any) => [r.group, r.current]), [["Archived", true]], "archived, and marked as the open one");
+    from = delivered.length;
+    await testing.receive({ type: "unarchiveConversation", workspace: "main", id: row.id });
+    await rowsOf(from, false, (rows) => rows.some((r) => r.id === row.id && !r.archived));
+    await sendAndFinish("unarchived for good");
+    from = delivered.length;
+    await vscode.commands.executeCommand("kernl.sessions");
+    assert.deepEqual((await rowsOf(from, true)).filter((r: any) => r.id === row.id).map((r: any) => r.group), ["Conversations"], "the tab's save kept it unarchived");
+    // An id the workspace doesn't keep changes nothing (the view may still be drawn again as an agent answers).
+    const kernlRows = async () => {
+      const from = delivered.length;
+      await vscode.commands.executeCommand("kernl.sessions");
+      return (await rowsOf(from, true)).filter((r: any) => r.kind === "kernl").map((r: any) => [r.id, r.archived]);
+    };
+    const before = await kernlRows();
+    from = delivered.length;
+    await testing.receive({ type: "archiveConversation", workspace: "main", id: "../outside" });
+    await testing.receive({ type: "unarchiveConversation", workspace: "main", id: "not-kept" });
+    assert.ok(!delivered.slice(from).some((m) => m.type === "cleared"), "no tab moves on");
+    assert.deepEqual(await kernlRows(), before, "the rows are unchanged");
+    await vscode.commands.executeCommand("kernl.newChat");
+  });
+
   await check("conversations: the CLI agent's own sessions for the folder are listed once, and opening one shows its history from the agent", async () => {
     await config.update("agentCommands", agentCommands({ "claude-code": { ...fakeAgent, env: { ...fakeAgent.env, FAKE_LIST: "1" } } }), vscode.ConfigurationTarget.Global);
     try {

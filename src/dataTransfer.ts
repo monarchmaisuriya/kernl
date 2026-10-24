@@ -168,6 +168,7 @@ function checkConversation(raw: unknown, at: string): SessionRecord {
     if (!isObject(e) || typeof e.type !== "string") throw new Error(`${at}.events[${i}] must be an object with a type`);
   });
   for (const field of ["forkOf", "agentTitle"]) if (raw[field] !== undefined && typeof raw[field] !== "string") throw new Error(`${at}.${field} must be a string`);
+  if (raw.archivedAt !== undefined && (typeof raw.archivedAt !== "number" || !Number.isFinite(raw.archivedAt))) throw new Error(`${at}.archivedAt must be a number`);
   if (raw.importedFrom !== undefined) throw new Error(`${at} is a CLI agent's own session (importedFrom); those stay with the agent`);
   return raw as unknown as SessionRecord;
 }

@@ -622,6 +622,12 @@ export class WorkspaceRuntime {
     }
   }
 
+  /** The open conversation archived (a time) or unarchived (undefined) in this tab's copy, so its next save keeps it (see SessionStore.setArchived). */
+  markArchived(archivedAt: number | undefined) {
+    if (archivedAt === undefined) delete this.session.archivedAt;
+    else this.session.archivedAt = archivedAt;
+  }
+
   /** New chat: the current conversation stays in the history; a new one starts. */
   newThread() {
     void this.saveSession();

@@ -103,6 +103,7 @@ test("import: a bad file stops with what and where, before anything is written",
   assert.throws(() => parseImport(bad((d) => (d.folders[0].workspaces[0].conversations[0].id = "../x")), specs), /folders\[0\]\.workspaces\[0\]\.conversations\[0\]\.id must be/);
   assert.throws(() => parseImport(bad((d) => (d.folders[0].workspaces[0].conversations[0].events = "x")), specs), /conversations\[0\]\.events must be an array/);
   assert.throws(() => parseImport(bad((d) => (d.folders[0].workspaces[0].conversations[0].importedFrom = { agent: "codex", sessionId: "s" })), specs), /CLI agent's own session/);
+  assert.throws(() => parseImport(bad((d) => (d.folders[0].workspaces[0].conversations[0].archivedAt = "yesterday")), specs), /conversations\[0\]\.archivedAt must be a number/);
   assert.throws(() => parseImport(bad((d) => (d.folders[0].previews = { "../../etc/x.png": "aGk=" })), specs), /a path kernl doesn't keep images at/);
   assert.throws(() => parseImport(bad((d) => (d.folders[0].previews = { "c1/i-1.png": "not base64!" })), specs), /must be base64 image data/);
   assert.throws(() => parseImport(bad((d) => (d.folders[0].previews = { "c1/i-1.png": "" })), specs), /must be base64 image data/);

@@ -1093,14 +1093,29 @@ export class Controller implements vscode.Disposable {
     if (!ws || ws.running) return;
     await this.panel.reveal();
     await ws.saveSession();
-    const kept = await this.host.sessions.list(ws.sessionKey);
+    await this.drawConversations(ws, true);
+  }
+
+  /** Counts the Conversations view's drawings, so one that read the list before a newer one is dropped. */
+  private conversationsDrawn = 0;
+
+  /**
+   * Draws the Conversations view for a workspace (opening it, or in place): kernl's conversations as they
+   * are at each drawing (an archive since the view opened included), and each ready CLI agent's cached
+   * sessions. An agent whose list is missing or stale is asked now and the view drawn again when it
+   * answers, so no drawing shows "Looking for…" without a request behind it.
+   */
+  private async drawConversations(ws: WorkspaceRuntime, open?: boolean) {
     const agents = vscode.workspace.getConfiguration("kernl").get<boolean>("sessions.importFromAgents", true) ? CLI_AGENT_IDS.filter((a) => this.readiness(a).ready) : [];
     const labelOf = (h: string) => this.harnessList().find((x) => x.id === h)?.label ?? h;
     const state = agents.map((agent) => {
       const cached = this.agentSessionLists.get(`${agent}\n${ws.root}`);
       return { id: agent, label: labelOf(agent), sessions: cached?.sessions, pending: !cached || Date.now() - cached.at >= AGENT_SESSIONS_TTL_MS };
     });
-    const post = (open?: boolean) =>
+    const post = async (open?: boolean) => {
+      const drawing = ++this.conversationsDrawn;
+      const kept = await this.host.sessions.list(ws.sessionKey);
+      if (drawing !== this.conversationsDrawn) return;
       this.panel.post({
         type: "conversations",
         workspace: ws.id,
@@ -1108,14 +1123,36 @@ export class Controller implements vscode.Disposable {
         rows: conversationRows({ kept, current: ws.sessionId, agents: state, label: labelOf, now: Date.now() }),
         ...(open ? { open } : {}),
       });
-    post(true);
+    };
+    await post(open);
     for (const a of state.filter((x) => x.pending)) {
       void this.listAgentSessions(ws, a.id, a.label).then((sessions) => {
         if (sessions) a.sessions = sessions;
         a.pending = false;
-        post();
+        return post();
       });
     }
+  }
+
+  /**
+   * Archives a kept conversation (out of the list into its Archived group, and out of @) or unarchives it.
+   * Every tab holding it changes its own copy first, so its later saves keep the change; archiving then
+   * moves those tabs to a new conversation, asking first where the agent works. The view is drawn again in place.
+   */
+  private async setArchived(workspace: string, id: string, archived: boolean) {
+    const ws = this.workspace(workspace);
+    // Only a conversation this workspace keeps: the id names a file the store writes.
+    if (!ws || !(await this.host.sessions.list(ws.sessionKey)).some((s) => s.id === id)) return;
+    const holders = [...this.workspaces.values()].filter((w) => w.sessionKey === ws.sessionKey && w.sessionId === id);
+    if (archived && holders.some((w) => w.running) && !(await this.prompts.confirm("Stop the agent and archive this conversation?", "It moves to Archived in Conversations.", "Stop and archive"))) return;
+    const archivedAt = archived ? Date.now() : undefined;
+    for (const w of holders) w.markArchived(archivedAt);
+    await this.host.sessions.setArchived(ws.sessionKey, id, archivedAt);
+    if (archived) {
+      for (const w of holders) w.newThread();
+      this.prepareShown();
+    }
+    await this.drawConversations(ws);
   }
 
   /**
@@ -1423,7 +1460,7 @@ export class Controller implements vscode.Disposable {
       seen.add(ws.sessionKey);
       const kept = await this.host.sessions.list(ws.sessionKey);
       for (const s of kept) {
-        if (s.id === shown.sessionId || !matches(s.title)) continue;
+        if (s.id === shown.sessionId || s.archivedAt !== undefined || !matches(s.title)) continue;
         out.push({ kind: "thread", path: s.title, thread: { workspaceKey: ws.sessionKey, id: s.id, agent: labelOf(s.harness), workspace: ws.workspaceLabel, updatedAt: s.updatedAt } });
       }
       const linked = new Set(kept.map((s) => s.agentSessionId).filter(Boolean));
@@ -1775,6 +1812,10 @@ export class Controller implements vscode.Disposable {
         return this.setApiKey();
       case "openConversation":
         return this.openConversation(m.workspace, m.pick);
+      case "archiveConversation":
+        return this.setArchived(m.workspace, m.id, true);
+      case "unarchiveConversation":
+        return this.setArchived(m.workspace, m.id, false);
       case "showConnections":
         this.panel.post({ type: "connections", items: this.connections.list() });
         return this.checkConnections();

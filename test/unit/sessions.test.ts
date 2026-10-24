@@ -197,6 +197,40 @@ test("many saves of one conversation at once end with the last one, whole, and t
   assert.equal((await store.list("ws")).length, 1, "the conversation list still reads");
 });
 
+test("archiving keeps the whole conversation and when it was last active; unarchiving clears it", async () => {
+  const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-")));
+  const s = store.create("deepagents");
+  s.events.push({ type: "userMessage", workspace: "main", text: "spike" }, { type: "text", workspace: "main", delta: "done" });
+  await store.save("ws", s);
+  const updatedAt = (await store.load("ws", s.id))!.updatedAt;
+  await store.setArchived("ws", s.id, 1234);
+  const archived = (await store.load("ws", s.id))!;
+  assert.deepEqual([archived.archivedAt, archived.events.length, archived.updatedAt], [1234, 2, updatedAt]);
+  assert.deepEqual((await store.list("ws")).map((x) => [x.id, x.archivedAt]), [[s.id, 1234]]);
+  await store.setArchived("ws", s.id, undefined);
+  const back = (await store.load("ws", s.id))!;
+  assert.deepEqual([back.archivedAt, back.updatedAt], [undefined, updatedAt], "unarchiving doesn't make it newer");
+  assert.equal((await store.list("ws"))[0].archivedAt, undefined);
+  await store.setArchived("ws", "missing", 1);
+  assert.equal(await store.load("ws", "missing"), undefined, "a conversation that isn't kept isn't made");
+});
+
+test("a tab that marks its copy archived and saves it while the store archives the file ends archived with every event, in either order", async () => {
+  for (const order of ["save first", "archive first"] as const) {
+    const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-")));
+    const s = store.create("deepagents");
+    s.events.push({ type: "userMessage", workspace: "main", text: "spike" });
+    await store.save("ws", s);
+    // What a tab holding the conversation does (WorkspaceRuntime.markArchived) before the store is told.
+    s.archivedAt = 1234;
+    s.events.push({ type: "text", workspace: "main", delta: "a reply saved as it's archived" });
+    if (order === "save first") await Promise.all([store.save("ws", s), store.setArchived("ws", s.id, 1234)]);
+    else await Promise.all([store.setArchived("ws", s.id, 1234), store.save("ws", s)]);
+    const loaded = (await store.load("ws", s.id))!;
+    assert.deepEqual([loaded.archivedAt, loaded.events.length], [1234, 2], order);
+  }
+});
+
 test("an imported conversation keeps its title and times and is listed; an imported image lands at its path, and only at an image path", async () => {
   const store = new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-")));
   const record = { id: "c1", title: "From the laptop", harness: "deepagents", createdAt: 10, updatedAt: 20, events: [{ type: "userMessage" as const, workspace: "main", text: "hi" }] };

@@ -303,6 +303,8 @@ export type PanelToHost =
   | { type: "updateQueued"; workspace: string; id: string; text: string }
   /** A row picked in the Conversations view: open that conversation (or a new one) in the workspace. */
   | { type: "openConversation"; workspace: string; pick: ConversationPick }
+  | { type: "archiveConversation"; workspace: string; id: string }
+  | { type: "unarchiveConversation"; workspace: string; id: string }
   /** A row's fix button: log in, set a key, check again, open settings, show sources. */
   | { type: "connectionAction"; action: FixAction; target: string }
   | { type: "showDiff"; id: string }
@@ -336,7 +338,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab", "runCommand", "attachActiveFile"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "archiveConversation", "unarchiveConversation", "editQueued", "updateQueued", "newTab", "closeTab", "runCommand", "attachActiveFile"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

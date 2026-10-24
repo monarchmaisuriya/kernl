@@ -1,11 +1,11 @@
 // The Conversations view's rows, from what the host knows now: kernl's kept conversations (always
 // there at once), then each CLI agent's own sessions not opened in kernl, or a row saying the agent is
-// still being asked. Pure, so the order and wording are tested without VS Code.
+// still being asked, then kernl's archived conversations. Pure, so the order and wording are tested without VS Code.
 
 /** One row of the view. `group` titles the rows under it ("Claude Code sessions not opened in kernl"). */
 export type ConversationRow =
   | { kind: "new"; title: string }
-  | { kind: "kernl"; id: string; title: string; detail: string; current: boolean; group: string }
+  | { kind: "kernl"; id: string; title: string; detail: string; current: boolean; archived: boolean; group: string }
   | { kind: "agent"; agent: string; sessionId: string; title: string; detail: string; group: string }
   | { kind: "pending"; agent: string; title: string; group: string };
 
@@ -20,6 +20,7 @@ export interface KeptConversation {
   messages: number;
   /** The CLI agent's session it continues, so that session isn't listed again. */
   agentSessionId?: string;
+  archivedAt?: number;
 }
 
 export interface AgentSession {
@@ -44,16 +45,17 @@ export function conversationRows(input: {
 }): ConversationRow[] {
   const { kept, current, agents, label, now } = input;
   const rows: ConversationRow[] = [{ kind: "new", title: "New conversation" }];
-  for (const s of kept) {
-    rows.push({
-      kind: "kernl",
-      id: s.id,
-      title: s.title,
-      detail: `${s.messages} message${s.messages === 1 ? "" : "s"} · ${label(s.harness)} · ${since(s.updatedAt, now)}`,
-      current: s.id === current,
-      group: "Conversations",
-    });
-  }
+  const kernlRow = (s: KeptConversation, group: string): ConversationRow => ({
+    kind: "kernl",
+    id: s.id,
+    title: s.title,
+    detail: `${s.messages} message${s.messages === 1 ? "" : "s"} · ${label(s.harness)} · ${since(s.updatedAt, now)}`,
+    current: s.id === current,
+    archived: s.archivedAt !== undefined,
+    group,
+  });
+  for (const s of kept) if (s.archivedAt === undefined) rows.push(kernlRow(s, "Conversations"));
+  // Archived ones still count: their agent sessions aren't "not opened in kernl".
   const linked = new Set(kept.map((s) => s.agentSessionId).filter(Boolean));
   for (const a of agents) {
     const group = `${a.label} sessions not opened in kernl`;
@@ -71,5 +73,7 @@ export function conversationRows(input: {
     }
     if (a.pending) rows.push({ kind: "pending", agent: a.id, title: `Looking for ${a.label} sessions…`, group });
   }
+  const archived = kept.filter((s) => s.archivedAt !== undefined).sort((a, b) => b.archivedAt! - a.archivedAt!);
+  for (const s of archived) rows.push(kernlRow(s, "Archived"));
   return rows;
 }
