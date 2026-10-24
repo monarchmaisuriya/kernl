@@ -38,7 +38,6 @@ import { readThreadTool } from "./threadTools";
 import { runInTerminalTool, sendInputTool } from "./terminal/tool";
 import { gatedTool } from "./gate/gatedTool";
 import { type AgentOptionView, type Attachment, type HostToPanel, MAX_ATTACHED_TEXT, type SendMode, type ThreadRef, threadHandle, type WorkspaceView } from "./ui/protocol";
-import type { Checkpoints } from "./checkpoints";
 import type { AgentThreadCache } from "./agentThreads";
 import { cutHistory, type QueuedMessage, replayTranscript, type SessionRecord, type SessionStore, threadExcerpt, threadPage, threadTurns, type TranscriptEvent, turnsAfter } from "./sessions";
 import { createHash, randomUUID } from "node:crypto";
@@ -78,7 +77,6 @@ export interface RuntimeHost {
     browser: { cliAgents: boolean; timeoutSeconds: number };
   };
   sessions: SessionStore;
-  checkpoints: Checkpoints;
   /** Where the user's own customisation lives (~/.kernl): AGENTS.md, agents/, skills/. */
   userDir: string;
   /** What kernl's own agent reuses from Claude Code, Codex, and OpenCode for a folder (the Sources settings). */
@@ -215,8 +213,6 @@ export class WorkspaceRuntime {
     );
     this.session = host.sessions.create(harness);
     void this.restoreQueue();
-    // The first snapshot of a large workspace takes seconds; take it now so messages only pay the small increments.
-    if (host.trusted()) void host.checkpoints.snapshot(root, "baseline").catch((err) => host.log.error(`[${label}] baseline snapshot failed`, err));
     this.gate = new ApprovalGate(this.approvals, {
       rules: () => host.approvalRules(),
       denied: (_request, rule) => this.post({ type: "notice", workspace: this.id, text: `Refused by your approval rule deny: ${rule}` }),
@@ -247,7 +243,7 @@ export class WorkspaceRuntime {
   }
 
   /**
-   * Whether a run is in progress: a send (taking its restore point, waiting for its runner, or the
+   * Whether a run is in progress: a send (reading its tagged threads, waiting for its runner, or the
    * agent replying) or a stored session loading. Building a runner on its own isn't a run (the early
    * start, prepareAgent). Each state counted here drains the queue when it ends.
    */
@@ -519,36 +515,24 @@ export class WorkspaceRuntime {
     if (!trimmed || this.running) return;
     this.starting = true;
     this.stopBeforeStart = false;
-    // The message and the running state show at once: the restore point below can take a while on a
-    // large folder, and the agent waits for it (Restore must reflect the files before the agent ran).
+    // The message and the running state show at once: reading tagged threads below can take a moment, and the agent waits for it.
     const turn = this.session.events.filter((e) => e.type === "userMessage").length;
     const message: Extract<TranscriptEvent, { type: "userMessage" }> = { type: "userMessage", workspace: this.id, text: trimmed, attachments: attachments.length ? [...attachments] : undefined, id: randomUUID(), turn };
     this.post(message);
     this.host.workspacesChanged();
-    let checkpoint: string | undefined;
     let forRunner: readonly Attachment[] = attachments;
-    try {
-      checkpoint = this.host.trusted() ? await this.host.checkpoints.snapshot(this.root, `before: ${trimmed.slice(0, 60)}`) : undefined;
-    } catch (err) {
-      this.host.log.error(`[${this.label}] snapshot failed; this message can't be restored`, err);
-    }
     try {
       // Tagged threads are read now, so the agent gets each as it is when the message is sent.
       forRunner = await this.threadsAsText(attachments);
     } finally {
       this.starting = false;
     }
-    if (checkpoint) {
-      message.checkpoint = checkpoint; // the session keeps this same message
-      this.host.post({ type: "checkpoint", workspace: this.id, messageId: message.id!, checkpoint });
-    }
     if (this.stopBeforeStart) return this.endBeforeAgent();
     let runner: Runner;
     try {
-      // Building a runner reads SecretStorage; hold the promise so a second Send can't start a second agent.
-      this.creating ??= this.createRunner().finally(() => (this.creating = undefined));
+      const ready = this.runnerReady();
       this.awaitingRunner = true;
-      runner = this.runner ??= await this.creating;
+      runner = await ready;
     } catch (err: any) {
       this.awaitingRunner = false;
       this.post({ type: "finished", workspace: this.id, reason: "error", message: err?.message ?? String(err) });
@@ -814,16 +798,15 @@ export class WorkspaceRuntime {
 
   /**
    * kernl's own CLI conversation, reopened: the agent loads the session now, and the turns it has after
-   * kernl's last message (added in a terminal or another app since) are added below kernl's transcript,
-   * which keeps its Restore points. If the session can't be loaded now, it's loaded on the next send, as before.
+   * kernl's last message (added in a terminal or another app since) are added below kernl's transcript.
+   * If the session can't be loaded now, it's loaded on the next send, as before.
    */
   private async addTurnsFromAgent(record: SessionRecord) {
     this.loadingSession = true;
     this.replayBuffer = [];
     let failed: string | undefined;
     try {
-      this.creating ??= this.createRunner().finally(() => (this.creating = undefined));
-      const runner = (this.runner ??= await this.creating);
+      const runner = await this.runnerReady();
       failed = runner instanceof AcpRunner ? await runner.loadNow() : "not an ACP agent";
       if (failed) runner.newThread(record.history);
     } catch (err: any) {
@@ -895,41 +878,6 @@ export class WorkspaceRuntime {
     this.replay();
     this.post({ type: "notice", workspace: this.id, text: "Forked: this is a new conversation; the original is in Conversations." });
     await this.saveSession();
-  }
-
-  /** The user message with `messageId`, and its checkpoint, for Restore. */
-  checkpointOf(messageId: string) {
-    const index = this.session.events.findIndex((e) => e.type === "userMessage" && e.id === messageId);
-    const event = this.session.events[index] as Extract<TranscriptEvent, { type: "userMessage" }> | undefined;
-    return event?.checkpoint ? { index, event, checkpoint: event.checkpoint } : undefined;
-  }
-
-  /**
-   * Puts the files back to before `messageId`. With `cutConversation`, the conversation also goes
-   * back to before it: later messages are removed and the message text returns to the composer.
-   * Returns a checkpoint of the files as they were just before restoring (for Undo).
-   */
-  async restore(messageId: string, cutConversation: boolean): Promise<string> {
-    const at = this.checkpointOf(messageId);
-    if (!at) throw new Error("That message has no checkpoint.");
-    if (this.running) throw new Error("Stop the agent before restoring.");
-    const undo = await this.host.checkpoints.snapshot(this.root, "before restore");
-    await this.host.checkpoints.restore(this.root, at.checkpoint);
-    if (cutConversation) {
-      const history = (await this.runner?.exportHistory().catch(() => undefined)) ?? this.session.history;
-      this.session.events = this.session.events.slice(0, at.index);
-      this.thinking.reset();
-      this.session.history = cutHistory(history, at.event.turn ?? 0);
-      this.pendingHistory = this.session.history;
-      if (this.runner) {
-        this.runner.newThread(this.session.history);
-        this.pendingHistory = undefined;
-      }
-      this.replay();
-      this.host.post({ type: "setInput", workspace: this.id, text: at.event.text });
-      await this.saveSession();
-    }
-    return undo;
   }
 
   /** Drop the runner; the next message builds a fresh one. */
@@ -1043,8 +991,7 @@ export class WorkspaceRuntime {
     const label = CLI_AGENTS[this.harness].label;
     this.replayBuffer = [];
     try {
-      this.creating ??= this.createRunner().finally(() => (this.creating = undefined));
-      const runner = (this.runner ??= await this.creating);
+      const runner = await this.runnerReady();
       runner.newThread({ sessionId: record.importedFrom.sessionId });
       failed = runner instanceof AcpRunner ? await runner.loadNow() : "not an ACP agent";
     } catch (err: any) {
@@ -1066,8 +1013,7 @@ export class WorkspaceRuntime {
   async prepareAgent() {
     if (!isCliAgentId(this.harness) || !this.host.trusted() || this.running || this.starting) return;
     try {
-      this.creating ??= this.createRunner().finally(() => (this.creating = undefined));
-      const runner = (this.runner ??= await this.creating);
+      const runner = await this.runnerReady();
       const failed = runner instanceof AcpRunner ? await runner.prepare() : undefined;
       if (failed) this.host.log.info(`[${this.label}] ${CLI_AGENTS[this.harness].label} didn't start before the first message: ${failed}`);
     } catch (err: any) {
@@ -1142,6 +1088,16 @@ export class WorkspaceRuntime {
         this.post({ type: "finished", workspace: ws, reason, message });
       },
     };
+  }
+
+  /**
+   * The runner, built once: everything that asks while it is being built (it reads SecretStorage)
+   * shares that build, so an early start and a Send never start two agents. It is kept before the
+   * build counts as finished, so no caller can see neither.
+   */
+  private runnerReady(): Promise<Runner> {
+    if (this.runner) return Promise.resolve(this.runner);
+    return (this.creating ??= this.createRunner().then((r) => (this.runner = r)).finally(() => (this.creating = undefined)));
   }
 
   private async createRunner(): Promise<Runner> {

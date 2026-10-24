@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
@@ -18,7 +18,6 @@ import type { InputChange } from "./agent/rebuildPolicy";
 import { listSkills } from "./agent/skills";
 import { outsideMessage, resolveUris, searchWorkspace, toAttachment } from "./attachmentSearch";
 import { editorFocusReturn, IntegratedBrowser } from "./browser/integratedBrowser";
-import { Checkpoints } from "./checkpoints";
 import type { GateRequest } from "./gate/approvalGate";
 import { parseRules } from "./gate/rules";
 import { GitHubApi, type GitHubKind, type GitHubSource, parseGitHubRemote } from "./github";
@@ -212,6 +211,9 @@ export class Controller implements vscode.Disposable {
     this.keys = new KeyStore(context.secrets, this.redactor);
     this.agentCredentials = new AgentCredentials(context.secrets, this.redactor);
     const sessions = new SessionStore(join(context.globalStorageUri.fsPath, "sessions"));
+    // kernl no longer keeps restore points: the snapshots earlier versions took (a git repository per
+    // workspace) serve nothing now, so their folder goes. Once it's gone, this does nothing.
+    void rm(join(context.globalStorageUri.fsPath, "checkpoints"), { recursive: true, force: true }).catch((err) => this.log.error("could not remove the old restore points", err));
     // The panel may load tool images from the store's previews folder (and nothing else of it).
     this.panel = new AgentPanel(context.extensionUri, this.redactor, (m) => void this.onPanelMessage(m).catch((e) => this.fail("Panel action failed", e)), vscode.Uri.file(sessions.previewsDir));
     this.panelPrompts = new PanelPrompts(this.panel, vscodePrompts);
@@ -225,7 +227,6 @@ export class Controller implements vscode.Disposable {
       providerSettings: () => readSettings(),
       approvalRules: () => approvalRules().rules,
       sessions,
-      checkpoints: new Checkpoints(join(context.globalStorageUri.fsPath, "checkpoints")),
       userDir: userCustomisationDir(),
       sources: (root, trusted) => this.loadSources(root, trusted),
       allowProjectServer: (server) => this.allowProjectServer(server),
@@ -1082,37 +1083,6 @@ export class Controller implements vscode.Disposable {
   }
 
   /**
-   * Restore from a user message: files only, or files and conversation (the kernl agent only;
-   * a CLI agent's conversation lives in the agent). Asks with the list of files it will change,
-   * refuses files with unsaved edits, and offers Undo afterwards.
-   */
-  private async restore(workspaceId: string, messageId: string) {
-    const ws = this.workspace(workspaceId);
-    const at = ws?.checkpointOf(messageId);
-    if (!ws || !at) return;
-    if (ws.running) return void vscode.window.showWarningMessage("Stop the agent before restoring.");
-    const canCut = !isCliAgentId(ws.harness);
-    type Mode = vscode.QuickPickItem & { cut: boolean };
-    const modes: Mode[] = [
-      ...(canCut ? [{ label: "Restore files and conversation", description: "later messages are removed; your message returns to the input", cut: true }] : []),
-      { label: "Restore files only", description: canCut ? "the conversation stays" : `${ws.view().label}'s conversation stays (the agent keeps its own history)`, cut: false },
-    ];
-    const mode = await this.prompts.pick(modes, { title: "Restore checkpoint" });
-    if (!mode) return;
-    const changes = await this.host.checkpoints.changes(ws.root, at.checkpoint);
-    const dirty = vscode.workspace.textDocuments.filter((d) => d.isDirty && changes.some((c) => join(ws.root, c.path) === d.uri.fsPath));
-    if (dirty.length) return void vscode.window.showWarningMessage(`Save or revert these files first: ${dirty.map((d) => vscode.workspace.asRelativePath(d.uri)).join(", ")}`);
-    const verb = { A: "re-created", M: "changed back", D: "deleted" };
-    const list = changes.slice(0, 12).map((c) => `${c.path} (${verb[c.status]})`).join("\n") + (changes.length > 12 ? `\n...and ${changes.length - 12} more` : "");
-    const detail = `${changes.length ? `${changes.length} file(s):\n${list}` : "No files changed since then."}\n\nCommands' other effects (databases, installs, network) can't be undone.`;
-    if (!(await this.prompts.confirm("Restore checkpoint?", detail, "Restore"))) return;
-    const undo = await ws.restore(messageId, mode.cut);
-    void vscode.window.showInformationMessage(`Restored ${changes.length} file(s).`, "Undo").then(async (choice) => {
-      if (choice === "Undo") await this.host.checkpoints.restore(ws.root, undo);
-    });
-  }
-
-  /**
    * The history button: the Conversations view, shown at once with this workspace's conversations.
    * Each ready CLI agent's own sessions in this folder (started in a terminal or another app) join as
    * that agent answers: a list fetched before shows straight away and is asked again when it's older
@@ -1221,9 +1191,8 @@ export class Controller implements vscode.Disposable {
   }
 
   async clearHistory() {
-    if (!(await this.prompts.confirm("Delete all kernl conversations and checkpoints?", "Your files are not changed. Restore won't be available for earlier messages.", "Delete"))) return;
+    if (!(await this.prompts.confirm("Delete all kernl conversations?", "Your files are not changed.", "Delete"))) return;
     await this.host.sessions.clear();
-    await this.host.checkpoints.clear();
     for (const ws of this.workspaces.values()) if (!ws.running) ws.newThread();
   }
 
@@ -1780,8 +1749,6 @@ export class Controller implements vscode.Disposable {
       case "dropIgnored":
         // Logged, so the next "a drop does nothing" can be diagnosed from what it carried.
         return void this.log.info(`a drop on the panel attached nothing; it carried: ${m.types.join(", ") || "no data"}`);
-      case "restore":
-        return this.anchored(`restore:${m.messageId}`, () => this.restore(m.workspace, m.messageId));
       case "pickJob":
         return this.anchored("jobs", () => this.pickJob());
       case "menuPick":

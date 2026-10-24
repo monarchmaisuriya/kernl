@@ -21,7 +21,6 @@ import { type RuntimeHost, WorkspaceRuntime } from "../../src/workspaceRuntime";
 import { AgentThreadCache } from "../../src/agentThreads";
 import { git } from "../../src/workspaces/git";
 import { createWorkspace, mergeWorkspace } from "../../src/workspaces/worktrees";
-import { Checkpoints } from "../../src/checkpoints";
 import { BackgroundJobs } from "../../src/agent/backgroundJobs";
 import { jobTerminal } from "../../src/terminal/jobTerminal";
 import { SessionStore } from "../../src/sessions";
@@ -649,7 +648,6 @@ export async function run() {
       signInRequired: new SignInRequired(),
       connectionSignal() {},
       sessions: new SessionStore(mkdtempSync(join(tmpdir(), "kernl-sessions-"))),
-      checkpoints: new Checkpoints(mkdtempSync(join(tmpdir(), "kernl-checkpoints-"))),
       providerAuth: async () => ({}),
       agentEnv: async () => ({}),
       trusted: () => trusted,
@@ -863,7 +861,7 @@ export async function run() {
     }
   });
 
-  await check("reopening kernl's own CLI conversation adds the turns the agent has after kernl's last message, keeping kernl's turns and their Restore points", async () => {
+  await check("reopening kernl's own CLI conversation adds the turns the agent has after kernl's last message, keeping kernl's turns", async () => {
     const replay = [["user", "write hello.txt\n\nAttached: README.md"], ["agent", "done"], ["user", "added in a terminal"], ["agent", "terminal reply"]];
     const loading = { ...fakeAgent, env: { ...fakeAgent.env, FAKE_LOAD: "1", FAKE_REPLAY: JSON.stringify(replay) } };
     const posted: any[] = [];
@@ -873,14 +871,14 @@ export async function run() {
     try {
       const record = host.sessions.create("claude-code");
       record.events = [
-        { type: "userMessage", workspace: "main", text: "write hello.txt", id: "u1", turn: 0, checkpoint: "cp-1" },
+        { type: "userMessage", workspace: "main", text: "write hello.txt", id: "u1", turn: 0 },
         { type: "text", workspace: "main", delta: "done" },
         { type: "finished", workspace: "main", reason: "done" },
       ];
       record.history = { sessionId: "s-kernl" };
       await ws.openSession(record);
-      const users = posted.filter((m) => m.type === "userMessage").map((m) => [m.text, m.checkpoint]);
-      assert.deepEqual(users, [["write hello.txt", "cp-1"], ["added in a terminal", undefined]], "kernl's turn (with its Restore point), then the one added elsewhere");
+      const users = posted.filter((m) => m.type === "userMessage").map((m) => m.text);
+      assert.deepEqual(users, ["write hello.txt", "added in a terminal"], "kernl's turn, then the one added elsewhere");
       assert.ok(posted.some((m) => m.type === "notice" && /Added in another app/.test(m.text)));
       assert.ok(posted.some((m) => m.type === "text" && m.delta === "terminal reply"));
       assert.equal(posted.filter((m) => m.type === "text" && m.delta === "done").length, 1, "kernl's own turn isn't repeated");
@@ -984,23 +982,24 @@ export async function run() {
     }
   });
 
-  await check("Send shows the message and running state at once; Stop while the restore point is still being taken ends the run before the agent starts", async () => {
+  await check("Send shows the message and running state at once; Stop while a tagged conversation is still being read ends the run before the agent starts", async () => {
     const posted: any[] = [];
     const host = runtimeHost(true, () => true, posted);
-    const real = host.checkpoints;
+    const real = host.sessions;
     let release!: () => void;
     const slow = new Promise<void>((r) => (release = r));
-    host.checkpoints = Object.assign(Object.create(Object.getPrototypeOf(real)), real, { snapshot: async (root: string, label: string) => (label === "baseline" ? "baseline" : (await slow, real.snapshot(root, label))) });
+    // The tagged conversation is read before the agent starts; holding that read holds the send there.
+    host.sessions = Object.assign(Object.create(Object.getPrototypeOf(real)), real, { load: async (key: string, id: string) => (await slow, real.load(key, id)) });
     const ws = new WorkspaceRuntime("main", "Main", root, "claude-code", host);
-    const sending = ws.send("write hello.txt while snapshotting");
+    const tagged = { kind: "thread" as const, path: "an earlier conversation", thread: { workspaceKey: ws.sessionKey, id: "earlier", agent: "kernl", workspace: "Main", updatedAt: 0 } };
+    const sending = ws.send("write hello.txt while a tag is read", [tagged]);
     await new Promise((r) => setTimeout(r, 50));
-    assert.ok(posted.some((m) => m.type === "userMessage" && m.text === "write hello.txt while snapshotting"), "the message shows before the restore point exists");
+    assert.ok(posted.some((m) => m.type === "userMessage" && m.text === "write hello.txt while a tag is read"), "the message shows before the tagged conversation is read");
     assert.equal(ws.running, true, "and the workspace counts as running");
     ws.stop();
     release();
     await sending;
     assert.equal(posted.filter((m) => m.type === "finished").at(-1)?.reason, "stopped");
-    assert.ok(posted.some((m) => m.type === "checkpoint"), "the restore point still arrives");
     assert.ok(!posted.some((m) => m.type === "approval" || (m.type === "text" && /hello from fake/.test(m.delta))), "the agent never started");
     ws.dispose();
   });
@@ -1587,25 +1586,6 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     await waitFor("the restart notice after Clear", (m) => m.type === "notice" && m.workspace === "main", from);
   });
 
-  await check("checkpoints: after an agent writes a file, Restore (files only for a CLI agent) puts the files back", async () => {
-    rmSync(join(root, "hello.txt"), { force: true });
-    const from = delivered.length;
-    const sending = testing.receive({ type: "send", workspace: "main", text: "write hello.txt for restore" });
-    const card = (await waitFor("an approval card", (m) => m.type === "approval", from)).card;
-    await testing.receive({ type: "answer", id: card.id, approved: true });
-    await sending;
-    assert.equal(readFileSync(join(root, "hello.txt"), "utf8"), "hi\n");
-    const message = delivered.slice(from).find((m) => m.type === "userMessage");
-    assert.ok(message.id, "the message is shown at once, before its restore point");
-    const ready = delivered.slice(from).find((m) => m.type === "checkpoint" && m.messageId === message.id);
-    assert.ok(ready?.checkpoint, "its restore point arrives once taken");
-    scripted = { ...scripted, menu: /^Restore files only$/, confirm: true };
-    await testing.receive({ type: "restore", workspace: "main", messageId: message.id });
-    assert.deepEqual(menusShown.at(-1)!.map((i: any) => i.label), ["Restore files only"], "a CLI agent's conversation can't be cut, so only files are offered");
-    assert.equal(existsSync(join(root, "hello.txt")), false, "the file the agent created is gone");
-    scripted = { ...scripted, menu: undefined };
-  });
-
   await check("conversations: New chat keeps the conversation in history; opening it shows it again", async () => {
     await vscode.commands.executeCommand("kernl.newChat");
     let from = delivered.length;
@@ -1616,8 +1596,7 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     const row = shown.find((r: any) => r.title === "write hello.txt");
     assert.ok(row && /Claude Code/.test(row.detail), JSON.stringify(shown));
     await testing.receive({ type: "openConversation", workspace: "main", pick: { kind: "kernl", id: row.id } });
-    const replayed = await waitFor("the conversation shown again", (m) => m.type === "userMessage" && m.text === "write hello.txt for restore", from);
-    assert.ok(replayed.checkpoint, "its checkpoint is still there");
+    await waitFor("the conversation shown again", (m) => m.type === "userMessage" && m.text === "write hello.txt", from);
     assert.ok(delivered.slice(from).some((m) => m.type === "text" && /hello from fake/.test(m.delta)));
     from = delivered.length;
     await vscode.commands.executeCommand("kernl.newChat");

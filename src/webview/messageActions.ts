@@ -1,12 +1,11 @@
-// The row of icon buttons under a message: Copy, Restore, Fork under yours; Copy, Fork under a
-// finished reply. Each button has a fixed place, so Restore (added once its restore point is ready)
-// lands between Copy and Fork. Built with createElement + textContent only.
+// The row of icon buttons under a message: Copy and Fork, under yours and under a finished reply.
+// Each button has a fixed place. Built with createElement + textContent only.
 import { icon } from "./icons";
 
-export type MessageActionId = "copy" | "restore" | "fork";
+export type MessageActionId = "copy" | "fork";
 
-const ORDER: MessageActionId[] = ["copy", "restore", "fork"];
-const ICONS = { copy: "copy", restore: "undo", fork: "branch" } as const;
+const ORDER: MessageActionId[] = ["copy", "fork"];
+const ICONS = { copy: "copy", fork: "branch" } as const;
 const COPIED_MS = 1500;
 
 export interface MessageActions {

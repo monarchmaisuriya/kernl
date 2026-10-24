@@ -49,7 +49,7 @@ A pick applies to the session at once (a model change can change the thinking le
 
 Opening one switches the workspace to that agent and shows its history as the agent replays it (a very long one shows its latest turns). Sending continues that session. Opening it again later loads it from the agent again, so turns added elsewhere show up. If Claude Code has the session open in another app right now, kernl says so: reading is safe, and sending continues it in kernl, apart from that app.
 
-Reopening one of kernl's own conversations with a CLI agent loads its session from the agent too: turns added since in a terminal or another app appear below kernl's own turns (which keep their Restore points), under "Added in another app since this conversation was last open in kernl". If the agent can't load it then, it loads on your next message, as before.
+Reopening one of kernl's own conversations with a CLI agent loads its session from the agent too: turns added since in a terminal or another app appear below kernl's own turns, under "Added in another app since this conversation was last open in kernl". If the agent can't load it then, it loads on your next message, as before.
 
 Lists refresh when an agent's session store changes on disk (watched only as a signal). Turn this off with `kernl.sessions.importFromAgents`.
 

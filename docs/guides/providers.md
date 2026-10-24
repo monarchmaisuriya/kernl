@@ -27,7 +27,7 @@ Each `kernl.customProviders` entry can also set:
 
 The model chip lists the provider's own models (its `/models` endpoint, asked with your key and headers; kept for 10 minutes), with **Type a model id...** last. A provider without a list, or one that doesn't answer within 5 s, asks you to type the id.
 
-Keys are never stored in settings, only in SecretStorage. **Clear stored keys** removes all of them, including CLI agent keys, and **Delete conversations and checkpoints** removes kernl's history (your files are not changed). Both are links in kernl's settings (under the provider setting) and in the Command Palette, and both ask first.
+Keys are never stored in settings, only in SecretStorage. **Clear stored keys** removes all of them, including CLI agent keys, and **Delete conversations** removes kernl's history (your files are not changed). Both are links in kernl's settings (under the provider setting) and in the Command Palette, and both ask first.
 
 Requires VS Code 1.140 or newer. The integrated-browser tools are verified on VS Code 1.142.
 

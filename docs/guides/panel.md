@@ -58,9 +58,8 @@
   - **Send in a forked session** (Option+Cmd+Enter, or Alt+Ctrl+Enter). The conversation is forked at its last message and the message goes to the fork; the original stays in Conversations. This works when the agent is idle. Claude Code forks its whole conversation; an agent that can't fork says so, and your message and its attachments go back in the box.
 
   Queued messages show above the input, each with Remove. Click a queued message to edit it: Enter saves, Shift+Enter adds a line, Escape cancels. While you edit it, it doesn't send. When a run finishes normally, the next one sends. After Stop, an error, or a change of conversation, the queue pauses: use **Send now** on a message to continue. Queued messages are kept with your conversations: after a window reload they come back paused, and Clear history removes them.
-- **Under your messages:** Copy, Restore, and Fork. Under each finished reply: Copy and Fork. The newest turn's buttons always show; earlier ones show on hover or keyboard focus.
+- **Under your messages and each finished reply:** Copy and Fork. The newest turn's buttons always show; earlier ones show on hover or keyboard focus.
   - **Copy** copies your message, or the whole reply of that turn (every part between tool calls, as Markdown).
-  - **Restore checkpoint** puts the files back to before that message (kernl can also rewind the conversation). It lists the files first and offers Undo; terminal side effects can't be undone.
   - **Fork from here** starts a new conversation with the history up to and including that turn's reply; Fork under your message and under its reply do the same. CLI agents can fork only their whole conversation, so on earlier turns their Fork is dimmed and says why.
 - **Working:** while the agent works, "Working" shimmers at the end of the transcript with how long the run has taken; "Waiting for your approval" when a card is waiting. It stays still with Reduce Motion.
 - **Thinking:** when the agent thinks (Claude Code, Codex, OpenCode, and kernl's own agent with DeepSeek, or Claude with a reasoning effort set), "Thinking…" streams in place, then collapses to "Thought for 12s" and a preview; click to reopen. `kernl.thinkingDisplay` keeps it always collapsed or always open. What's shown is the model's own summary of its thinking.
@@ -94,7 +93,7 @@
 - **What isn't:**
   - API keys, agent keys, and secret header values: set them again with **kernl: Set API key** and **Agent logins**;
   - `kernl.agentCommands` and `kernl.mcpServers`: they belong to one machine and can hold tokens (VS Code's own Settings Sync leaves this kind of setting behind too);
-  - Restore points, tabs, drafts, queued messages, your `~/.kernl` files, and a CLI agent's own sessions.
+  - tabs, drafts, queued messages, your `~/.kernl` files, and a CLI agent's own sessions.
 - **Keys are removed:**
   - every key kernl stores is replaced with `[redacted]`, and so is text shaped like a key (for example `sk-…`, `AIza…`, `ghp_…`, `AKIA…`, or a private key block);
   - if a stored key were still in the data, the export stops and writes nothing;

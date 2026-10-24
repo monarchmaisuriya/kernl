@@ -77,9 +77,8 @@ More: [the panel](panel.md#in-the-panel).
 
 More: [approvals](approvals.md), [permission modes](permission-modes.md).
 
-## Undo and branches
+## Branches
 
-- **Restore checkpoint** under your message puts the files back to before it, and lists them first, with Undo.
 - **Fork from here** starts a new conversation with the history up to that turn.
 
 ## Tabs and workspaces

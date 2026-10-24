@@ -155,7 +155,7 @@
       },
       {
         "command": "kernl.clearHistory",
-        "title": "Delete conversations and checkpoints",
+        "title": "Delete conversations",
         "category": "kernl"
       },
       {
@@ -231,7 +231,7 @@
               "openai-compatible"
             ],
             "order": 1,
-            "markdownDescription": "Model provider for the kernl agent: `anthropic`, `openai`, `google`, `deepseek`, `openai-compatible`, or `custom:<id>` for an entry in `#kernl.customProviders#`. Easiest: the model chip in the panel, or **kernl: Manage providers**.\n\n**Stored data:** [Clear stored keys](command:kernl.clearKeys) (API keys for every provider and CLI agent) · [Delete conversations and checkpoints](command:kernl.clearHistory) (your files are not changed). Both ask first."
+            "markdownDescription": "Model provider for the kernl agent: `anthropic`, `openai`, `google`, `deepseek`, `openai-compatible`, or `custom:<id>` for an entry in `#kernl.customProviders#`. Easiest: the model chip in the panel, or **kernl: Manage providers**.\n\n**Stored data:** [Clear stored keys](command:kernl.clearKeys) (API keys for every provider and CLI agent) · [Delete conversations](command:kernl.clearHistory) (your files are not changed). Both ask first."
           },
           "kernl.model": {
             "type": "string",
