@@ -1,6 +1,6 @@
 // "@kernl" in VS Code's own chat (the chat the title bar's chat button opens): the request, and the
 // files it references, go to kernl's panel exactly as if typed there (same send path, queued while the
-// agent runs). The work, approvals, and reply stay in the panel, where the diffs and checkpoints are.
+// agent runs). The work, approvals, and reply stay in the panel, where the diffs are.
 
 export interface ChatForwarding {
   /** Sends to the shown kernl workspace, or runs one of kernl's own commands there; says where it went, or why it couldn't. */

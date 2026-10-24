@@ -606,17 +606,14 @@ test("files dropped on the panel are sent to the host to check and attach", () =
   assert.deepEqual(p.sent.at(-1), { type: "dropUris", uris: ["file:///ws/src/app.ts", "file:///ws/docs"] });
 });
 
-test("a message with a checkpoint offers Restore, which asks the host; a restored message's text returns to the composer", () => {
+test("a message offers Copy and Fork, nothing else; text the host puts back returns to the composer", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
-  p.host({ type: "userMessage", workspace: "main", text: "with checkpoint", id: "m1", checkpoint: "abc123", turn: 0 });
-  p.host({ type: "userMessage", workspace: "main", text: "no checkpoint (Restricted Mode)", id: "m2", turn: 1 });
-  const messages = p.all(".user-message");
-  assert.equal(messages[1].querySelector(".restore"), null);
-  p.button("Restore checkpoint", messages[0])!.click();
-  assert.deepEqual(p.sent.at(-1), { type: "restore", workspace: "main", messageId: "m1" });
-  p.host({ type: "setInput", workspace: "main", text: "with checkpoint" });
-  assert.equal(p.doc.querySelector<HTMLTextAreaElement>(".input")!.value, "with checkpoint");
+  p.host({ type: "userMessage", workspace: "main", text: "change the title", id: "m1", turn: 0 });
+  assert.deepEqual(p.all(".user-actions .message-action").map((b) => b.getAttribute("aria-label")), ["Copy message", "Fork from here"]);
+  assert.equal(p.doc.querySelector(".restore"), null, "no Restore");
+  p.host({ type: "setInput", workspace: "main", text: "change the title" });
+  assert.equal(p.doc.querySelector<HTMLTextAreaElement>(".input")!.value, "change the title");
 });
 
 test("each message offers Fork from here; text attachments show their label", () => {
@@ -1014,20 +1011,6 @@ test("tool calls show as one line in plain words with a status and time, and ope
   assert.equal(p.all(".tool")[2].querySelector(".tool-action")!.textContent, "Stopped: Read hello.txt");
 });
 
-test("a message shows at once; Restore appears on it when its restore point is ready", () => {
-  const p = loadPanel();
-  p.host(workspaces([MAIN]));
-  p.host({ type: "userMessage", workspace: "main", text: "change the title", id: "u1", turn: 0 });
-  const message = p.doc.querySelector<HTMLElement>(".user-message")!;
-  assert.equal(message.querySelector(".restore"), null, "no restore point yet");
-  p.host({ type: "checkpoint", workspace: "main", messageId: "u1", checkpoint: "abc123" });
-  message.querySelector<HTMLButtonElement>(".restore")!.click();
-  assert.deepEqual(p.sent.at(-1), { type: "restore", workspace: "main", messageId: "u1" });
-  p.host({ type: "checkpoint", workspace: "main", messageId: "u1", checkpoint: "abc123" });
-  assert.equal(message.querySelectorAll(".restore").length, 1, "only once");
-  assert.deepEqual(p.all(".user-actions .message-action").map((b) => b.getAttribute("aria-label")), ["Copy message", "Restore checkpoint", "Fork from here"], "Restore lands between Copy and Fork");
-});
-
 test("thinking streams open as 'Thinking…', then collapses to 'Thought for …' with a preview when the reply starts; the setting can keep it open", () => {
   const p = loadPanel();
   p.host(STATUS);
@@ -1151,10 +1134,10 @@ test("screen readers: the transcript doesn't read out tokens; finished replies, 
   assert.equal(urgent.textContent, "Something went wrong: No API key stored.");
 });
 
-test("message actions: Copy, Restore, Fork sit under your message; Copy and Fork under a finished reply, which copies every block of the turn's reply", () => {
+test("message actions: Copy and Fork sit under your message and under a finished reply, which copies every block of the turn's reply", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
-  p.host({ type: "userMessage", workspace: "main", text: "explain useRewards", id: "u1", checkpoint: "abc", turn: 0 });
+  p.host({ type: "userMessage", workspace: "main", text: "explain useRewards", id: "u1", turn: 0 });
   const userRow = p.doc.querySelector<HTMLElement>(".user-message > .message-actions")!;
   assert.ok(userRow.previousElementSibling?.classList.contains("user"), "the row is under the bubble, not inside it");
   assert.equal(p.all(".user").length, 1, "the row doesn't take the bubble's style (only the bubble is .user)");
@@ -1210,7 +1193,7 @@ test("message actions come back when a conversation is replayed", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));
   const events: HostToPanel[] = [
-    { type: "userMessage", workspace: "main", text: "hi", id: "u1", checkpoint: "abc", turn: 0 },
+    { type: "userMessage", workspace: "main", text: "hi", id: "u1", turn: 0 },
     { type: "text", workspace: "main", delta: "hello" },
     { type: "finished", workspace: "main", reason: "done" },
   ];
@@ -1219,7 +1202,7 @@ test("message actions come back when a conversation is replayed", () => {
   events.forEach(p.host);
   assert.equal(p.all(".user-actions").length, 1);
   assert.equal(p.all(".reply-actions").length, 1);
-  assert.ok(p.button("Restore checkpoint"));
+  assert.ok(p.button("Fork from here"));
 });
 
 test("the Working indicator shows how long the run has taken, from 1 s", async () => {

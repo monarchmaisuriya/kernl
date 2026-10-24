@@ -71,7 +71,7 @@ interface Pane {
   runStarted?: number;
   /** Background jobs in this workspace (the footer's jobs chip). */
   jobs: { running: number; total: number };
-  /** The action row under each of your messages, by message id (Restore is added once its restore point is ready). */
+  /** The action row under each of your messages, by message id (a later turn can make an earlier Fork unavailable). */
   messageActions: Map<string, MessageActions>;
   /** The action row under each finished reply. */
   replyActions: MessageActions[];
@@ -519,12 +519,6 @@ function refreshGroups(p: Pane) {
   for (const group of p.toolGroups.values()) group.refresh();
 }
 
-/** Restore under a message: put the files (and maybe the conversation) back to before it. */
-function addRestore(actions: MessageActions, workspace: string, messageId: string) {
-  const restore = actions.add("restore", "Restore checkpoint", () => send({ type: "restore", workspace, messageId }));
-  restore.dataset.anchor = `restore:${messageId}`;
-}
-
 /** Fork under a message or a reply: a new conversation up to and including that turn's reply. */
 function addFork(p: Pane, actions: MessageActions, messageId: string) {
   const workspace = p.view.id;
@@ -826,13 +820,12 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
         row.append(...m.attachments.map((a) => attachmentChip(a)));
         bubble.append(row);
       }
-      // Under the message: Copy, Restore (once its restore point is ready), Fork.
+      // Under the message: Copy, Fork.
       const actions = createMessageActions("user");
       const text = m.text;
       actions.add("copy", "Copy message", () => send({ type: "copy", text }));
       if (m.id) {
         p.messageActions.set(m.id, actions);
-        if (m.checkpoint) addRestore(actions, p.view.id, m.id);
         addFork(p, actions, m.id);
       }
       // A CLI agent can't fork earlier turns any more.
@@ -844,11 +837,6 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       p.log.append(message);
       p.turn = { messageId: m.id, text: "" };
       markLatest(p, [actions.row]);
-      break;
-    }
-    case "checkpoint": {
-      const actions = p.messageActions.get(m.messageId);
-      if (actions) addRestore(actions, p.view.id, m.messageId);
       break;
     }
     case "text":

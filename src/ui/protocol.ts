@@ -187,8 +187,8 @@ export interface QueuedView {
 /** How a message is sent: now (or queued while the agent runs), queued for later, or in a fork of this conversation. */
 export type SendMode = "now" | "queue" | "fork";
 
-/** Where an in-panel menu opens: next to this control (a message's Restore button is "restore:<message id>"). */
-export type MenuAnchor = "agent" | "model" | "thinking" | "workspace" | "attach" | "jobs" | "title" | `restore:${string}`;
+/** Where an in-panel menu opens: next to this control. */
+export type MenuAnchor = "agent" | "model" | "thinking" | "workspace" | "attach" | "jobs" | "title";
 
 /** One row of an in-panel menu (VS Code's "$(icon) " label prefixes already turned into icon and checked). */
 export interface MenuItemView {
@@ -209,11 +209,9 @@ export type HostToPanel =
   | { type: "workspaces"; items: WorkspaceView[]; harnesses: HarnessView[]; focus?: string; problem?: string }
   /** Sent whenever a webview becomes ready: every open approval card. */
   | { type: "snapshot"; cards: ApprovalCard[] }
-  /** `id` and `checkpoint` (a snapshot of the files before it) let the panel offer Restore; `turn` counts the user's messages. */
-  | { type: "userMessage"; workspace: string; text: string; attachments?: Attachment[]; id?: string; checkpoint?: string; turn?: number }
-  /** A message's restore point is ready (taken after the message was shown); the panel offers Restore on it. */
-  | { type: "checkpoint"; workspace: string; messageId: string; checkpoint: string }
-  /** Puts text back in the composer (after a restore cut the conversation at that message). */
+  /** `id` names the message for its actions (Fork); `turn` counts the user's messages. */
+  | { type: "userMessage"; workspace: string; text: string; attachments?: Attachment[]; id?: string; turn?: number }
+  /** Puts text back in the composer (a message that couldn't be sent, such as a fork the agent refused). */
   | { type: "setInput"; workspace: string; text: string }
   /** The unsent message saved before the panel last closed (VS Code restarted, the window reloaded); filled in only when the box is empty. */
   | { type: "restoreDraft"; text: string; attachments: Attachment[] }
@@ -281,8 +279,6 @@ export type PanelToHost =
   | { type: "dropIgnored"; types: string[] }
   /** Attach the file open in the editor (the suggestion's click); the host reads its own active editor. */
   | { type: "attachActiveFile" }
-  /** Restore the files (and maybe the conversation) to how they were before this message. */
-  | { type: "restore"; workspace: string; messageId: string }
   /** The footer's jobs chip: show or stop a background job. */
   | { type: "pickJob" }
   /** A new conversation with this one's history up to and including this message's reply. */
@@ -340,7 +336,7 @@ export type PanelToHost =
   /** A code block's Copy button. */
   | { type: "copy"; text: string };
 
-const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "restore", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab", "runCommand", "attachActiveFile"];
+const PANEL_MESSAGE_TYPES = ["ready", "send", "stop", "answer", "showDiff", "setKey", "openSettings", "focus", "pickWorkspace", "pickModel", "pickThinking", "pickHarness", "openLink", "copy", "searchFiles", "pickAttachments", "dropUris", "dropIgnored", "fork", "pickJob", "unqueue", "sendQueued", "openFolder", "setMode", "draft", "pickAgentOption", "setAgentOption", "menuPick", "showToolDiff", "openLocation", "showConnections", "connectionAction", "keyboardFocus", "openConversation", "editQueued", "updateQueued", "newTab", "closeTab", "runCommand", "attachActiveFile"];
 
 /** The URL, normalized, if it is http(s); otherwise undefined. Both sides use it: the panel to decide what is a link, the host before opening one. */
 export function httpUrl(href: string): string | undefined {

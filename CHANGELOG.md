@@ -4,6 +4,14 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Removed
+
+- **Restore checkpoint** (rewind) is gone: kernl no longer snapshots your workspace before each message, and messages offer Copy and Fork. The snapshots earlier versions kept (in kernl's own storage) are deleted the first time this version starts. **Delete conversations and checkpoints** is now **Delete conversations**.
+
+### Fixed
+
+- A message sent while a CLI agent was still starting (before the first message) could start a second copy of the agent and go to a new session instead of the one being opened.
+
 ## [0.12.2] - 2026-10-21
 
 ### Changed
