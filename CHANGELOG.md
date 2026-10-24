@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added
+
+- **Archive** and **Unarchive** in Conversations: an archived conversation moves to a folded **Archived** group at the bottom of the list, stays out of `@`, and is kept whole. Search finds it, and opening it keeps it archived until you unarchive it.
+
 ## [0.13.0] - 2026-10-24
 
 ### Removed

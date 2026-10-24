@@ -484,6 +484,16 @@ body.vscode-reduce-motion .tab-state.working { animation: none; border-top-color
 .conversation-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .conversation-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-detail { color: var(--muted); font-size: 0.85em; }
+.conversation-item { display: flex; align-items: flex-start; border-radius: var(--radius-sm); }
+.conversation-item:hover { background: var(--hover); }
+.conversation-item > .conversation { flex: 1; min-width: 0; }
+.conversation-item > .conversation:hover { background: transparent; }
+.conversation-action { flex: none; margin-top: 4px; opacity: 0; }
+.conversation-item:hover .conversation-action, .conversation-item:focus-within .conversation-action { opacity: 1; }
+.conversations-archived-toggle { display: flex; align-items: center; gap: 4px; width: 100%; padding: 0; text-align: left; background: transparent; }
+.conversations-archived-toggle > svg { transform: rotate(-90deg); }
+.conversations-archived-toggle[aria-expanded="true"] > svg { transform: none; }
+.conversations-archived-toggle:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
 .conversation-pending, .conversations-empty { padding: 6px 6px; color: var(--muted); font-size: 0.9em; }
 
 /* Connections: every agent login, key, MCP server, and plugin with its state and a fix */

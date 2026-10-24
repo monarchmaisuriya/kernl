@@ -1,5 +1,6 @@
 // The Conversations view: the whole panel shows a workspace's conversations (kernl's at once, each CLI
-// agent's own sessions as it answers), with Back to the conversation and a search box. The host builds
+// agent's own sessions as it answers, then kernl's archived ones, folded), with Back to the conversation
+// and a search box. Each kernl row has Archive (or Unarchive) at its end. The host builds
 // the rows (src/ui/conversationRows.ts); this shows them and sends the pick. Built with createElement +
 // textContent only, like the rest of the panel.
 import type { ConversationPick, ConversationRow } from "../ui/conversationRows";
@@ -40,6 +41,8 @@ export function createConversationsView(send: (m: PanelToHost) => void, onClose:
 
   let workspace: string | undefined;
   let rows: ConversationRow[] = [];
+  /** The Archived group unfolded (a search shows its matches either way); folded again each time the view opens. */
+  let showArchived = false;
 
   function pick(p: ConversationPick) {
     if (!workspace) return;
@@ -56,7 +59,29 @@ export function createConversationsView(send: (m: PanelToHost) => void, onClose:
     b.append(r.kind === "new" ? icon("plus", 14) : r.kind === "kernl" && r.current ? icon("check", 14) : icon("chat", 14), main);
     if (r.kind === "kernl" && r.current) b.setAttribute("aria-current", "true");
     b.addEventListener("click", () => pick(r.kind === "new" ? { kind: "new" } : r.kind === "kernl" ? { kind: "kernl", id: r.id } : { kind: "agent", agent: r.agent, sessionId: r.sessionId }));
-    return b;
+    if (r.kind !== "kernl") return b;
+    // A button can't hold a button: the row and its Archive button sit side by side in a list item.
+    b.removeAttribute("role");
+    const item = el("div", "conversation-item");
+    item.setAttribute("role", "listitem");
+    const action = el("button", "icon-button conversation-action");
+    action.append(icon(r.archived ? "unarchive" : "archive", 14));
+    action.title = r.archived ? "Unarchive" : "Archive";
+    action.setAttribute("aria-label", `${r.archived ? "Unarchive" : "Archive"} ${r.title}`);
+    action.addEventListener("click", () => workspace && send({ type: r.archived ? "unarchiveConversation" : "archiveConversation", workspace, id: r.id }));
+    item.append(b, action);
+    return item;
+  }
+
+  function archivedToggle(count: number): HTMLElement {
+    const t = el("button", "panel-view-group-title conversations-archived-toggle");
+    t.append(icon("chevron", 12), document.createTextNode(`Archived (${count})`));
+    t.setAttribute("aria-expanded", String(showArchived));
+    t.addEventListener("click", () => {
+      showArchived = !showArchived;
+      render();
+    });
+    return t;
   }
 
   function render() {
@@ -64,11 +89,15 @@ export function createConversationsView(send: (m: PanelToHost) => void, onClose:
     const shown = rows.filter((r) => r.kind === "new" || r.kind === "pending" || r.title.toLowerCase().includes(query));
     const out: HTMLElement[] = [];
     let group: string | undefined;
+    const archived = shown.filter((r) => r.kind === "kernl" && r.archived).length;
     for (const r of shown) {
+      const inArchived = r.kind === "kernl" && r.archived;
       if (r.kind !== "new" && r.group !== group) {
         group = r.group;
-        out.push(el("h3", "panel-view-group-title", group));
+        // While searching, matching archived rows show without unfolding the group.
+        out.push(inArchived && !query ? archivedToggle(archived) : el("h3", "panel-view-group-title", group));
       }
+      if (inArchived && !query && !showArchived) continue;
       out.push(r.kind === "pending" ? el("div", "conversation-pending", r.title) : rowButton(r));
     }
     if (query && !shown.some((r) => r.kind === "kernl" || r.kind === "agent")) out.push(el("p", "conversations-empty", "No conversation matches."));
@@ -81,7 +110,7 @@ export function createConversationsView(send: (m: PanelToHost) => void, onClose:
    */
   function update(m: Extract<HostToPanel, { type: "conversations" }>) {
     if (!m.open && m.workspace !== workspace) return;
-    if (m.open) search.value = "";
+    if (m.open) (search.value = "", (showArchived = false));
     workspace = m.workspace;
     rows = m.rows;
     title.textContent = m.title;

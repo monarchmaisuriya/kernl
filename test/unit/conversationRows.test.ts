@@ -1,5 +1,5 @@
 // The Conversations view's rows: kernl's conversations first (they never move), then each agent's own
-// sessions not opened in kernl, with a row while an agent is still being asked.
+// sessions not opened in kernl, with a row while an agent is still being asked, then the archived ones.
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { conversationRows, since } from "../../src/ui/conversationRows";
@@ -15,8 +15,8 @@ test("kernl's conversations come first with their messages, agent, and age; the 
   const rows = conversationRows({ kept, current: "b", agents: [], label, now });
   assert.deepEqual(rows, [
     { kind: "new", title: "New conversation" },
-    { kind: "kernl", id: "a", title: "Fix login", detail: "3 messages · Claude Code · 2 h ago", current: false, group: "Conversations" },
-    { kind: "kernl", id: "b", title: "Refactor", detail: "1 message · kernl · 5 min ago", current: true, group: "Conversations" },
+    { kind: "kernl", id: "a", title: "Fix login", detail: "3 messages · Claude Code · 2 h ago", current: false, archived: false, group: "Conversations" },
+    { kind: "kernl", id: "b", title: "Refactor", detail: "1 message · kernl · 5 min ago", current: true, archived: false, group: "Conversations" },
   ]);
 });
 
@@ -36,6 +36,30 @@ test("an agent's sessions follow in its own group, without those a kernl convers
     { kind: "agent", agent: "claude-code", sessionId: "s3", title: "Untitled session", detail: "Claude Code session", group: "Claude Code sessions not opened in kernl" },
     { kind: "pending", agent: "codex", title: "Looking for Codex sessions…", group: "Codex sessions not opened in kernl" },
   ]);
+});
+
+test("archived conversations go last, newest archived first, still marked when open; their agent sessions aren't listed as not opened in kernl", () => {
+  const withArchived = [
+    ...kept,
+    { id: "c", title: "Old spike", harness: "claude-code", updatedAt: now - 86_400_000, messages: 2, agentSessionId: "s-archived", archivedAt: now - 60_000 },
+    { id: "d", title: "Older spike", harness: "deepagents", updatedAt: now - 3600_000, messages: 1, archivedAt: now - 7200_000 },
+  ];
+  const rows = conversationRows({
+    kept: withArchived,
+    current: "d",
+    agents: [{ id: "claude-code", label: "Claude Code", pending: false, sessions: [{ sessionId: "s-archived", title: "Old spike" }, { sessionId: "s2", title: "Other" }] }],
+    label,
+    now,
+  });
+  assert.deepEqual(rows.map((r) => [r.kind, "id" in r ? r.id : "sessionId" in r ? r.sessionId : "", r.kind === "new" ? "" : r.group]), [
+    ["new", "", ""],
+    ["kernl", "a", "Conversations"],
+    ["kernl", "b", "Conversations"],
+    ["agent", "s2", "Claude Code sessions not opened in kernl"],
+    ["kernl", "c", "Archived"],
+    ["kernl", "d", "Archived"],
+  ]);
+  assert.deepEqual(rows.slice(-1), [{ kind: "kernl", id: "d", title: "Older spike", detail: "1 message · kernl · 1 h ago", current: true, archived: true, group: "Archived" }]);
 });
 
 test("ages read plainly", () => {

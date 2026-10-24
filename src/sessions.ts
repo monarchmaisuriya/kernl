@@ -26,6 +26,8 @@ export interface SessionRecord {
   agentTitle?: string;
   /** A CLI agent's session opened from its own list (started in a terminal or another app): its transcript is the agent's replay, loaded again on each open. */
   importedFrom?: { agent: string; sessionId: string };
+  /** When it was archived: out of the Conversations list (in its Archived group) and out of @, but kept whole. */
+  archivedAt?: number;
 }
 
 /** A message waiting for the current run to end (the composer's queue). */
@@ -43,6 +45,7 @@ export interface SessionSummary {
   messages: number;
   /** The CLI agent's session this conversation continues, so the agent's own list shows it once. */
   agentSessionId?: string;
+  archivedAt?: number;
 }
 
 export const PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
@@ -99,16 +102,23 @@ export class SessionStore {
    * sees half a file.
    */
   private write(file: string, data: string | Uint8Array): Promise<void> {
+    return this.inTurn(file, () => this.replace(file, data));
+  }
+
+  /** Runs `task` on a file after its earlier writes, before later ones. */
+  private inTurn(file: string, task: () => Promise<void>): Promise<void> {
     const next = (this.writes.get(file) ?? Promise.resolve())
       .catch(() => {}) // the earlier save's caller got its own error
-      .then(async () => {
-        const temporary = `${file}.${randomUUID().slice(0, 8)}.tmp`;
-        await writeFile(temporary, data);
-        await rename(temporary, file);
-      });
+      .then(task);
     this.writes.set(file, next);
     void next.finally(() => this.writes.get(file) === next && this.writes.delete(file)).catch(() => {});
     return next;
+  }
+
+  private async replace(file: string, data: string | Uint8Array): Promise<void> {
+    const temporary = `${file}.${randomUUID().slice(0, 8)}.tmp`;
+    await writeFile(temporary, data);
+    await rename(temporary, file);
   }
 
   /**
@@ -164,6 +174,22 @@ export class SessionStore {
     await this.write(join(this.previewsDir, path), bytes);
   }
 
+  /**
+   * Archives a kept conversation (at `archivedAt`) or unarchives it (undefined). Its events and when it was
+   * last active stay as they are, and no save of it can land between the read and the write. A tab holding
+   * the conversation changes its own copy too (WorkspaceRuntime.markArchived), or its next save undoes this.
+   */
+  async setArchived(workspaceKey: string, id: string, archivedAt: number | undefined): Promise<void> {
+    const file = join(this.folder(workspaceKey), `${id}.json`);
+    await this.inTurn(file, async () => {
+      const s = await this.load(workspaceKey, id);
+      if (!s) return;
+      if (archivedAt === undefined) delete s.archivedAt;
+      else s.archivedAt = archivedAt;
+      await this.replace(file, JSON.stringify(s));
+    });
+  }
+
   async load(workspaceKey: string, id: string): Promise<SessionRecord | undefined> {
     try {
       return JSON.parse(await readFile(join(this.folder(workspaceKey), `${id}.json`), "utf8"));
@@ -202,7 +228,7 @@ export class SessionStore {
       const s = await this.load(workspaceKey, id);
       if (!s) continue;
       const agentSessionId = s.importedFrom?.sessionId ?? (s.history as { sessionId?: unknown } | undefined)?.sessionId;
-      const summary = { id: s.id, title: s.title, harness: s.harness, updatedAt: s.updatedAt, messages: s.events.filter((e) => e.type === "userMessage").length, ...(typeof agentSessionId === "string" ? { agentSessionId } : {}) };
+      const summary = { id: s.id, title: s.title, harness: s.harness, updatedAt: s.updatedAt, messages: s.events.filter((e) => e.type === "userMessage").length, ...(typeof agentSessionId === "string" ? { agentSessionId } : {}), ...(typeof s.archivedAt === "number" ? { archivedAt: s.archivedAt } : {}) };
       next.set(id, { size: meta.size, mtimeMs: meta.mtimeMs, summary });
     }
     this.summaries.set(workspaceKey, next);

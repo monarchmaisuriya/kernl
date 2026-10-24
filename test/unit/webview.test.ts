@@ -468,8 +468,8 @@ test("@ also finds conversations from any agent and workspace; a picked one beco
 
 const conversationRowsFor = (pending: boolean, agentRows: boolean) => [
   { kind: "new", title: "New conversation" },
-  { kind: "kernl", id: "a", title: "Fix login", detail: "3 messages · Claude Code · 2 h ago", current: false, group: "Conversations" },
-  { kind: "kernl", id: "b", title: "Refactor", detail: "1 message · kernl · 5 min ago", current: true, group: "Conversations" },
+  { kind: "kernl", id: "a", title: "Fix login", detail: "3 messages · Claude Code · 2 h ago", current: false, archived: false, group: "Conversations" },
+  { kind: "kernl", id: "b", title: "Refactor", detail: "1 message · kernl · 5 min ago", current: true, archived: false, group: "Conversations" },
   ...(agentRows ? [{ kind: "agent", agent: "claude-code", sessionId: "s2", title: "Old idea", detail: "Claude Code session · 3 d ago", group: "Claude Code sessions not opened in kernl" }] : []),
   ...(pending ? [{ kind: "pending", agent: "claude-code", title: "Looking for Claude Code sessions…", group: "Claude Code sessions not opened in kernl" }] : []),
 ];
@@ -492,6 +492,42 @@ test("Conversations view: covers the panel with the workspace's conversations at
   p.host({ type: "conversations", workspace: "main", title: "Conversations in Main", rows: conversationRowsFor(false, true) as any });
   assert.equal(search.value, "idea", "an update keeps the search");
   assert.deepEqual(titles(), ["New conversation", "Claude Code sessions not opened in kernl", "Old idea"]);
+});
+
+test("Conversations view: each kernl row has Archive; archived ones are folded under Archived (N), unfold on a click, show while a search matches them, and offer Unarchive", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  const rows = [
+    ...conversationRowsFor(false, true),
+    { kind: "kernl", id: "c", title: "Old spike", detail: "2 messages · Claude Code · 1 d ago", current: false, archived: true, group: "Archived" },
+    { kind: "kernl", id: "d", title: "Older spike", detail: "1 message · kernl · 1 h ago", current: false, archived: true, group: "Archived" },
+  ];
+  const open = () => p.host({ type: "conversations", workspace: "main", title: "Conversations in Main", rows: rows as any, open: true });
+  const view = p.doc.querySelector<HTMLElement>(".conversations")!;
+  const titles = () => [...view.querySelectorAll(".conversation-title, .panel-view-group-title")].map((e) => e.textContent);
+  const actionOf = (title: string) => [...view.querySelectorAll(".conversation-item")].find((i) => i.querySelector(".conversation-title")!.textContent === title)?.querySelector<HTMLButtonElement>(".conversation-action");
+  open();
+  assert.deepEqual(titles(), ["New conversation", "Conversations", "Fix login", "Refactor", "Claude Code sessions not opened in kernl", "Old idea", "Archived (2)"], "folded");
+  assert.equal(actionOf("Old idea"), undefined, "an agent's own session has no Archive");
+  assert.equal(actionOf("Fix login")!.getAttribute("aria-label"), "Archive Fix login");
+  actionOf("Fix login")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "archiveConversation", workspace: "main", id: "a" });
+  assert.equal(view.hidden, false, "the view stays open");
+  const toggle = view.querySelector<HTMLButtonElement>(".conversations-archived-toggle")!;
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  toggle.click();
+  assert.deepEqual(titles().slice(-3), ["Archived (2)", "Old spike", "Older spike"], "unfolded");
+  actionOf("Old spike")!.click();
+  assert.deepEqual(p.sent.at(-1), { type: "unarchiveConversation", workspace: "main", id: "c" });
+  open();
+  assert.deepEqual(titles().slice(-1), ["Archived (2)"], "folded again when the view opens");
+  const search = view.querySelector<HTMLInputElement>(".conversations-search")!;
+  search.value = "older";
+  search.dispatchEvent(new p.window.Event("input"));
+  assert.deepEqual(titles(), ["New conversation", "Archived", "Older spike"], "a search shows matching archived rows");
+  const row = [...view.querySelectorAll<HTMLButtonElement>(".conversation")].find((b) => b.querySelector(".conversation-title")!.textContent === "Older spike")!;
+  row.click();
+  assert.deepEqual(p.sent.at(-1), { type: "openConversation", workspace: "main", pick: { kind: "kernl", id: "d" } }, "an archived row opens like any other");
 });
 
 test("Conversations view: a picked row opens it and closes the view; Back and Escape close it with nothing sent", () => {
