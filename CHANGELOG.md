@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-24
+
 ### Added
 
 - **Archive** and **Unarchive** in Conversations: an archived conversation moves to a folded **Archived** group at the bottom of the list, stays out of `@`, and is kept whole. Search finds it, and opening it keeps it archived until you unarchive it.
@@ -311,7 +313,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/pushowl/kernl/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/pushowl/kernl/compare/v0.12.2...v0.13.0
 [0.12.2]: https://github.com/pushowl/kernl/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/pushowl/kernl/compare/v0.12.0...v0.12.1
