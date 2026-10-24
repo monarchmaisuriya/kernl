@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-24
+
 ### Removed
 
 - **Restore checkpoint** (rewind) is gone: kernl no longer snapshots your workspace before each message, and messages offer Copy and Fork. The snapshots earlier versions kept (in kernl's own storage) are deleted the first time this version starts. **Delete conversations and checkpoints** is now **Delete conversations**.
@@ -305,7 +307,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.12.2...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/pushowl/kernl/compare/v0.12.2...v0.13.0
 [0.12.2]: https://github.com/pushowl/kernl/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/pushowl/kernl/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/pushowl/kernl/compare/v0.11.0...v0.12.0
