@@ -225,6 +225,16 @@ const connectionsView = createConnectionsView(send);
 const conversationsView = createConversationsView(send, () => input.focus());
 const tabStrip = createTabStrip(send, (id) => select(id));
 app.append(banner, tabStrip.strip, logs, planBar.bar, composer, footer, anchoredMenu.menu, connectionsView.view, conversationsView.view, politeAnnouncer, urgentAnnouncer);
+// VS Code runs Copy and Paste on the panel's focused element, or, when nothing is, on the one focused
+// last. So a click leaves focus where it landed: on the panel itself for text (Copy takes the selection
+// in the conversation), and on the message box for the composer's frame (Paste lands in it).
+app.tabIndex = -1;
+const composerFrame = new Set<EventTarget>([composer, context, inputWrap, toolbar, toolbarOptions]);
+composer.addEventListener("mousedown", (e) => {
+  if (!composerFrame.has(e.target!)) return;
+  e.preventDefault();
+  input.focus();
+});
 
 const markdownActions = { openLink: (url: string) => send({ type: "openLink", url }), copy: (text: string) => send({ type: "copy", text }) };
 const panes = new Map<string, Pane>();

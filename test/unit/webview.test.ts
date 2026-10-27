@@ -474,6 +474,27 @@ const conversationRowsFor = (pending: boolean, agentRows: boolean) => [
   ...(pending ? [{ kind: "pending", agent: "claude-code", title: "Looking for Claude Code sessions…", group: "Claude Code sessions not opened in kernl" }] : []),
 ];
 
+test("a click leaves focus where it landed: the panel holds it for text (VS Code then copies the selection), the composer's frame gives it to the message box (Paste lands there), and a control keeps its own", () => {
+  const p = loadPanel();
+  p.host(workspaces([MAIN]));
+  assert.equal(p.doc.getElementById("app")!.getAttribute("tabindex"), "-1", "the panel can hold focus");
+  const input = p.doc.querySelector<HTMLTextAreaElement>(".input")!;
+  const attach = p.doc.querySelector<HTMLButtonElement>(".composer .toolbar button")!;
+  const press = (target: Element) => {
+    const e = new p.window.MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    target.dispatchEvent(e);
+    return e.defaultPrevented;
+  };
+  for (const frame of [".composer", ".context-row", ".input-wrap", ".toolbar", ".toolbar-options"]) {
+    attach.focus();
+    assert.equal(press(p.doc.querySelector(frame)!), true, `${frame}: the press doesn't move focus elsewhere`);
+    assert.equal(p.doc.activeElement, input, `${frame}: the message box has focus`);
+  }
+  attach.focus();
+  assert.equal(press(attach), false, "a button's press is its own");
+  assert.equal(p.doc.activeElement, attach);
+});
+
 test("Conversations view: covers the panel with the workspace's conversations at once; an agent's sessions fill in later, keeping the search", () => {
   const p = loadPanel();
   p.host(workspaces([MAIN]));

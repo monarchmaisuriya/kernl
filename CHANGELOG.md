@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Fixed
+
+- Copy (Cmd+C or Ctrl+C) copies text selected in the conversation; it used to copy nothing, because VS Code ran it on the message box instead. Paste after a click on the composer's frame (beside the message box) lands in the message box, not on a tab or chip clicked earlier.
+
 ## [0.14.0] - 2026-10-24
 
 ### Added
